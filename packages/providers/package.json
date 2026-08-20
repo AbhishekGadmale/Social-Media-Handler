@@ -1,0 +1,19 @@
+{
+  "name": "@agency-os/providers",
+  "version": "1.0.0",
+  "private": true,
+  "main": "./index.ts",
+  "types": "./index.ts",
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint \"{core,test}/**/*.ts\""
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@agency-os/config": "workspace:*",
+    "typescript": "^5.0.0",
+    "vitest": "^1.4.0",
+    "@types/node": "^20.0.0"
+  }
+}

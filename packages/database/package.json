@@ -1,0 +1,30 @@
+{
+  "name": "@agency-os/database",
+  "version": "1.0.0",
+  "private": true,
+  "main": "./index.ts",
+  "types": "./index.ts",
+  "scripts": {
+    "test": "vitest run",
+    "lint": "eslint \"{src,test}/**/*.ts\"",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@prisma/client": "^5.0.0",
+    "uuidv7": "^1.2.1"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.18.0",
+    "@types/node": "^26.2.0",
+    "eslint": "^10.8.1",
+    "globals": "^17.0.0",
+    "prisma": "^5.0.0",
+    "tsx": "^4.23.12",
+    "typescript": "^5.0.0",
+    "typescript-eslint": "^8.20.0",
+    "vitest": "^4.1.10"
+  },
+  "prisma": {
+    "seed": "tsx src/seed.ts"
+  }
+}

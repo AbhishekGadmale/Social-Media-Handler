@@ -1,0 +1,218 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum WorkspaceRole {
+  OWNER
+  MANAGER
+  EDITOR
+  CLIENT_APPROVER
+  VIEWER
+}
+
+enum SocialProvider {
+  FACEBOOK
+  INSTAGRAM
+  LINKEDIN
+  TWITTER
+  TIKTOK
+}
+
+enum SocialAccountStatus {
+  ACTIVE
+  REAUTH_REQUIRED
+  DISCONNECTED
+}
+
+enum PostStatus {
+  DRAFT
+  SCHEDULED
+  PARTIAL
+  PUBLISHED
+  FAILED
+}
+
+enum SyncRunStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+model User {
+  id             String            @id @db.Uuid
+  email          String            @unique
+  hashedPassword String
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+  memberships    WorkspaceMember[]
+}
+
+model Organization {
+  id         String      @id @db.Uuid
+  name       String
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @updatedAt
+  workspaces Workspace[]
+}
+
+model Workspace {
+  id             String            @id @db.Uuid
+  name           String
+  organizationId String            @db.Uuid
+  organization   Organization      @relation(fields: [organizationId], references: [id])
+  deletedAt      DateTime?
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+
+  members              WorkspaceMember[]
+  socialAccounts       SocialAccount[]
+  posts                Post[]
+  postPlatformVariants PostPlatformVariant[]
+  auditLogs            AuditLog[]
+
+  @@index([organizationId])
+}
+
+model WorkspaceMember {
+  id          String        @id @db.Uuid
+  workspaceId String        @db.Uuid
+  userId      String        @db.Uuid
+  role        WorkspaceRole
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id])
+  user      User      @relation(fields: [userId], references: [id])
+
+  @@unique([workspaceId, userId])
+  @@index([userId])
+}
+
+model SocialAccount {
+  id           String              @id @db.Uuid
+  workspaceId  String              @db.Uuid
+  provider     SocialProvider
+  externalId   String
+  name         String?
+  capabilities String[]
+  status       SocialAccountStatus
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+
+  workspace          Workspace             @relation(fields: [workspaceId], references: [id])
+  connection         SocialConnection?
+  variants           PostPlatformVariant[]
+  metrics            AccountMetricDaily[]
+
+  @@unique([provider, externalId])
+  @@index([workspaceId, provider])
+}
+
+model SocialConnection {
+  id                    String        @id @db.Uuid
+  socialAccountId       String        @unique @db.Uuid
+
+  encryptedAccessToken  String
+  accessTokenIv         String
+  accessTokenAuthTag    String
+
+  encryptedRefreshToken String?
+  refreshTokenIv        String?
+  refreshTokenAuthTag   String?
+
+  keyVersion            Int           @default(1)
+  expiresAt             DateTime?
+  refreshExpiresAt      DateTime?
+  createdAt             DateTime      @default(now())
+  updatedAt             DateTime      @updatedAt
+
+  account SocialAccount @relation(fields: [socialAccountId], references: [id])
+}
+
+model Post {
+  id          String     @id @db.Uuid
+  workspaceId String     @db.Uuid
+  content     String
+  status      PostStatus
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  workspace Workspace             @relation(fields: [workspaceId], references: [id])
+  variants  PostPlatformVariant[]
+
+  @@index([workspaceId])
+}
+
+model PostPlatformVariant {
+  id              String     @id @db.Uuid
+  postId          String     @db.Uuid
+  socialAccountId String     @db.Uuid
+  workspaceId     String     @db.Uuid
+  status          PostStatus
+  externalPostId  String?
+  content         String?
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  post          Post          @relation(fields: [postId], references: [id])
+  socialAccount SocialAccount @relation(fields: [socialAccountId], references: [id])
+  workspace     Workspace     @relation(fields: [workspaceId], references: [id])
+
+  @@index([postId])
+  @@index([socialAccountId])
+  @@index([workspaceId])
+}
+
+model AccountMetricDaily {
+  id              String   @id @db.Uuid
+  socialAccountId String   @db.Uuid
+  date            DateTime @db.Date
+  followers       Int      @default(0)
+  engagement      Int      @default(0)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  socialAccount SocialAccount @relation(fields: [socialAccountId], references: [id])
+
+  @@unique([socialAccountId, date])
+}
+
+model WebhookEvent {
+  id        String   @id @db.Uuid
+  eventId   String?  @unique
+  provider  String
+  payload   Json
+  processed Boolean  @default(false)
+  createdAt DateTime @default(now())
+}
+
+model SyncRun {
+  id        String        @id @db.Uuid
+  status    SyncRunStatus
+  counts    Json?
+  error     String?
+  startedAt DateTime      @default(now())
+  endedAt   DateTime?
+}
+
+model AuditLog {
+  id          String   @id @db.Uuid
+  workspaceId String?  @db.Uuid
+  actorId     String?  @db.Uuid
+  action      String
+  targetType  String
+  targetId    String?
+  metadata    Json?
+  createdAt   DateTime @default(now())
+
+  workspace Workspace? @relation(fields: [workspaceId], references: [id])
+
+  @@index([workspaceId])
+  @@index([actorId])
+}

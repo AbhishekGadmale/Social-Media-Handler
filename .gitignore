@@ -1,0 +1,15 @@
+node_modules
+dist
+build
+.turbo
+*.log
+
+# Env files
+.env
+.env.local
+.env.*
+!.env.example
+
+# Prisma
+packages/database/node_modules/
+.prisma/
