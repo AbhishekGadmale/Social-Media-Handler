@@ -5,6 +5,7 @@ export default defineConfig({
   test: {
     globals: true,
     include: ['test/**/*.e2e-spec.ts', 'src/**/*.spec.ts'],
+    setupFiles: ['../../test-setup.ts'],
   },
   plugins: [
     swc.vite({

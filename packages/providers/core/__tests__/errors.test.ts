@@ -4,7 +4,7 @@ import {
   ProviderRateLimitError,
   ProviderApiError,
   ProviderCapabilityError,
-} from '../errors';
+} from '../errors/index.js';
 
 describe('Error Hierarchy', () => {
   it('instantiates and narrows ProviderAuthError', () => {

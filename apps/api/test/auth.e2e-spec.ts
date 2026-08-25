@@ -1,4 +1,4 @@
-/* eslint-disable @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access */
+/* eslint-disable @typescript-eslint/no-unsafe-argument */
 import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
@@ -27,12 +27,17 @@ describe('AuthController (e2e)', () => {
     }).compile();
 
     app = moduleFixture.createNestApplication();
+    app.setGlobalPrefix('api');
     app.use(cookieParser());
     app.useGlobalFilters(new AllExceptionsFilter());
     await app.init();
 
     prisma = app.get<PrismaClient>(PrismaClient);
     redis = app.get<Redis>('REDIS_CLIENT');
+
+    if (!process.env.DATABASE_URL || !process.env.DATABASE_URL.includes('test')) {
+      throw new Error('SAFETY CHECK FAILED: Tests that clear the database must run against a test database. DATABASE_URL does not contain "test".');
+    }
 
     // Setup Test Data
     const hashedPassword = await argon2.hash('correctpassword');
@@ -122,9 +127,9 @@ describe('AuthController (e2e)', () => {
   let sessionCookie: string;
   let csrfToken: string;
 
-  it('/v1/auth/login (POST) - fails with generic message for wrong password', async () => {
+  it('/api/v1/auth/login (POST) - fails with generic message for wrong password', async () => {
     const res = await request(app.getHttpServer())
-      .post('/v1/auth/login')
+      .post('/api/v1/auth/login')
       .send({ email: testUser.email, password: 'wrongpassword' });
 
     expect(res.status).toBe(401);
@@ -133,9 +138,9 @@ describe('AuthController (e2e)', () => {
     expect(res.body.error.message).toBe('Invalid credentials');
   });
 
-  it('/v1/auth/login (POST) - fails with generic message for wrong email', async () => {
+  it('/api/v1/auth/login (POST) - fails with generic message for wrong email', async () => {
     const res = await request(app.getHttpServer())
-      .post('/v1/auth/login')
+      .post('/api/v1/auth/login')
       .send({ email: 'nonexistent@example.com', password: 'correctpassword' });
 
     expect(res.status).toBe(401);
@@ -143,9 +148,9 @@ describe('AuthController (e2e)', () => {
     expect(res.body.error.message).toBe('Invalid credentials');
   });
 
-  it('/v1/auth/login (POST) - success issues valid session and csrf cookies', async () => {
+  it('/api/v1/auth/login (POST) - success issues valid session and csrf cookies', async () => {
     const res = await request(app.getHttpServer())
-      .post('/v1/auth/login')
+      .post('/api/v1/auth/login')
       .send({ email: testUser.email, password: 'correctpassword' });
 
     expect(res.status).toBe(200);
@@ -162,15 +167,15 @@ describe('AuthController (e2e)', () => {
     csrfToken = csrfCookieHeader!.split(';')[0].split('=')[1];
   });
 
-  it('/v1/auth/me (GET) - fails with no cookie', async () => {
-    const res = await request(app.getHttpServer()).get('/v1/auth/me');
+  it('/api/v1/auth/me (GET) - fails with no cookie', async () => {
+    const res = await request(app.getHttpServer()).get('/api/v1/auth/me');
 
     expect(res.status).toBe(401);
   });
 
-  it('/v1/auth/me (GET) - success with cookie', async () => {
+  it('/api/v1/auth/me (GET) - success with cookie', async () => {
     const res = await request(app.getHttpServer())
-      .get('/v1/auth/me')
+      .get('/api/v1/auth/me')
       .set('Cookie', sessionCookie);
 
     expect(res.status).toBe(200);
@@ -178,18 +183,18 @@ describe('AuthController (e2e)', () => {
     expect(res.body.user.hashedPassword).toBeUndefined(); // Should not leak password
   });
 
-  it('/v1/workspaces/:workspaceId/test-posts (POST) - Missing CSRF gets 403', async () => {
+  it('/api/v1/workspaces/:workspaceId/test-posts (POST) - Missing CSRF gets 403', async () => {
     const res = await request(app.getHttpServer())
-      .post(`/v1/workspaces/${testWorkspaceEditor}/test-posts`)
+      .post(`/api/v1/workspaces/${testWorkspaceEditor}/test-posts`)
       .set('Cookie', sessionCookie);
 
     expect(res.status).toBe(403);
     expect(res.body.error.message).toBe('CSRF token mismatch');
   });
 
-  it('/v1/workspaces/:workspaceId/test-posts (POST) - Success with CSRF as EDITOR', async () => {
+  it('/api/v1/workspaces/:workspaceId/test-posts (POST) - Success with CSRF as EDITOR', async () => {
     const res = await request(app.getHttpServer())
-      .post(`/v1/workspaces/${testWorkspaceEditor}/test-posts`)
+      .post(`/api/v1/workspaces/${testWorkspaceEditor}/test-posts`)
       .set('Cookie', `${sessionCookie}; csrfToken=${csrfToken}`)
       .set('x-csrf-token', csrfToken); // Double submit
 
@@ -197,9 +202,9 @@ describe('AuthController (e2e)', () => {
     expect(res.body.message).toBe('Post created');
   });
 
-  it('/v1/workspaces/:workspaceId/test-posts (POST) - Fails as VIEWER (PermissionGuard)', async () => {
+  it('/api/v1/workspaces/:workspaceId/test-posts (POST) - Fails as VIEWER (PermissionGuard)', async () => {
     const res = await request(app.getHttpServer())
-      .post(`/v1/workspaces/${testWorkspaceViewer}/test-posts`)
+      .post(`/api/v1/workspaces/${testWorkspaceViewer}/test-posts`)
       .set('Cookie', `${sessionCookie}; csrfToken=${csrfToken}`)
       .set('x-csrf-token', csrfToken);
 
@@ -207,9 +212,9 @@ describe('AuthController (e2e)', () => {
     expect(res.body.error.message).toContain('Lacking permission');
   });
 
-  it('/v1/workspaces/:workspaceId/test-posts (POST) - Fails if not a member (WorkspaceGuard)', async () => {
+  it('/api/v1/workspaces/:workspaceId/test-posts (POST) - Fails if not a member (WorkspaceGuard)', async () => {
     const res = await request(app.getHttpServer())
-      .post(`/v1/workspaces/${testWorkspaceNone}/test-posts`)
+      .post(`/api/v1/workspaces/${testWorkspaceNone}/test-posts`)
       .set('Cookie', `${sessionCookie}; csrfToken=${csrfToken}`)
       .set('x-csrf-token', csrfToken);
 
@@ -219,10 +224,10 @@ describe('AuthController (e2e)', () => {
     );
   });
 
-  it('/v1/auth/logout (POST) - success and clears redis', async () => {
+  it('/api/v1/auth/logout (POST) - success and clears redis', async () => {
     // 1. Log in to get a fresh session
     const loginRes = await request(app.getHttpServer())
-      .post('/v1/auth/login')
+      .post('/api/v1/auth/login')
       .send({ email: testUser.email, password: 'correctpassword' });
 
     const cookies = loginRes.headers['set-cookie'] as any as string[];
@@ -233,20 +238,20 @@ describe('AuthController (e2e)', () => {
 
     // 2. Hit protected route successfully
     const meRes = await request(app.getHttpServer())
-      .get('/v1/auth/me')
+      .get('/api/v1/auth/me')
       .set('Cookie', tempSessionCookie);
     expect(meRes.status).toBe(200);
 
     // 3. Log out
     const logoutRes = await request(app.getHttpServer())
-      .post('/v1/auth/logout')
+      .post('/api/v1/auth/logout')
       .set('Cookie', `${tempSessionCookie}; csrfToken=${tempCsrfToken}`)
       .set('x-csrf-token', tempCsrfToken);
     expect(logoutRes.status).toBe(200);
 
     // 4. Hit protected route again with the SAME session cookie and confirm 401
     const checkRes = await request(app.getHttpServer())
-      .get('/v1/auth/me')
+      .get('/api/v1/auth/me')
       .set('Cookie', tempSessionCookie);
 
     expect(checkRes.status).toBe(401);
@@ -258,12 +263,12 @@ describe('AuthController (e2e)', () => {
 
     for (let i = 0; i < 5; i++) {
       await request(app.getHttpServer())
-        .post('/v1/auth/login')
+        .post('/api/v1/auth/login')
         .send({ email, password: 'wrong' });
     }
 
     const res = await request(app.getHttpServer())
-      .post('/v1/auth/login')
+      .post('/api/v1/auth/login')
       .send({ email, password: 'wrong' });
 
     expect(res.status).toBe(429); // Too Many Requests

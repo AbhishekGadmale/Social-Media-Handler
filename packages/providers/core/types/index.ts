@@ -2,6 +2,7 @@ export interface AuthUrlInput {
   workspaceId: string;
   redirectUri: string;
   state: string;
+  codeChallenge?: string;
 }
 
 export interface OAuthCredentials {
@@ -21,6 +22,7 @@ export interface SocialProfile {
 export interface RawAccountMetrics {
   followersCount: number;
   followingCount?: number;
+  viewCount?: number;
   engagement?: number;
 }
 
@@ -76,3 +78,4 @@ export interface NormalizedWebhookEvent {
   payload: any;
   timestamp: Date;
 }
+

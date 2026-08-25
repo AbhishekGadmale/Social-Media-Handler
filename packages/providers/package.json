@@ -9,11 +9,14 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint \"{core,test}/**/*.ts\""
   },
-  "dependencies": {},
   "devDependencies": {
     "@agency-os/config": "workspace:*",
+    "@eslint/js": "^9.18.0",
+    "@types/node": "^20.0.0",
+    "eslint": "^10.9.0",
+    "globals": "^17.0.0",
     "typescript": "^5.0.0",
-    "vitest": "^1.4.0",
-    "@types/node": "^20.0.0"
+    "typescript-eslint": "^8.20.0",
+    "vitest": "^1.4.0"
   }
 }

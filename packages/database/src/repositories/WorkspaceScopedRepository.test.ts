@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient, Prisma, SocialAccount } from '@prisma/client';
-import { WorkspaceScopedRepository } from './WorkspaceScopedRepository';
-import { generateId } from '../id';
+import { WorkspaceScopedRepository } from './WorkspaceScopedRepository.js';
+import { generateId } from '../id.js';
 
 class SocialAccountRepository extends WorkspaceScopedRepository<
   Prisma.SocialAccountDelegate,
@@ -24,6 +24,10 @@ describe('WorkspaceScopedRepository Isolation', () => {
   let socialAccountBId: string;
 
   beforeAll(async () => {
+    if (!process.env.DATABASE_URL || !process.env.DATABASE_URL.includes('test')) {
+      throw new Error('SAFETY CHECK FAILED: Tests that clear the database must run against a test database. DATABASE_URL does not contain "test".');
+    }
+
     orgId = generateId();
     await prisma.organization.create({
       data: { id: orgId, name: 'Test Org' },

@@ -1,1 +1,1 @@
-export * from './linkedin.provider';
+export * from './linkedin.provider.js';

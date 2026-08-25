@@ -79,7 +79,7 @@ export class AuthController {
     const memberships = await this.memberRepo.findMembershipsByUserId(user.id);
 
     // Exclude password
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+
     const { hashedPassword: _hashedPassword, ...userWithoutPassword } = user;
 
     return {

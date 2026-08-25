@@ -1,4 +1,3 @@
-/* eslint-disable no-restricted-imports */
 import {
   Global,
   Module,
@@ -9,6 +8,7 @@ import {
   PrismaClient,
   UserRepository,
   WorkspaceMemberRepository,
+  SocialAccountRepository,
 } from '@agency-os/database';
 import { SessionManager } from '@agency-os/session';
 import Redis from 'ioredis';
@@ -39,6 +39,10 @@ const providers: Provider[] = [
   {
     provide: WorkspaceMemberRepository,
     useValue: new WorkspaceMemberRepository(prisma),
+  },
+  {
+    provide: SocialAccountRepository,
+    useValue: new SocialAccountRepository(prisma),
   },
 ];
 

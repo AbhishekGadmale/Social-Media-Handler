@@ -1,5 +1,5 @@
-import { ISocialProvider } from '../interfaces/ISocialProvider';
-import { ProviderCapabilityError } from '../errors';
+import { ISocialProvider } from '../interfaces/ISocialProvider.js';
+import { ProviderCapabilityError } from '../errors/index.js';
 
 /**
  * Safely invokes an optional capability method on a social provider.

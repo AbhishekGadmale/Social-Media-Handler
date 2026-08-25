@@ -4,9 +4,9 @@ import {
   SocialProfile,
   CapabilityContext,
   ProviderCapabilities,
-} from '../core/types';
-import { ISocialProvider } from '../core/interfaces/ISocialProvider';
-import { resolveCapabilities } from '../core/capability-resolver';
+} from '../core/types/index.js';
+import { ISocialProvider } from '../core/interfaces/ISocialProvider.js';
+import { resolveCapabilities } from '../core/capability-resolver.js';
 import crypto from 'node:crypto';
 
 export class LinkedInProvider implements ISocialProvider {

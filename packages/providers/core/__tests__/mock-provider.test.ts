@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { MockLimitedProvider, MockFullProvider } from './fixtures/mock-provider';
-import { ProviderCapabilityError } from '../errors';
-import { invokeCapability } from '../utils/invoke-capability';
-import { OAuthCredentials } from '../types';
+import { MockLimitedProvider, MockFullProvider } from './fixtures/mock-provider.js';
+import { ProviderCapabilityError } from '../errors/index.js';
+import { invokeCapability } from '../utils/invoke-capability.js';
+import { OAuthCredentials } from '../types/index.js';
 
 describe('Mock Provider via invokeCapability', () => {
   const credentials: OAuthCredentials = { accessToken: 'test-token' };

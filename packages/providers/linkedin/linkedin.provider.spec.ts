@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { LinkedInProvider } from './linkedin.provider';
+import { LinkedInProvider } from './linkedin.provider.js';
 
 // Minimal mock for global fetch
 const mockFetch = vi.fn();

@@ -21,6 +21,7 @@ enum SocialProvider {
   LINKEDIN
   TWITTER
   TIKTOK
+  YOUTUBE
 }
 
 enum SocialAccountStatus {
@@ -42,6 +43,7 @@ enum SyncRunStatus {
   RUNNING
   COMPLETED
   FAILED
+  SKIPPED
 }
 
 model User {

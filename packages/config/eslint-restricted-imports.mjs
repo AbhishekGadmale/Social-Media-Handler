@@ -29,7 +29,7 @@ export const restrictedPrismaImports = {
 
 export const restrictedCryptoImports = {
   files: ["**/*.ts"],
-  ignores: ["**/repositories/**/*.ts", "**/oauth/**/*.ts", "**/crypto/**/*.ts"],
+  ignores: ["**/repositories/**/*.ts", "**/oauth/**/*.ts", "**/crypto/**/*.ts", "**/worker/src/sync/**/*.ts"],
   rules: {
     "no-restricted-imports": [
       "error",

@@ -1,15 +1,16 @@
 {
-  "compilerOptions": {
-    "outDir": "./dist",
-    "rootDir": ".",
-    "moduleResolution": "node",
-    "target": "es2022",
-    "module": "commonjs",
-    "strict": true,
-    "declaration": true,
-    "esModuleInterop": true,
-    "skipLibCheck": true
-  },
-  "include": ["core/**/*", "index.ts"],
-  "exclude": ["node_modules", "dist"]
+    "compilerOptions":  {
+                            "outDir":  "./dist",
+                            "rootDir":  ".",
+                            "declaration":  true
+                        },
+    "include":  [
+                    "core/**/*",
+                    "index.ts"
+                ],
+    "exclude":  [
+                    "node_modules",
+                    "dist"
+                ],
+    "extends":  "../config/tsconfig.base.json"
 }
