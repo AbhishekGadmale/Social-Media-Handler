@@ -20,7 +20,9 @@ export class AllExceptionsFilter implements ExceptionFilter {
 
     // In a real app we might grab a trace ID from OpenTelemetry
     const requestId =
-      (request.headers['x-request-id'] as string) || generateId();
+      (request as any).id ||
+      (request.headers['x-request-id'] as string) ||
+      generateId();
 
     const status =
       exception instanceof HttpException
@@ -42,18 +44,29 @@ export class AllExceptionsFilter implements ExceptionFilter {
         ? exception.name
         : 'InternalServerError';
 
-    if (exception instanceof Error) {
-      this.logger.error(`[${requestId}] ${exception.message}`, exception.stack);
-      if ('code' in exception || 'meta' in exception) {
+    const is5xx = status >= 500;
+    if (is5xx) {
+      if (exception instanceof Error) {
         this.logger.error(
-          `[${requestId}] Additional Error Details: ${JSON.stringify({
-            code: (exception as any).code,
-            meta: (exception as any).meta,
-          })}`,
+          { err: exception, requestId },
+          `[${requestId}] ${exception.message}`,
+        );
+        if ('code' in exception || 'meta' in exception) {
+          this.logger.error(
+            {
+              requestId,
+              code: (exception as any).code,
+              meta: (exception as any).meta,
+            },
+            `[${requestId}] Additional Error Details`,
+          );
+        }
+      } else {
+        this.logger.error(
+          { exception, requestId },
+          `[${requestId}] Unhandled exception`,
         );
       }
-    } else {
-      this.logger.error(`[${requestId}] Unhandled exception:`, exception);
     }
 
     response.status(status).json({

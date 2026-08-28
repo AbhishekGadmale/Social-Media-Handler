@@ -1,11 +1,13 @@
 import { vi, describe, it, expect, beforeEach } from 'vitest';
 import { Test, TestingModule } from '@nestjs/testing';
 import { AccountsController } from './accounts.controller';
+import { AccountsService } from './accounts.service';
 import { Queue } from 'bullmq';
 import { getQueueToken } from '@nestjs/bullmq';
 import { PermissionGuard } from '../auth/guards/permission.guard';
 import { AuthGuard } from '../auth/guards/auth.guard';
 import { WorkspaceGuard } from '../auth/guards/workspace.guard';
+import { AuditService } from '../core/audit.service';
 
 describe('AccountsController', () => {
   let controller: AccountsController;
@@ -23,6 +25,14 @@ describe('AccountsController', () => {
           provide: getQueueToken('sync'),
           useValue: queueMock,
         },
+        {
+          provide: AccountsService,
+          useValue: { listWorkspaceAccounts: vi.fn() },
+        },
+        {
+          provide: AuditService,
+          useValue: { logAction: vi.fn() },
+        },
       ],
     })
       .overrideGuard(PermissionGuard)
@@ -37,7 +47,10 @@ describe('AccountsController', () => {
   });
 
   it('Manual trigger endpoint enqueues correctly and returns a jobId', async () => {
-    const res = await controller.triggerSync('ws-1', 'acc-1');
+    const res = await controller.triggerSync('ws-1', 'acc-1', {
+      id: 'req-1',
+      user: { id: 'u-1' },
+    } as any);
     expect(queueMock.add).toHaveBeenCalledWith(
       'sync-account',
       {

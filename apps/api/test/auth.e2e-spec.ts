@@ -35,8 +35,13 @@ describe('AuthController (e2e)', () => {
     prisma = app.get<PrismaClient>(PrismaClient);
     redis = app.get<Redis>('REDIS_CLIENT');
 
-    if (!process.env.DATABASE_URL || !process.env.DATABASE_URL.includes('test')) {
-      throw new Error('SAFETY CHECK FAILED: Tests that clear the database must run against a test database. DATABASE_URL does not contain "test".');
+    if (
+      !process.env.DATABASE_URL ||
+      !process.env.DATABASE_URL.includes('test')
+    ) {
+      throw new Error(
+        'SAFETY CHECK FAILED: Tests that clear the database must run against a test database. DATABASE_URL does not contain "test".',
+      );
     }
 
     // Setup Test Data

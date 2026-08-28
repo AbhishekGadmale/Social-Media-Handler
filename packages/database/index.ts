@@ -7,3 +7,4 @@ export * from './src/repositories/UserRepository.js';
 export * from './src/repositories/WorkspaceMemberRepository.js';
 export * from './src/repositories/SocialAccountRepository.js';
 export * from './src/crypto/encryption.js';
+export * from './src/repositories/AuditLogRepository.js';

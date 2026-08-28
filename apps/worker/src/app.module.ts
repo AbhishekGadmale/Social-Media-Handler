@@ -6,8 +6,12 @@ import { SyncModule } from './sync/sync.module';
 
 import { BullModule } from '@nestjs/bullmq';
 
+import { LoggerModule } from 'nestjs-pino';
+import { loggerConfig } from './logger.config';
+
 @Module({
   imports: [
+    LoggerModule.forRoot(loggerConfig),
     CoreModule,
     BullModule.forRoot({
       connection: {

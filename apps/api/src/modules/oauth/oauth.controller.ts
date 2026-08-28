@@ -8,64 +8,131 @@ import {
   Req,
   Res,
   ForbiddenException,
+  ParseUUIDPipe,
 } from '@nestjs/common';
+import { ParseSocialProviderPipe } from './pipes/parse-social-provider.pipe';
 import { OAuthService } from './oauth.service';
 import { AuthGuard } from '../auth/guards/auth.guard';
 import { WorkspaceGuard } from '../auth/guards/workspace.guard';
 import { PermissionGuard } from '../auth/guards/permission.guard';
 import { RequirePermission } from '../auth/decorators/permission.decorator';
 import type { Request, Response } from 'express';
+import { SocialProvider } from '@agency-os/database';
+
+import { OAuthCallbackQueryDto } from './dto/oauth-callback-query.dto';
+
+import { Throttle } from '@nestjs/throttler';
+import { RateLimitPolicies } from '../core/rate-limit.policies';
+
+import { AuditAction } from '@agency-os/database';
+import { AuditService } from '../core/audit.service';
 
 @Controller()
 export class OAuthController {
-  constructor(private readonly oauthService: OAuthService) {}
+  constructor(
+    private readonly oauthService: OAuthService,
+    private readonly auditService: AuditService,
+  ) {}
 
+  @Throttle({ default: RateLimitPolicies.expensive })
   @Post('v1/workspaces/:workspaceId/oauth/:provider/connect')
   @UseGuards(AuthGuard, WorkspaceGuard, PermissionGuard)
   @RequirePermission('accounts.connect')
   async connectProvider(
-    @Param('workspaceId') workspaceId: string,
-    @Param('provider') provider: string,
+    @Param('workspaceId', ParseUUIDPipe) workspaceId: string,
+    @Param('provider', ParseSocialProviderPipe)
+    provider: SocialProvider,
     @Req() req: Request,
   ) {
     const userId = req.user!.id;
-    // Base URL is assumed or passed from request, here we use a placeholder or req.protocol + req.get('host')
-    // We'll just hardcode callback for now or build it
-    const redirectUri = `${req.protocol}://${req.get('host')}/api/v1/oauth/${provider}/callback`;
+    const redirectUri = `${req.protocol}://${req.get('host')}/api/v1/oauth/${provider.toLowerCase()}/callback`;
     const url = await this.oauthService.generateAuthUrl(
       provider,
       userId,
       workspaceId,
       redirectUri,
     );
+
+    this.auditService.logAction({
+      action: AuditAction.OAUTH_CONNECTION_STARTED,
+      workspaceId,
+      actorId: userId,
+      targetType: 'SocialProvider',
+      targetId: provider,
+      requestId: (req as any).id,
+      metadata: { provider },
+    });
+
     return { url };
   }
 
   @Get('v1/oauth/:provider/callback')
   @UseGuards(AuthGuard) // Only requires AuthGuard, we validate user/workspace via state
   async callbackProvider(
-    @Param('provider') provider: string,
-    @Query('code') code: string,
-    @Query('state') state: string,
+    @Param('provider', ParseSocialProviderPipe)
+    provider: SocialProvider,
+    @Query() query: OAuthCallbackQueryDto,
     @Req() req: Request,
     @Res() res: Response,
   ) {
+    const { code, state, error } = query;
+    const requestId = (req as any).id;
+    const userId = req.user!.id;
+
+    if (error) {
+      this.auditService.logAction({
+        action: AuditAction.OAUTH_CONNECTION_FAILED,
+        actorId: userId,
+        targetType: 'SocialProvider',
+        targetId: provider,
+        requestId,
+        metadata: { provider, reason: 'OAUTH_PROVIDER_DENIED' },
+      });
+      const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+      return res.redirect(`${frontendUrl}/dashboard?error=oauth_failed`);
+    }
+
     if (!code || !state) {
       throw new ForbiddenException('Missing code or state');
     }
 
-    const userId = req.user!.id;
-    const redirectUri = `${req.protocol}://${req.get('host')}/api/v1/oauth/${provider}/callback`;
+    const redirectUri = `${req.protocol}://${req.get('host')}/api/v1/oauth/${provider.toLowerCase()}/callback`;
 
-    await this.oauthService.handleOAuthCallback(
-      provider,
-      userId,
-      state,
-      code,
-      redirectUri,
-    );
+    try {
+      const { workspaceId, socialAccountId, isNew } =
+        await this.oauthService.handleOAuthCallback(
+          provider,
+          userId,
+          state,
+          code,
+          redirectUri,
+        );
 
-    // Redirect to some success page or return ok
-    res.json({ success: true, message: `${provider} connected successfully` });
+      this.auditService.logAction({
+        action: isNew
+          ? AuditAction.OAUTH_CONNECTION_SUCCEEDED
+          : AuditAction.OAUTH_RECONNECTED,
+        workspaceId,
+        actorId: userId,
+        targetType: 'SocialAccount',
+        targetId: socialAccountId,
+        requestId,
+        metadata: { provider },
+      });
+
+      const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+      return res.redirect(`${frontendUrl}/${workspaceId}/accounts`);
+    } catch (err: any) {
+      this.auditService.logAction({
+        action: AuditAction.OAUTH_CONNECTION_FAILED,
+        actorId: userId,
+        targetType: 'SocialProvider',
+        targetId: provider,
+        requestId,
+        metadata: { provider, reason: 'OAUTH_CALLBACK_FAILED' },
+      });
+      const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+      return res.redirect(`${frontendUrl}/dashboard?error=oauth_failed`);
+    }
   }
 }

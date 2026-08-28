@@ -24,8 +24,19 @@ export class SocialAccountRepository {
       keyVersion: number;
       expiresAt?: Date | null;
     }
-  ): Promise<SocialAccount> {
+  ): Promise<{ account: SocialAccount; isNew: boolean }> {
     return this.prisma.$transaction(async (tx) => {
+      const existing = await tx.socialAccount.findUnique({
+        where: {
+          provider_externalId: {
+            provider: accountData.provider,
+            externalId: accountData.externalId,
+          },
+        },
+      });
+
+      const isNew = !existing;
+
       const account = await tx.socialAccount.upsert({
         where: {
           provider_externalId: {
@@ -62,7 +73,7 @@ export class SocialAccountRepository {
         },
       });
 
-      return account;
+      return { account, isNew };
     });
   }
 }

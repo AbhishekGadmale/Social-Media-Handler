@@ -20,24 +20,56 @@ import type { User } from '@agency-os/database';
 import { WorkspaceMemberRepository } from '@agency-os/database';
 import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
 import * as crypto from 'crypto';
+import { LoginDto } from './dto/login.dto';
+
+import { RateLimitPolicies } from '../core/rate-limit.policies';
+
+import { AuditAction } from '@agency-os/database';
+import { AuditService } from '../core/audit.service';
 
 @Controller('v1/auth')
 export class AuthController {
   constructor(
     private readonly authService: AuthService,
     private readonly memberRepo: WorkspaceMemberRepository,
+    private readonly auditService: AuditService,
   ) {}
 
-  @UseGuards(ThrottlerGuard)
-  @Throttle({ default: { limit: 5, ttl: 900000 } })
+  @Throttle({ default: RateLimitPolicies.auth })
   @Post('login')
   @HttpCode(HttpStatus.OK)
   async login(
-    @Body() body: Record<string, string>,
+    @Body() body: LoginDto,
+    @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
   ) {
     const { email, password } = body;
-    const sessionId = await this.authService.login(email, password);
+    const requestId = (req as any).id;
+    let sessionId: string;
+    let user: User;
+
+    try {
+      const result = await this.authService.login(email, password);
+      sessionId = result.sessionId;
+      user = result.user;
+
+      this.auditService.logAction({
+        action: AuditAction.AUTH_LOGIN_SUCCEEDED,
+        actorId: user.id,
+        targetType: 'User',
+        targetId: user.id,
+        requestId,
+      });
+    } catch (e) {
+      this.auditService.logAction({
+        action: AuditAction.AUTH_LOGIN_FAILED,
+        targetType: 'User',
+        requestId,
+        metadata: { reason: 'invalid_credentials' },
+      });
+      throw e;
+    }
+
     const csrfToken = crypto.randomBytes(32).toString('hex');
 
     // Set cookies
@@ -63,8 +95,21 @@ export class AuthController {
   @HttpCode(HttpStatus.OK)
   async logout(@Req() req: Request, @Res({ passthrough: true }) res: Response) {
     const sessionId = req.cookies?.session as string | undefined;
+    const requestId = (req as any).id;
+    const user = (req as any).user as User | undefined;
+
     if (sessionId) {
       await this.authService.logout(sessionId);
+    }
+
+    if (user) {
+      this.auditService.logAction({
+        action: AuditAction.AUTH_LOGOUT,
+        actorId: user.id,
+        targetType: 'User',
+        targetId: user.id,
+        requestId,
+      });
     }
 
     res.clearCookie('session');

@@ -10,7 +10,10 @@ export class AuthService {
     private readonly sessionManager: SessionManager,
   ) {}
 
-  async login(email: string, passwordPlain: string): Promise<string> {
+  async login(
+    email: string,
+    passwordPlain: string,
+  ): Promise<{ sessionId: string; user: any }> {
     const user = await this.userRepository.findByEmail(email);
     if (!user) {
       throw new UnauthorizedException('Invalid credentials');
@@ -22,7 +25,7 @@ export class AuthService {
     }
 
     const sessionId = await this.sessionManager.createSession(user.id);
-    return sessionId;
+    return { sessionId, user };
   }
 
   async logout(sessionId: string): Promise<void> {

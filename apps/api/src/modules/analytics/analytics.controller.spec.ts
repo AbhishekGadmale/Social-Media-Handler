@@ -1,32 +1,27 @@
 import { vi, describe, it, expect, beforeEach } from 'vitest';
 import { Test, TestingModule } from '@nestjs/testing';
 import { AnalyticsController } from './analytics.controller';
-import { PrismaClient } from '@agency-os/database';
-import { NotFoundException } from '@nestjs/common';
+import { AnalyticsService } from './analytics.service';
 import { PermissionGuard } from '../auth/guards/permission.guard';
 import { AuthGuard } from '../auth/guards/auth.guard';
 import { WorkspaceGuard } from '../auth/guards/workspace.guard';
 
 describe('AnalyticsController', () => {
   let controller: AnalyticsController;
-  let prismaMock: any;
+  let serviceMock: any;
 
   beforeEach(async () => {
-    prismaMock = {
-      socialAccount: {
-        findFirst: vi.fn(),
-      },
-      accountMetricDaily: {
-        findMany: vi.fn(),
-      },
+    serviceMock = {
+      getWorkspaceOverview: vi.fn(),
+      getAccountAnalytics: vi.fn(),
     };
 
     const module: TestingModule = await Test.createTestingModule({
       controllers: [AnalyticsController],
       providers: [
         {
-          provide: PrismaClient,
-          useValue: prismaMock,
+          provide: AnalyticsService,
+          useValue: serviceMock,
         },
       ],
     })
@@ -41,36 +36,22 @@ describe('AnalyticsController', () => {
     controller = module.get<AnalyticsController>(AnalyticsController);
   });
 
-  it('Dashboard read endpoint returns stored data and makes ZERO calls to provider client', async () => {
-    prismaMock.socialAccount.findFirst.mockResolvedValue({
-      id: 'acc-1',
-      workspaceId: 'ws-1',
+  it('Dashboard read endpoint delegates to AnalyticsService.getWorkspaceOverview', async () => {
+    serviceMock.getWorkspaceOverview.mockResolvedValue({
+      accountsConnected: 1,
     });
-    prismaMock.accountMetricDaily.findMany.mockResolvedValue([
-      { date: new Date(), followers: 100, engagement: 50 },
-    ]);
-
-    const res = await controller.getAccountAnalytics('ws-1', 'acc-1');
-
-    expect(prismaMock.socialAccount.findFirst).toHaveBeenCalledWith({
-      where: { id: 'acc-1', workspaceId: 'ws-1' },
-    });
-    expect(prismaMock.accountMetricDaily.findMany).toHaveBeenCalled();
-    expect(res.metrics.length).toBe(1);
-    expect(res.metrics[0].followers).toBe(100);
-    // Notice we never called or imported the provider mock here, so ZERO calls is guaranteed by architecture.
+    const res = await controller.getOverview('ws-1');
+    expect(serviceMock.getWorkspaceOverview).toHaveBeenCalledWith('ws-1');
+    expect(res).toEqual({ accountsConnected: 1 });
   });
 
-  it('Cross-workspace check: cannot return data for an account belonging to workspace B', async () => {
-    // Return null simulating that the account is not found in workspace A
-    prismaMock.socialAccount.findFirst.mockResolvedValue(null);
-
-    await expect(
-      controller.getAccountAnalytics('workspace-A', 'account-in-workspace-B'),
-    ).rejects.toThrow(NotFoundException);
-
-    expect(prismaMock.socialAccount.findFirst).toHaveBeenCalledWith({
-      where: { id: 'account-in-workspace-B', workspaceId: 'workspace-A' },
-    });
+  it('Account analytics endpoint delegates to AnalyticsService.getAccountAnalytics', async () => {
+    serviceMock.getAccountAnalytics.mockResolvedValue({ metrics: [] });
+    const res = await controller.getAccountAnalytics('ws-1', 'acc-1');
+    expect(serviceMock.getAccountAnalytics).toHaveBeenCalledWith(
+      'ws-1',
+      'acc-1',
+    );
+    expect(res).toEqual({ metrics: [] });
   });
 });

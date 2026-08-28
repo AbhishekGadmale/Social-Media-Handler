@@ -3,6 +3,7 @@ import {
   Inject,
   ForbiddenException,
   BadRequestException,
+  Logger,
 } from '@nestjs/common';
 import Redis from 'ioredis';
 import {
@@ -14,12 +15,17 @@ import {
 import { providerRegistry } from '@agency-os/providers';
 import { OAuthStateSchema } from '@agency-os/shared';
 import crypto from 'node:crypto';
+import { InjectQueue } from '@nestjs/bullmq';
+import { Queue } from 'bullmq';
 
 @Injectable()
 export class OAuthService {
+  private readonly logger = new Logger(OAuthService.name);
+
   constructor(
     @Inject('REDIS_CLIENT') private readonly redis: Redis,
     private readonly socialAccountRepo: SocialAccountRepository,
+    @InjectQueue('sync') private readonly syncQueue: Queue,
   ) {}
 
   private validateProvider(providerName: string): SocialProvider {
@@ -33,12 +39,12 @@ export class OAuthService {
   }
 
   async generateAuthUrl(
-    providerName: string,
+    providerName: SocialProvider,
     userId: string,
     workspaceId: string,
     redirectUri: string,
   ): Promise<string> {
-    const provider = providerRegistry.get(providerName);
+    const provider = providerRegistry.get(providerName.toLowerCase());
     if (!provider) {
       throw new BadRequestException(
         `Provider ${providerName} is not supported`,
@@ -79,13 +85,13 @@ export class OAuthService {
   }
 
   async handleOAuthCallback(
-    providerName: string,
+    providerName: SocialProvider,
     userId: string,
     state: string,
     code: string,
     redirectUri: string,
-  ): Promise<void> {
-    const provider = providerRegistry.get(providerName);
+  ): Promise<{ workspaceId: string; socialAccountId: string; isNew: boolean }> {
+    const provider = providerRegistry.get(providerName.toLowerCase());
     if (!provider) {
       throw new BadRequestException(
         `Provider ${providerName} is not supported`,
@@ -150,27 +156,53 @@ export class OAuthService {
     }
 
     // Save to DB
-    await this.socialAccountRepo.upsertWithConnection(
-      workspaceId,
-      {
-        id: generateId(),
-        provider: validProviderEnum,
-        externalId: profile.id,
-        name: profile.name,
-        capabilities,
-        status: 'ACTIVE',
-      },
-      {
-        id: generateId(),
-        encryptedAccessToken: encAccess.encrypted,
-        accessTokenIv: encAccess.iv,
-        accessTokenAuthTag: encAccess.authTag,
-        encryptedRefreshToken: encRefresh ? encRefresh.encrypted : null,
-        refreshTokenIv: encRefresh ? encRefresh.iv : null,
-        refreshTokenAuthTag: encRefresh ? encRefresh.authTag : null,
-        keyVersion: encAccess.keyVersion,
-        expiresAt: credentials.expiresAt,
-      },
-    );
+    const { account, isNew } =
+      await this.socialAccountRepo.upsertWithConnection(
+        workspaceId,
+        {
+          id: generateId(),
+          provider: validProviderEnum,
+          externalId: profile.id,
+          name: profile.name,
+          capabilities,
+          status: 'ACTIVE',
+        },
+        {
+          id: generateId(),
+          encryptedAccessToken: encAccess.encrypted,
+          accessTokenIv: encAccess.iv,
+          accessTokenAuthTag: encAccess.authTag,
+          encryptedRefreshToken: encRefresh ? encRefresh.encrypted : null,
+          refreshTokenIv: encRefresh ? encRefresh.iv : null,
+          refreshTokenAuthTag: encRefresh ? encRefresh.authTag : null,
+          keyVersion: encAccess.keyVersion,
+          expiresAt: credentials.expiresAt,
+        },
+      );
+
+    try {
+      await this.syncQueue.add(
+        'sync-account',
+        {
+          socialAccountId: account.id,
+          workspaceId,
+        },
+        {
+          attempts: 3,
+          backoff: { type: 'exponential', delay: 1000 },
+          jobId: `initial-sync-${account.id}-${Date.now()}`,
+        },
+      );
+      this.logger.log(`Enqueued initial sync job for account ${account.id}`);
+    } catch (err) {
+      // Do not fail the OAuth connection if the queue add fails
+      this.logger.error(
+        `Failed to enqueue initial sync for account ${account.id}`,
+        err,
+      );
+    }
+
+    // ... then the service proceeds ...
+    return { workspaceId, socialAccountId: account.id, isNew };
   }
 }

@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { BullModule } from '@nestjs/bullmq';
 import { AccountsController } from './accounts.controller';
+import { AccountsService } from './accounts.service';
 
 @Module({
   imports: [
@@ -13,5 +14,6 @@ import { AccountsController } from './accounts.controller';
     }),
   ],
   controllers: [AccountsController],
+  providers: [AccountsService],
 })
 export class AccountsModule {}

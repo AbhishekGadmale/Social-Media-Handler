@@ -46,8 +46,13 @@ describe('SyncProcessor', () => {
 
     processor = module.get<SyncProcessor>(SyncProcessor);
 
-    if (!process.env.DATABASE_URL || !process.env.DATABASE_URL.includes('test')) {
-      throw new Error('SAFETY CHECK FAILED: Tests that clear the database must run against a test database. DATABASE_URL does not contain "test".');
+    if (
+      !process.env.DATABASE_URL ||
+      !process.env.DATABASE_URL.includes('test')
+    ) {
+      throw new Error(
+        'SAFETY CHECK FAILED: Tests that clear the database must run against a test database. DATABASE_URL does not contain "test".',
+      );
     }
 
     await prisma.accountMetricDaily.deleteMany({});

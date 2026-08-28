@@ -1,7 +1,12 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { OAuthService } from './oauth.service';
 import { ForbiddenException, BadRequestException } from '@nestjs/common';
-import { SocialAccountRepository } from '@agency-os/database';
+import {
+  SocialAccountRepository,
+  encrypt,
+  generateId,
+  SocialProvider,
+} from '@agency-os/database';
 import nock from 'nock';
 import { vi } from 'vitest';
 
@@ -9,6 +14,7 @@ describe('OAuthService', () => {
   let service: OAuthService;
   let mockRedis: any;
   let mockPrisma: any;
+  let mockSyncQueue: any;
 
   beforeAll(() => {
     process.env.TOKEN_ENCRYPTION_KEY =
@@ -35,9 +41,14 @@ describe('OAuthService', () => {
     // Repo mock
     const mockUpsertWithConnection = vi
       .fn()
-      .mockResolvedValue({ id: 'account-123' });
+      .mockResolvedValue({ account: { id: 'account-123' }, isNew: true });
     mockPrisma = {
       upsertWithConnection: mockUpsertWithConnection,
+    };
+
+    // Queue mock
+    mockSyncQueue = {
+      add: vi.fn().mockResolvedValue({ id: 'job-123' }),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -50,6 +61,10 @@ describe('OAuthService', () => {
         {
           provide: SocialAccountRepository,
           useValue: mockPrisma,
+        },
+        {
+          provide: 'BullQueue_sync',
+          useValue: mockSyncQueue,
         },
       ],
     }).compile();
@@ -65,7 +80,7 @@ describe('OAuthService', () => {
   it('Full happy path: connect -> callback with valid code -> account created, tokens encrypted', async () => {
     // 1. Connect
     const url = await service.generateAuthUrl(
-      'linkedin',
+      SocialProvider.LINKEDIN,
       'b0e4c6c0-6f0a-47b8-80e9-74f4b4c730e2',
       'f3e098a0-2f94-4d89-9e8c-5a9d82136e09',
       'http://localhost/callback',
@@ -93,7 +108,7 @@ describe('OAuthService', () => {
 
     // 3. Callback
     await service.handleOAuthCallback(
-      'linkedin',
+      SocialProvider.LINKEDIN,
       'b0e4c6c0-6f0a-47b8-80e9-74f4b4c730e2',
       state,
       'auth-code-123',
@@ -106,7 +121,7 @@ describe('OAuthService', () => {
     expect(mockPrisma.upsertWithConnection).toHaveBeenCalledWith(
       'f3e098a0-2f94-4d89-9e8c-5a9d82136e09',
       expect.objectContaining({
-        provider: 'LINKEDIN',
+        provider: SocialProvider.LINKEDIN,
         externalId: 'li-user-123',
         capabilities: ['ACCOUNT_READ'],
       }),
@@ -131,7 +146,7 @@ describe('OAuthService', () => {
   it('Callback with missing state -> rejected', async () => {
     await expect(
       service.handleOAuthCallback(
-        'linkedin',
+        SocialProvider.LINKEDIN,
         'b0e4c6c0-6f0a-47b8-80e9-74f4b4c730e2',
         'non-existent-state',
         'code',
@@ -144,7 +159,7 @@ describe('OAuthService', () => {
     // Simulate expired state by not setting it in our mock store
     await expect(
       service.handleOAuthCallback(
-        'linkedin',
+        SocialProvider.LINKEDIN,
         'b0e4c6c0-6f0a-47b8-80e9-74f4b4c730e2',
         'expired-state',
         'code',
@@ -155,7 +170,7 @@ describe('OAuthService', () => {
 
   it('Callback with state reused twice -> second attempt rejected', async () => {
     const url = await service.generateAuthUrl(
-      'linkedin',
+      SocialProvider.LINKEDIN,
       'b0e4c6c0-6f0a-47b8-80e9-74f4b4c730e2',
       'f3e098a0-2f94-4d89-9e8c-5a9d82136e09',
       'http://localhost/callback',
@@ -171,7 +186,7 @@ describe('OAuthService', () => {
 
     // First attempt succeeds
     await service.handleOAuthCallback(
-      'linkedin',
+      SocialProvider.LINKEDIN,
       'b0e4c6c0-6f0a-47b8-80e9-74f4b4c730e2',
       state,
       'code',
@@ -181,7 +196,7 @@ describe('OAuthService', () => {
     // Second attempt fails because state is deleted
     await expect(
       service.handleOAuthCallback(
-        'linkedin',
+        SocialProvider.LINKEDIN,
         'b0e4c6c0-6f0a-47b8-80e9-74f4b4c730e2',
         state,
         'code',
@@ -192,7 +207,7 @@ describe('OAuthService', () => {
 
   it('Callback with mismatched userId -> rejected', async () => {
     const url = await service.generateAuthUrl(
-      'linkedin',
+      SocialProvider.LINKEDIN,
       'b0e4c6c0-6f0a-47b8-80e9-74f4b4c730e2',
       'f3e098a0-2f94-4d89-9e8c-5a9d82136e09',
       'http://localhost/callback',
@@ -201,7 +216,13 @@ describe('OAuthService', () => {
 
     // Different user attempts to use the state
     await expect(
-      service.handleOAuthCallback('linkedin', 'user-2', state, 'code', 'url'),
+      service.handleOAuthCallback(
+        SocialProvider.LINKEDIN,
+        'user-2',
+        state,
+        'code',
+        'url',
+      ),
     ).rejects.toThrow(ForbiddenException);
   });
 
@@ -213,14 +234,14 @@ describe('OAuthService', () => {
       JSON.stringify({
         userId: 'b0e4c6c0-6f0a-47b8-80e9-74f4b4c730e2',
         workspaceId: 12345, // Invalid, should be string/uuid
-        provider: 'LINKEDIN',
+        provider: SocialProvider.LINKEDIN,
         codeVerifier: 'verifier',
       }),
     );
 
     await expect(
       service.handleOAuthCallback(
-        'linkedin',
+        SocialProvider.LINKEDIN,
         'b0e4c6c0-6f0a-47b8-80e9-74f4b4c730e2',
         badState,
         'code',
@@ -233,7 +254,7 @@ describe('OAuthService', () => {
 
   it('Encrypts access and refresh tokens independently with distinct IVs', async () => {
     const url = await service.generateAuthUrl(
-      'linkedin',
+      SocialProvider.LINKEDIN,
       'b0e4c6c0-6f0a-47b8-80e9-74f4b4c730e2',
       'f3e098a0-2f94-4d89-9e8c-5a9d82136e09',
       'http://localhost/callback',
@@ -250,7 +271,7 @@ describe('OAuthService', () => {
       .reply(200, { sub: '123' });
 
     await service.handleOAuthCallback(
-      'linkedin',
+      SocialProvider.LINKEDIN,
       'b0e4c6c0-6f0a-47b8-80e9-74f4b4c730e2',
       state,
       'code',
@@ -266,7 +287,7 @@ describe('OAuthService', () => {
   it('Rejects an unknown provider string', async () => {
     await expect(
       service.handleOAuthCallback(
-        'fake',
+        'FAKE' as SocialProvider,
         'b0e4c6c0-6f0a-47b8-80e9-74f4b4c730e2',
         'state',
         'code',
@@ -278,7 +299,7 @@ describe('OAuthService', () => {
   it('Full happy path for YouTube: connect -> callback with valid code -> account created, tokens encrypted', async () => {
     // 1. Connect
     const url = await service.generateAuthUrl(
-      'youtube',
+      SocialProvider.YOUTUBE,
       'b0e4c6c0-6f0a-47b8-80e9-74f4b4c730e2',
       'f3e098a0-2f94-4d89-9e8c-5a9d82136e09',
       'http://localhost/callback',
@@ -316,7 +337,7 @@ describe('OAuthService', () => {
 
     // 3. Callback
     await service.handleOAuthCallback(
-      'youtube',
+      SocialProvider.YOUTUBE,
       'b0e4c6c0-6f0a-47b8-80e9-74f4b4c730e2',
       state,
       'auth-code-123',
@@ -329,11 +350,23 @@ describe('OAuthService', () => {
     expect(mockPrisma.upsertWithConnection).toHaveBeenCalledWith(
       'f3e098a0-2f94-4d89-9e8c-5a9d82136e09',
       expect.objectContaining({
-        provider: 'YOUTUBE',
+        provider: SocialProvider.YOUTUBE,
         externalId: 'yt-channel-123',
         capabilities: ['ACCOUNT_READ', 'ANALYTICS_READ'],
       }),
       expect.any(Object),
+    );
+
+    expect(mockSyncQueue.add).toHaveBeenCalledWith(
+      'sync-account',
+      {
+        socialAccountId: 'account-123',
+        workspaceId: 'f3e098a0-2f94-4d89-9e8c-5a9d82136e09',
+      },
+      expect.objectContaining({
+        attempts: 3,
+        jobId: expect.stringContaining('initial-sync-account-123-'),
+      }),
     );
   });
 });

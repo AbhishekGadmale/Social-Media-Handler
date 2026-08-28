@@ -9,9 +9,11 @@ import {
   UserRepository,
   WorkspaceMemberRepository,
   SocialAccountRepository,
+  AuditLogRepository,
 } from '@agency-os/database';
 import { SessionManager } from '@agency-os/session';
 import Redis from 'ioredis';
+import { AuditService } from './audit.service';
 
 const prisma = new PrismaClient();
 const redis = new Redis(process.env.REDIS_URL || 'redis://localhost:6379');
@@ -44,6 +46,11 @@ const providers: Provider[] = [
     provide: SocialAccountRepository,
     useValue: new SocialAccountRepository(prisma),
   },
+  {
+    provide: AuditLogRepository,
+    useValue: new AuditLogRepository(prisma),
+  },
+  AuditService,
 ];
 
 @Global()

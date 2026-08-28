@@ -44,7 +44,8 @@ export class SyncProcessor extends WorkerHost implements OnModuleInit {
     const { socialAccountId, workspaceId } = job.data;
 
     this.logger.log(
-      `Processing sync job ${job.id} for account ${socialAccountId}`,
+      { jobId: job.id, socialAccountId, action: 'sync_job_started' },
+      'Processing sync job',
     );
 
     const syncRun = await this.prisma.syncRun.create({
@@ -68,7 +69,13 @@ export class SyncProcessor extends WorkerHost implements OnModuleInit {
 
       if (account.status !== SocialAccountStatus.ACTIVE) {
         this.logger.log(
-          `Skipping sync for non-active account: ${socialAccountId}`,
+          {
+            jobId: job.id,
+            socialAccountId,
+            action: 'sync_skipped',
+            reason: 'not_active',
+          },
+          'Skipping sync for non-active account',
         );
         await this.completeSyncRun(syncRun.id, SyncRunStatus.SKIPPED, {
           skipped: true,
@@ -87,6 +94,15 @@ export class SyncProcessor extends WorkerHost implements OnModuleInit {
           where: { id: socialAccountId },
           data: { status: SocialAccountStatus.REAUTH_REQUIRED },
         });
+        this.logger.log(
+          {
+            jobId: job.id,
+            socialAccountId,
+            action: 'sync_skipped',
+            reason: 'expired_token',
+          },
+          'Skipping sync due to expired token',
+        );
         await this.completeSyncRun(syncRun.id, SyncRunStatus.SKIPPED, {
           skipped: true,
           reason: 'expired_token',
@@ -94,7 +110,10 @@ export class SyncProcessor extends WorkerHost implements OnModuleInit {
         return;
       }
 
-      this.logger.log(`Job ${job.id}: decrypting access token`);
+      this.logger.log(
+        { jobId: job.id, action: 'decrypt_token' },
+        'decrypting access token',
+      );
       const decryptedToken = decrypt({
         encrypted: account.connection.encryptedAccessToken,
         iv: account.connection.accessTokenIv,
@@ -117,7 +136,8 @@ export class SyncProcessor extends WorkerHost implements OnModuleInit {
       };
 
       this.logger.log(
-        `Job ${job.id}: token decrypted, calling provider.getAccountMetrics`,
+        { jobId: job.id, provider: account.provider, action: 'fetch_metrics' },
+        'token decrypted, calling provider.getAccountMetrics',
       );
       const metrics = await invokeCapability(
         provider,
@@ -131,7 +151,8 @@ export class SyncProcessor extends WorkerHost implements OnModuleInit {
       today.setUTCHours(0, 0, 0, 0);
 
       this.logger.log(
-        `Job ${job.id}: metrics received, upserting AccountMetricDaily`,
+        { jobId: job.id, action: 'upsert_metrics' },
+        'metrics received, upserting AccountMetricDaily',
       );
       await this.prisma.accountMetricDaily.upsert({
         where: {
@@ -153,17 +174,25 @@ export class SyncProcessor extends WorkerHost implements OnModuleInit {
         },
       });
 
-      this.logger.log(`Job ${job.id}: upsert complete`);
       await this.completeSyncRun(syncRun.id, SyncRunStatus.COMPLETED, {
         followers: metrics.followersCount,
       });
 
-      this.logger.log(`Job ${job.id} completed successfully`);
+      this.logger.log(
+        { jobId: job.id, socialAccountId, action: 'sync_completed' },
+        'Job completed successfully',
+      );
     } catch (error: any) {
       if (error instanceof ProviderCapabilityError) {
         // skipped / no-op
         this.logger.log(
-          `Capability not supported for provider, skipping. error: ${error.message}`,
+          {
+            jobId: job.id,
+            action: 'sync_skipped',
+            reason: 'capability_unsupported',
+            error: error.message,
+          },
+          'Capability not supported for provider, skipping.',
         );
         await this.completeSyncRun(syncRun.id, SyncRunStatus.SKIPPED, {
           skipped: true,
@@ -173,8 +202,8 @@ export class SyncProcessor extends WorkerHost implements OnModuleInit {
       }
 
       this.logger.error(
-        `Error processing job ${job.id}: ${error.message}`,
-        error.stack,
+        { err: error, jobId: job.id, socialAccountId, action: 'sync_failed' },
+        'Error processing job',
       );
 
       await this.prisma.syncRun.update({
@@ -187,6 +216,14 @@ export class SyncProcessor extends WorkerHost implements OnModuleInit {
       });
 
       if (error instanceof ProviderRateLimitError) {
+        this.logger.warn(
+          {
+            jobId: job.id,
+            retryAfter: error.retryAfter,
+            action: 'rate_limit_delay',
+          },
+          'Provider rate limit exceeded',
+        );
         if (error.retryAfter && job.moveToDelayed) {
           await job.moveToDelayed(
             Date.now() + error.retryAfter * 1000,
@@ -200,7 +237,8 @@ export class SyncProcessor extends WorkerHost implements OnModuleInit {
       if (error instanceof ProviderApiError) {
         if (error.statusCode === 401) {
           this.logger.log(
-            `Job ${job.id}: 401 Unauthorized, marking account as REAUTH_REQUIRED`,
+            { jobId: job.id, socialAccountId, action: 'sync_failed_401' },
+            '401 Unauthorized, marking account as REAUTH_REQUIRED',
           );
           await this.prisma.socialAccount.update({
             where: { id: socialAccountId },

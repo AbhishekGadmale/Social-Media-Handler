@@ -210,11 +210,14 @@ model AuditLog {
   action      String
   targetType  String
   targetId    String?
+  requestId   String?
   metadata    Json?
   createdAt   DateTime @default(now())
 
   workspace Workspace? @relation(fields: [workspaceId], references: [id])
 
-  @@index([workspaceId])
-  @@index([actorId])
+  @@index([workspaceId, createdAt])
+  @@index([actorId, createdAt])
+  @@index([action, createdAt])
+  @@index([createdAt])
 }

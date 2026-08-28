@@ -13,3 +13,10 @@ build
 # Prisma
 packages/database/node_modules/
 .prisma/
+
+# Local temporary artifacts
+cookies.txt
+temp.json
+test-results.txt
+fix.js
+trigger.js
