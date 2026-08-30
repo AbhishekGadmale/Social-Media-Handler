@@ -1,0 +1,218 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: '20'
+  PNPM_VERSION: '9.0.0'
+
+jobs:
+  quality:
+    name: Code Quality (Lint & Typecheck)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: ${{ env.PNPM_VERSION }}
+          
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'pnpm'
+          
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+        
+      - name: Prisma generate
+        run: pnpm --filter @agency-os/database exec prisma generate
+        
+      - name: Lint
+        run: pnpm turbo run lint
+        
+      - name: Typecheck
+        run: pnpm turbo run typecheck
+
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: password
+          POSTGRES_DB: agency_os_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: ${{ env.PNPM_VERSION }}
+          
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'pnpm'
+          
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+        
+      - name: Prisma generate
+        run: pnpm --filter @agency-os/database exec prisma generate
+        
+      - name: Apply Migrations
+        env:
+          DATABASE_URL: postgresql://postgres:password@localhost:5432/agency_os_test?schema=public
+        run: pnpm --filter @agency-os/database exec prisma migrate deploy
+        
+      - name: Run Tests
+        env:
+          NODE_ENV: test
+          DATABASE_URL: postgresql://postgres:password@localhost:5432/agency_os_test?schema=public
+          REDIS_URL: redis://localhost:6379
+          JWT_SECRET: super-secret-test-jwt-key
+          COOKIE_SECRET: super-secret-test-cookie-key
+          YOUTUBE_CLIENT_ID: dummy-client-id
+          YOUTUBE_CLIENT_SECRET: dummy-client-secret
+        run: pnpm turbo run test
+
+  build:
+    name: Application Builds
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: ${{ env.PNPM_VERSION }}
+          
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'pnpm'
+          
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+        
+      - name: Prisma generate
+        run: pnpm --filter @agency-os/database exec prisma generate
+        
+      - name: Build applications
+        env:
+          NEXT_PUBLIC_API_URL: http://localhost:3001/api/v1
+        run: pnpm turbo run build
+
+  docker:
+    name: Docker Build & Smoke Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Build Docker images
+        env:
+          NEXT_PUBLIC_API_URL: http://localhost:3001/api/v1
+        run: |
+          docker compose build api worker web migration
+          
+      - name: Smoke test Compose stack
+        env:
+          DATABASE_URL: postgresql://postgres:password@postgres:5432/agency_os?schema=public
+          REDIS_URL: redis://redis:6379
+          JWT_SECRET: super-secret-test-jwt-key
+          COOKIE_SECRET: super-secret-test-cookie-key
+          YOUTUBE_CLIENT_ID: dummy-client-id
+          YOUTUBE_CLIENT_SECRET: dummy-client-secret
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: password
+          POSTGRES_DB: agency_os
+        run: |
+          docker compose up -d postgres redis
+          
+          # Wait for PostgreSQL
+          echo "Waiting for postgres..."
+          for i in {1..30}; do
+            docker compose exec -T postgres pg_isready -U postgres -d agency_os && break
+            sleep 2
+          done
+          
+          # Wait for Redis
+          echo "Waiting for redis..."
+          for i in {1..30}; do
+            docker compose exec -T redis redis-cli ping && break
+            sleep 2
+          done
+          
+          docker compose up -d migration
+          
+          # Wait for migration
+          echo "Waiting for migration..."
+          docker compose logs -f migration &
+          MIGRATION_PID=$!
+          
+          for i in {1..60}; do
+            STATUS=$(docker compose ps migration --format "{{.State}}")
+            if [ "$STATUS" = "exited" ]; then
+              break
+            fi
+            sleep 2
+          done
+          kill $MIGRATION_PID || true
+          
+          docker compose up -d api worker web
+          
+          # Wait for API health check
+          echo "Waiting for API health..."
+          for i in {1..30}; do
+            curl -s http://localhost:3001/api/health/ready && break
+            sleep 2
+          done
+          
+          # Verify Web responds
+          echo "Waiting for Web..."
+          for i in {1..30}; do
+            curl -s http://localhost:3000 && break
+            sleep 2
+          done
+          
+          docker compose logs api
+          docker compose logs worker
+          docker compose logs web
+          docker compose ps

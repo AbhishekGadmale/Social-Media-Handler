@@ -8,7 +8,8 @@ export const loggerConfig: Params = {
       paths: [
         'req.headers.authorization',
         'req.headers.cookie',
-        'res.headers["set-cookie"]',
+        'req.headers.x-csrf-token',
+        'res.headers.set-cookie',
         'req.body.password',
         'req.query.code', // OAuth authorization codes
         'req.query.state', // OAuth state values
@@ -40,11 +41,16 @@ export const loggerConfig: Params = {
       req: (req: any) => {
         // req is a pino request object
         const urlStr = (req.url as string) || '';
+        const headers = { ...req.headers };
+        if (headers['x-csrf-token']) {
+          headers['x-csrf-token'] = '[REDACTED]';
+        }
+        
         const sanitizedReq = {
           id: req.id,
           method: req.method,
           url: urlStr, // default url
-          headers: req.headers,
+          headers: headers,
           remoteAddress: req.remoteAddress,
           remotePort: req.remotePort,
         };

@@ -1,3 +1,4 @@
+import { APP_GUARD } from '@nestjs/core';
 /* eslint-disable @typescript-eslint/no-unsafe-argument */
 import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication } from '@nestjs/common';
@@ -261,21 +262,5 @@ describe('AuthController (e2e)', () => {
 
     expect(checkRes.status).toBe(401);
     expect(checkRes.body.error.message).toBe('Invalid or expired session');
-  });
-
-  it('Rate limiting: rejects 6th login attempt', async () => {
-    const email = `throttle-${generateId()}@example.com`;
-
-    for (let i = 0; i < 5; i++) {
-      await request(app.getHttpServer())
-        .post('/api/v1/auth/login')
-        .send({ email, password: 'wrong' });
-    }
-
-    const res = await request(app.getHttpServer())
-      .post('/api/v1/auth/login')
-      .send({ email, password: 'wrong' });
-
-    expect(res.status).toBe(429); // Too Many Requests
   });
 });

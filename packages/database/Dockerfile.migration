@@ -1,0 +1,14 @@
+FROM node:20-alpine
+ENV PNPM_HOME="/pnpm"
+ENV PATH="$PNPM_HOME:$PATH"
+RUN corepack enable
+RUN apk add --no-cache libc6-compat openssl curl
+
+WORKDIR /app
+# We can just copy everything and install
+COPY package.json pnpm-workspace.yaml pnpm-lock.yaml turbo.json ./
+COPY packages ./packages
+
+RUN pnpm install --frozen-lockfile --filter=@agency-os/database...
+
+CMD ["pnpm", "--filter", "@agency-os/database", "exec", "prisma", "migrate", "deploy"]
