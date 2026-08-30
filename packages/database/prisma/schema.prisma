@@ -33,9 +33,21 @@ enum SocialAccountStatus {
 enum PostStatus {
   DRAFT
   SCHEDULED
+  QUEUED
+  PUBLISHING
   PARTIAL
   PUBLISHED
   FAILED
+  UNKNOWN
+}
+
+enum FailureCategory {
+  TRANSIENT
+  RATE_LIMITED
+  AUTH_REQUIRED
+  VALIDATION
+  PERMANENT
+  UNKNOWN_RESULT
 }
 
 enum SyncRunStatus {
@@ -53,6 +65,7 @@ model User {
   createdAt      DateTime          @default(now())
   updatedAt      DateTime          @updatedAt
   memberships    WorkspaceMember[]
+  posts          Post[]            @relation("PostAuthor")
 }
 
 model Organization {
@@ -64,19 +77,20 @@ model Organization {
 }
 
 model Workspace {
-  id             String            @id @db.Uuid
+  id             String       @id @db.Uuid
   name           String
-  organizationId String            @db.Uuid
-  organization   Organization      @relation(fields: [organizationId], references: [id])
+  organizationId String       @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   deletedAt      DateTime?
-  createdAt      DateTime          @default(now())
-  updatedAt      DateTime          @updatedAt
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
 
   members              WorkspaceMember[]
   socialAccounts       SocialAccount[]
   posts                Post[]
   postPlatformVariants PostPlatformVariant[]
   auditLogs            AuditLog[]
+  mediaAssets          MediaAsset[]
 
   @@index([organizationId])
 }
@@ -89,8 +103,8 @@ model WorkspaceMember {
   createdAt   DateTime      @default(now())
   updatedAt   DateTime      @updatedAt
 
-  workspace Workspace @relation(fields: [workspaceId], references: [id])
-  user      User      @relation(fields: [userId], references: [id])
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([workspaceId, userId])
   @@index([userId])
@@ -107,46 +121,49 @@ model SocialAccount {
   createdAt    DateTime            @default(now())
   updatedAt    DateTime            @updatedAt
 
-  workspace          Workspace             @relation(fields: [workspaceId], references: [id])
-  connection         SocialConnection?
-  variants           PostPlatformVariant[]
-  metrics            AccountMetricDaily[]
+  workspace  Workspace             @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  connection SocialConnection?
+  variants   PostPlatformVariant[]
+  metrics    AccountMetricDaily[]
 
   @@unique([provider, externalId])
   @@index([workspaceId, provider])
 }
 
 model SocialConnection {
-  id                    String        @id @db.Uuid
-  socialAccountId       String        @unique @db.Uuid
+  id              String @id @db.Uuid
+  socialAccountId String @unique @db.Uuid
 
-  encryptedAccessToken  String
-  accessTokenIv         String
-  accessTokenAuthTag    String
+  encryptedAccessToken String
+  accessTokenIv        String
+  accessTokenAuthTag   String
 
   encryptedRefreshToken String?
   refreshTokenIv        String?
   refreshTokenAuthTag   String?
 
-  keyVersion            Int           @default(1)
-  expiresAt             DateTime?
-  refreshExpiresAt      DateTime?
-  createdAt             DateTime      @default(now())
-  updatedAt             DateTime      @updatedAt
+  keyVersion       Int       @default(1)
+  expiresAt        DateTime?
+  refreshExpiresAt DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
 
-  account SocialAccount @relation(fields: [socialAccountId], references: [id])
+  account SocialAccount @relation(fields: [socialAccountId], references: [id], onDelete: Cascade)
 }
 
 model Post {
   id          String     @id @db.Uuid
   workspaceId String     @db.Uuid
+  authorId    String?    @db.Uuid
   content     String
   status      PostStatus
   createdAt   DateTime   @default(now())
   updatedAt   DateTime   @updatedAt
 
-  workspace Workspace             @relation(fields: [workspaceId], references: [id])
+  workspace Workspace             @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  author    User?                 @relation("PostAuthor", fields: [authorId], references: [id], onDelete: SetNull)
   variants  PostPlatformVariant[]
+  media     PostMedia[]
 
   @@index([workspaceId])
 }
@@ -158,17 +175,77 @@ model PostPlatformVariant {
   workspaceId     String     @db.Uuid
   status          PostStatus
   externalPostId  String?
+  canonicalUrl    String?
   content         String?
-  createdAt       DateTime   @default(now())
-  updatedAt       DateTime   @updatedAt
+  providerOptions Json?
 
-  post          Post          @relation(fields: [postId], references: [id])
-  socialAccount SocialAccount @relation(fields: [socialAccountId], references: [id])
-  workspace     Workspace     @relation(fields: [workspaceId], references: [id])
+  scheduledAt         DateTime?
+  queuedAt            DateTime?
+  publishingStartedAt DateTime?
+  publishedAt         DateTime?
+  cancelledAt         DateTime?
 
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  post          Post                 @relation(fields: [postId], references: [id], onDelete: Cascade)
+  socialAccount SocialAccount        @relation(fields: [socialAccountId], references: [id], onDelete: Cascade)
+  workspace     Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  attempts      PublicationAttempt[]
+
+  @@unique([postId, socialAccountId])
   @@index([postId])
   @@index([socialAccountId])
   @@index([workspaceId])
+  @@index([status, scheduledAt])
+}
+
+model PublicationAttempt {
+  id               String           @id @db.Uuid
+  variantId        String           @db.Uuid
+  attemptNumber    Int
+  status           String
+  failureCategory  FailureCategory?
+  failureCode      String?
+  providerResponse Json?
+
+  startedAt   DateTime  @default(now())
+  completedAt DateTime?
+
+  variant PostPlatformVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+
+  @@unique([variantId, attemptNumber])
+  @@index([variantId])
+}
+
+model MediaAsset {
+  id          String   @id @db.Uuid
+  workspaceId String   @db.Uuid
+  filename    String
+  mimeType    String
+  byteSize    Int
+  storageKey  String
+  status      String
+  createdAt   DateTime @default(now())
+
+  workspace Workspace   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  posts     PostMedia[]
+
+  @@index([workspaceId])
+}
+
+model PostMedia {
+  id        String @id @db.Uuid
+  postId    String @db.Uuid
+  mediaId   String @db.Uuid
+  sortOrder Int    @default(0)
+
+  post  Post       @relation(fields: [postId], references: [id], onDelete: Cascade)
+  media MediaAsset @relation(fields: [mediaId], references: [id], onDelete: Cascade)
+
+  @@unique([postId, mediaId])
+  @@index([postId])
+  @@index([mediaId])
 }
 
 model AccountMetricDaily {
@@ -180,7 +257,7 @@ model AccountMetricDaily {
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
-  socialAccount SocialAccount @relation(fields: [socialAccountId], references: [id])
+  socialAccount SocialAccount @relation(fields: [socialAccountId], references: [id], onDelete: Cascade)
 
   @@unique([socialAccountId, date])
 }
@@ -214,7 +291,7 @@ model AuditLog {
   metadata    Json?
   createdAt   DateTime @default(now())
 
-  workspace Workspace? @relation(fields: [workspaceId], references: [id])
+  workspace Workspace? @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
   @@index([workspaceId, createdAt])
   @@index([actorId, createdAt])

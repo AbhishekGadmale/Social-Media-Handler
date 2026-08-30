@@ -8,3 +8,5 @@ export * from './src/repositories/WorkspaceMemberRepository.js';
 export * from './src/repositories/SocialAccountRepository.js';
 export * from './src/crypto/encryption.js';
 export * from './src/repositories/AuditLogRepository.js';
+export * from './src/publishing/state-machine.js';
+export * from './src/repositories/PublishingRepository.js';
