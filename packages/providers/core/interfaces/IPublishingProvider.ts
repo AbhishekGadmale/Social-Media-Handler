@@ -74,6 +74,12 @@ export interface ProviderPublishFailure {
 
 export type ProviderPublishResult = ProviderPublishSuccess | ProviderPublishFailure;
 
+export interface ProviderExecutionCredentials {
+  accessToken: string;
+  refreshToken?: string;
+  expiresAt?: Date;
+}
+
 export interface IPublishingProvider {
   /**
    * Statically describes the provider's publishing constraints and capabilities.
@@ -90,7 +96,7 @@ export interface IPublishingProvider {
    * Credentials (e.g. OAuth tokens) are injected by the execution boundary, not passed in the domain input payload.
    */
   publish(
-    credentials: { accessToken: string; [key: string]: any }, 
+    credentials: ProviderExecutionCredentials, 
     input: ProviderPublicationInput
   ): Promise<ProviderPublishResult>;
 }

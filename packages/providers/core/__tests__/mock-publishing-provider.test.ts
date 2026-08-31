@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { z } from 'zod';
-import { IPublishingProvider, ProviderOptionsValidationResult, ProviderPublicationInput, ProviderPublishResult, PublishingCapabilities } from '../interfaces/IPublishingProvider.js';
+import { IPublishingProvider, ProviderOptionsValidationResult, ProviderPublicationInput, ProviderPublishResult, PublishingCapabilities, ProviderExecutionCredentials } from '../interfaces/IPublishingProvider.js';
 import { ISocialProvider } from '../interfaces/ISocialProvider.js';
 import { providerRegistry } from '../provider-registry.js';
 import { ProviderCapabilityError } from '../errors/index.js';
@@ -45,7 +45,7 @@ class MockFullProvider implements ISocialProvider, IPublishingProvider {
     };
   }
 
-  async publish(credentials: { accessToken: string }, input: ProviderPublicationInput): Promise<ProviderPublishResult> {
+  async publish(credentials: ProviderExecutionCredentials, input: ProviderPublicationInput): Promise<ProviderPublishResult> {
     if (!credentials.accessToken) {
       return {
         success: false,
