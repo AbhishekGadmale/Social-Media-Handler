@@ -38,5 +38,9 @@ export function isTerminalPublicationState(state: PostStatus): boolean {
 }
 
 export function isRetryablePublicationState(state: PostStatus): boolean {
-  return state === PostStatus.FAILED || state === PostStatus.UNKNOWN;
+  return state === PostStatus.FAILED;
+}
+
+export function isReconciliationRequiredState(state: PostStatus): boolean {
+  return state === PostStatus.UNKNOWN;
 }

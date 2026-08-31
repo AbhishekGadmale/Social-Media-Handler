@@ -1,6 +1,8 @@
 import { ISocialProvider } from './interfaces/ISocialProvider.js';
+import { IPublishingProvider } from './interfaces/IPublishingProvider.js';
 import { LinkedInProvider } from '../linkedin/linkedin.provider.js';
 import { YouTubeProvider } from '../youtube/youtube.provider.js';
+import { ProviderCapabilityError } from './errors/index.js';
 
 type ProviderFactory = () => ISocialProvider;
 
@@ -34,9 +36,25 @@ export class ProviderRegistry {
     }
     return provider;
   }
+
+  supportsPublishing(name: string): boolean {
+    const provider = this.get(name);
+    if (!provider) return false;
+    // Structural type check for IPublishingProvider
+    return 'getPublishingCapabilities' in provider && 'validateProviderOptions' in provider && 'publish' in provider;
+  }
+
+  getPublishingAdapter(name: string): IPublishingProvider {
+    if (!this.supportsPublishing(name)) {
+      throw new ProviderCapabilityError('PUBLISHING');
+    }
+    // Safe cast because of supportsPublishing structural check
+    return this.get(name) as unknown as IPublishingProvider;
+  }
 }
 
 export const providerRegistry = new ProviderRegistry();
 providerRegistry.register('linkedin', () => new LinkedInProvider());
 providerRegistry.register('youtube', () => new YouTubeProvider());
+
 

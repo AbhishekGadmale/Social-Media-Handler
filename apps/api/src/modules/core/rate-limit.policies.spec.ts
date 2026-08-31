@@ -14,6 +14,3 @@ describe('RateLimitPolicies', () => {
     expect(RateLimitPolicies.auth.limit).toBe(1000);
   });
 });
-
-
-

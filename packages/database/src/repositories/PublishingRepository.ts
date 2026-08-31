@@ -42,17 +42,22 @@ export class PublishingRepository {
    */
   async transitionVariantState(
     variantId: string,
-    expectedCurrentState: PostStatus,
+    expectedCurrentState: PostStatus | PostStatus[],
     newState: PostStatus,
     updateData: Partial<Prisma.PostPlatformVariantUpdateInput> = {}
   ): Promise<boolean> {
-    assertPublicationTransition(expectedCurrentState, newState);
+    const expectedStates = Array.isArray(expectedCurrentState) ? expectedCurrentState : [expectedCurrentState];
+    
+    // Validate all possible transitions
+    for (const state of expectedStates) {
+      assertPublicationTransition(state, newState);
+    }
 
     const result = await this.prisma.postPlatformVariant.updateMany({
       where: {
         id: variantId,
         workspaceId: this.workspaceId,
-        status: expectedCurrentState,
+        status: { in: expectedStates },
       },
       data: {
         ...updateData,
@@ -61,6 +66,43 @@ export class PublishingRepository {
     });
 
     return result.count === 1;
+  }
+
+  /**
+   * Command Idempotency: Safely triggers publication (QUEUED) only if currently DRAFT, SCHEDULED, or FAILED.
+   * If two requests attempt this concurrently, only one will succeed.
+   */
+  async queueForPublishing(variantId: string): Promise<boolean> {
+    return this.transitionVariantState(
+      variantId, 
+      [PostStatus.DRAFT, PostStatus.SCHEDULED, PostStatus.FAILED], 
+      PostStatus.QUEUED,
+      { queuedAt: new Date() }
+    );
+  }
+
+  /**
+   * Unschedules a scheduled publication, returning it to DRAFT.
+   */
+  async unschedule(variantId: string): Promise<boolean> {
+    return this.transitionVariantState(
+      variantId, 
+      PostStatus.SCHEDULED, 
+      PostStatus.DRAFT,
+      { scheduledAt: null }
+    );
+  }
+
+  /**
+   * Cancels an already queued publication, returning it to DRAFT.
+   */
+  async cancelQueued(variantId: string): Promise<boolean> {
+    return this.transitionVariantState(
+      variantId, 
+      PostStatus.QUEUED, 
+      PostStatus.DRAFT,
+      { queuedAt: null }
+    );
   }
 
   /**

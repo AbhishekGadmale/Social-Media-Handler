@@ -1,5 +1,6 @@
 export * from './core/types/index.js';
 export * from './core/interfaces/ISocialProvider.js';
+export * from './core/interfaces/IPublishingProvider.js';
 export * from './core/errors/index.js';
 export * from './core/capability-resolver.js';
 export * from './core/utils/invoke-capability.js';

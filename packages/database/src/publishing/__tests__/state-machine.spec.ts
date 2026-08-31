@@ -5,7 +5,8 @@ import {
   assertPublicationTransition,
   InvalidPublicationStateTransitionError,
   isTerminalPublicationState,
-  isRetryablePublicationState
+  isRetryablePublicationState,
+  isReconciliationRequiredState
 } from '../state-machine.js';
 
 describe('Publishing State Machine', () => {
@@ -78,14 +79,24 @@ describe('Publishing State Machine', () => {
   });
 
   describe('isRetryablePublicationState', () => {
-    it('returns true for FAILED and UNKNOWN', () => {
+    it('returns true only for FAILED', () => {
       expect(isRetryablePublicationState(PostStatus.FAILED)).toBe(true);
-      expect(isRetryablePublicationState(PostStatus.UNKNOWN)).toBe(true);
+    });
+
+    it('returns false for UNKNOWN (requires reconciliation)', () => {
+      expect(isRetryablePublicationState(PostStatus.UNKNOWN)).toBe(false);
     });
 
     it('returns false for others', () => {
       expect(isRetryablePublicationState(PostStatus.PUBLISHING)).toBe(false);
       expect(isRetryablePublicationState(PostStatus.PUBLISHED)).toBe(false);
+    });
+  });
+
+  describe('isReconciliationRequiredState', () => {
+    it('returns true only for UNKNOWN', () => {
+      expect(isReconciliationRequiredState(PostStatus.UNKNOWN)).toBe(true);
+      expect(isReconciliationRequiredState(PostStatus.FAILED)).toBe(false);
     });
   });
 });

@@ -84,7 +84,7 @@ describe('PublishingRepository', () => {
     expect(foundInRepo2).toBeNull();
   });
 
-  it('performs atomic conditional transition', async () => {
+  it('performs atomic conditional transition (worker claim idempotency)', async () => {
     const variantId = generateId();
     await repo1.createContentWithVariants(
       {
@@ -115,6 +115,32 @@ describe('PublishingRepository', () => {
     // Second attempt (e.g. concurrent worker) expects QUEUED, should fail
     const concurrentSuccess = await repo1.transitionVariantState(variantId, PostStatus.QUEUED, PostStatus.PUBLISHING);
     expect(concurrentSuccess).toBe(false);
+  });
+
+  it('guarantees API command idempotency via queueForPublishing', async () => {
+    const variantId = generateId();
+    await repo1.createContentWithVariants(
+      {
+        id: generateId(),
+        content: 'Command Idempotency Test',
+        status: PostStatus.DRAFT,
+      },
+      [
+        {
+          id: variantId,
+          socialAccountId: account1,
+          status: PostStatus.DRAFT,
+        },
+      ]
+    );
+
+    // First API request to publish
+    const success1 = await repo1.queueForPublishing(variantId);
+    expect(success1).toBe(true);
+
+    // Concurrent duplicate API request
+    const success2 = await repo1.queueForPublishing(variantId);
+    expect(success2).toBe(false);
   });
 
   it('enforces attempt uniqueness and creates attempts', async () => {

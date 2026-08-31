@@ -45,7 +45,7 @@ export const loggerConfig: Params = {
         if (headers['x-csrf-token']) {
           headers['x-csrf-token'] = '[REDACTED]';
         }
-        
+
         const sanitizedReq = {
           id: req.id,
           method: req.method,
