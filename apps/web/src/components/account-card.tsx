@@ -1,3 +1,5 @@
+ 
+
 import { ConnectedAccount } from '../lib/query/accounts';
 import { AlertCircle, CheckCircle2, PlaySquare, HelpCircle, RefreshCw } from 'lucide-react';
 import { useState } from 'react';
@@ -26,7 +28,7 @@ export function AccountCard({ account }: AccountCardProps) {
       } else {
         throw new Error('No authorization URL returned');
       }
-    } catch (err) {
+    } catch {
       setError('Failed to initiate reconnection. Please try again.');
       setIsReconnecting(false);
     }

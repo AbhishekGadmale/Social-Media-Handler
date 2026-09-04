@@ -43,6 +43,7 @@ export class OAuthService {
     userId: string,
     workspaceId: string,
     redirectUri: string,
+    requestedScopes?: string[],
   ): Promise<string> {
     const provider = providerRegistry.get(providerName.toLowerCase());
     if (!provider) {
@@ -81,6 +82,8 @@ export class OAuthService {
       redirectUri,
       state,
       codeChallenge,
+      requestedScopes,
+      includeGrantedScopes: true,
     });
   }
 
@@ -146,6 +149,7 @@ export class OAuthService {
       (await provider.getCapabilities?.({
         provider: providerName,
         grantedScopes: credentials.scopes || [],
+        externalId: profile.id,
       })) || [];
 
     // Encrypt tokens separately
@@ -177,6 +181,7 @@ export class OAuthService {
           refreshTokenAuthTag: encRefresh ? encRefresh.authTag : null,
           keyVersion: encAccess.keyVersion,
           expiresAt: credentials.expiresAt,
+          grantedScopes: credentials.scopes,
         },
       );
 

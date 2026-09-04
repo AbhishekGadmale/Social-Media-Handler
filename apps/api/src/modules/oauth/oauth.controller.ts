@@ -9,6 +9,7 @@ import {
   Res,
   ForbiddenException,
   ParseUUIDPipe,
+  Logger,
 } from '@nestjs/common';
 import { ParseSocialProviderPipe } from './pipes/parse-social-provider.pipe';
 import { OAuthService } from './oauth.service';
@@ -29,6 +30,8 @@ import { AuditService } from '../core/audit.service';
 
 @Controller()
 export class OAuthController {
+  private readonly logger = new Logger(OAuthController.name);
+
   constructor(
     private readonly oauthService: OAuthService,
     private readonly auditService: AuditService,
@@ -42,15 +45,23 @@ export class OAuthController {
     @Param('workspaceId', ParseUUIDPipe) workspaceId: string,
     @Param('provider', ParseSocialProviderPipe)
     provider: SocialProvider,
+    @Query('scopes') scopesQuery: string | undefined,
     @Req() req: Request,
   ) {
     const userId = req.user!.id;
     const redirectUri = `${req.protocol}://${req.get('host')}/api/v1/oauth/${provider.toLowerCase()}/callback`;
+    const requestedScopes = scopesQuery
+      ? scopesQuery
+          .split(',')
+          .map((s) => s.trim())
+          .filter(Boolean)
+      : undefined;
     const url = await this.oauthService.generateAuthUrl(
       provider,
       userId,
       workspaceId,
       redirectUri,
+      requestedScopes,
     );
 
     this.auditService.logAction({
@@ -123,13 +134,24 @@ export class OAuthController {
       const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
       return res.redirect(`${frontendUrl}/${workspaceId}/accounts`);
     } catch (err: any) {
+      this.logger.error('OAuth connection failed', {
+        event: 'oauth.connection_failed',
+        provider,
+        errorClass: err?.name,
+        errorCode: err?.statusCode || err?.code,
+        errorMessage: err?.message,
+      });
       this.auditService.logAction({
         action: AuditAction.OAUTH_CONNECTION_FAILED,
         actorId: userId,
         targetType: 'SocialProvider',
         targetId: provider,
         requestId,
-        metadata: { provider, reason: 'OAUTH_CALLBACK_FAILED' },
+        metadata: {
+          provider,
+          reason: 'OAUTH_CALLBACK_FAILED',
+          errorMessage: err?.message,
+        },
       });
       const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
       return res.redirect(`${frontendUrl}/dashboard?error=oauth_failed`);

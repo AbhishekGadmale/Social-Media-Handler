@@ -50,7 +50,7 @@ export class PublishabilityValidator {
     const issues: PublishabilityIssue[] = [];
 
     // 1. Authoritative tenant-scoped load
-    const variant = await this.prisma.postPlatformVariant.findFirst({
+    const variant: any = await this.prisma.postPlatformVariant.findFirst({
       where: {
         id: variantId,
         workspaceId,
@@ -60,9 +60,9 @@ export class PublishabilityValidator {
           include: {
             media: {
               include: {
-                mediaAsset: true,
+                media: true,
               },
-              orderBy: { order: 'asc' },
+              orderBy: { sortOrder: 'asc' },
             },
           },
         },
@@ -131,7 +131,10 @@ export class PublishabilityValidator {
 
     // 4. Provider Publishing Support
     const providerName = variant.socialAccount?.provider;
-    if (!providerName || !providerRegistry.supportsPublishing(providerName)) {
+    if (
+      !providerName ||
+      !providerRegistry.supportsPublishing(providerName.toLowerCase())
+    ) {
       issues.push({
         code: 'PROVIDER_PUBLISHING_UNSUPPORTED',
         targetId: variantId,
@@ -142,21 +145,23 @@ export class PublishabilityValidator {
       return { valid: issues.length === 0, issues };
     }
 
-    const adapter = providerRegistry.getPublishingAdapter(providerName);
+    const adapter = providerRegistry.getPublishingAdapter(
+      providerName.toLowerCase(),
+    );
     const capabilities = adapter.getPublishingCapabilities();
 
     // 5. Determine Content Type
-    const textContent = variant.text || variant.post.text;
+    const textContent = variant.content || variant.post.content;
     const mediaCount = variant.post.media.length;
     let contentType: PublicationContentType = 'TEXT_POST';
 
     // Simple deterministic classifier based on Phase 7.1 semantics
     if (mediaCount > 0) {
-      const allImages = variant.post.media.every((m) =>
-        m.mediaAsset.mimeType.startsWith('image/'),
+      const allImages = variant.post.media.every((m: any) =>
+        m.media.mimeType.startsWith('image/'),
       );
-      const allVideos = variant.post.media.every((m) =>
-        m.mediaAsset.mimeType.startsWith('video/'),
+      const allVideos = variant.post.media.every((m: any) =>
+        m.media.mimeType.startsWith('video/'),
       );
 
       if (allImages) {
@@ -196,7 +201,7 @@ export class PublishabilityValidator {
       }
 
       for (const pm of variant.post.media) {
-        const asset = pm.mediaAsset;
+        const asset = pm.media;
 
         // Tenant Check (Defensive)
         if (asset.workspaceId !== workspaceId) {

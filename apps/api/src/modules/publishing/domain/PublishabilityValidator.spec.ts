@@ -82,18 +82,19 @@ describe('PublishabilityValidator', () => {
       id: 'var-1',
       workspaceId: 'ws-1',
       status: PostStatus.DRAFT,
-      text: 'Hello world',
+      content: 'Hello world',
       providerOptions: {},
       scheduledAt: null,
       post: {
         id: 'post-1',
-        text: 'Hello world',
+        content: 'Hello world',
         media: [],
       },
       socialAccount: {
         id: 'acc-1',
         provider: 'test-publishing',
         status: SocialAccountStatus.ACTIVE,
+        capabilities: ['POST_PUBLISH'],
       },
       ...overrides,
     };
@@ -112,6 +113,7 @@ describe('PublishabilityValidator', () => {
         makeMockVariant({ status: PostStatus.DRAFT }),
       );
       const result = await validator.validateTarget('ws-1', 'var-1');
+      if (!result.valid) console.log('DRAFT validation issues:', result.issues);
       expect(result.valid).toBe(true);
     });
 
@@ -150,6 +152,7 @@ describe('PublishabilityValidator', () => {
           socialAccount: {
             provider: 'test-publishing',
             status: SocialAccountStatus.REAUTH_REQUIRED,
+            capabilities: ['POST_PUBLISH'],
           },
         }),
       );
@@ -164,7 +167,7 @@ describe('PublishabilityValidator', () => {
       mockPrisma.postPlatformVariant.findFirst.mockResolvedValue(
         makeMockVariant({
           socialAccount: {
-            provider: 'youtube',
+            provider: 'dummy-non-publishing',
             status: SocialAccountStatus.ACTIVE,
           }, // youtube has no publishing
         }),
@@ -189,10 +192,11 @@ describe('PublishabilityValidator', () => {
         post: {
           media: [
             {
-              mediaAsset: {
+              media: {
                 workspaceId: 'ws-1',
                 mimeType: 'video/mp4',
                 byteSize: 1000,
+                status: 'READY',
               },
             },
           ],
@@ -211,10 +215,11 @@ describe('PublishabilityValidator', () => {
         post: {
           media: [
             {
-              mediaAsset: {
+              media: {
                 workspaceId: 'ws-HACKER',
                 mimeType: 'image/jpeg',
                 byteSize: 1000,
+                status: 'READY',
               },
             },
           ],
@@ -233,10 +238,11 @@ describe('PublishabilityValidator', () => {
         post: {
           media: [
             {
-              mediaAsset: {
+              media: {
                 workspaceId: 'ws-1',
                 mimeType: 'image/gif',
                 byteSize: 1000,
+                status: 'READY',
               },
             },
           ],
@@ -255,10 +261,11 @@ describe('PublishabilityValidator', () => {
         post: {
           media: [
             {
-              mediaAsset: {
+              media: {
                 workspaceId: 'ws-1',
                 mimeType: 'image/jpeg',
                 byteSize: 999999999,
+                status: 'READY',
               },
             },
           ],
@@ -276,10 +283,11 @@ describe('PublishabilityValidator', () => {
       const media = Array(5)
         .fill(0)
         .map(() => ({
-          mediaAsset: {
+          media: {
             workspaceId: 'ws-1',
             mimeType: 'image/jpeg',
             byteSize: 1000,
+            status: 'READY',
           },
         }));
       const variant = makeMockVariant({
@@ -351,15 +359,17 @@ describe('PublishabilityValidator', () => {
         providerOptions: { fail: true }, // Issue 2: invalid options
         socialAccount: {
           provider: 'test-publishing',
-          status: SocialAccountStatus.ERROR,
+          status: SocialAccountStatus.REAUTH_REQUIRED,
+          capabilities: ['POST_PUBLISH'],
         }, // Issue 3: inactive account
         post: {
           media: [
             {
-              mediaAsset: {
+              media: {
                 workspaceId: 'ws-2',
                 mimeType: 'image/gif',
                 byteSize: 999999999,
+                status: 'READY',
               },
             }, // Issue 4,5,6: mismatch, type, size
           ],

@@ -1,4 +1,4 @@
-import { PrismaClient, SocialAccount, SocialProvider, SocialAccountStatus } from '@prisma/client';
+import { PrismaClient, SocialAccount, SocialProvider, SocialAccountStatus, Prisma } from '@prisma/client';
 
 export class SocialAccountRepository {
   constructor(private readonly prisma: PrismaClient) {}
@@ -18,11 +18,12 @@ export class SocialAccountRepository {
       encryptedAccessToken: string;
       accessTokenIv: string;
       accessTokenAuthTag: string;
-      encryptedRefreshToken: string | null;
-      refreshTokenIv: string | null;
-      refreshTokenAuthTag: string | null;
+      encryptedRefreshToken?: string | null;
+      refreshTokenIv?: string | null;
+      refreshTokenAuthTag?: string | null;
       keyVersion: number;
       expiresAt?: Date | null;
+      grantedScopes?: string[];
     }
   ): Promise<{ account: SocialAccount; isNew: boolean }> {
     return this.prisma.$transaction(async (tx) => {
@@ -60,18 +61,47 @@ export class SocialAccountRepository {
         },
       });
 
-      await tx.socialConnection.upsert({
-        where: {
-          socialAccountId: account.id,
-        },
-        create: {
-          ...connectionData,
-          socialAccountId: account.id,
-        },
-        update: {
-          ...connectionData,
-        },
-      });
+        const existingConnection = await tx.socialConnection.findUnique({
+          where: { socialAccountId: account.id }
+        });
+
+        const updateData: Prisma.SocialConnectionUpdateInput = {
+          encryptedAccessToken: connectionData.encryptedAccessToken,
+          accessTokenIv: connectionData.accessTokenIv,
+          accessTokenAuthTag: connectionData.accessTokenAuthTag,
+          keyVersion: connectionData.keyVersion,
+          expiresAt: connectionData.expiresAt,
+        };
+        if (connectionData.encryptedRefreshToken) {
+          updateData.encryptedRefreshToken = connectionData.encryptedRefreshToken;
+          updateData.refreshTokenIv = connectionData.refreshTokenIv;
+          updateData.refreshTokenAuthTag = connectionData.refreshTokenAuthTag;
+        }
+        if (connectionData.grantedScopes) {
+          const mergedScopes = new Set(existingConnection?.grantedScopes || []);
+          connectionData.grantedScopes.forEach(s => mergedScopes.add(s));
+          updateData.grantedScopes = Array.from(mergedScopes);
+        }
+
+        await tx.socialConnection.upsert({
+          where: {
+            socialAccountId: account.id,
+          },
+          create: {
+            id: connectionData.id,
+            encryptedAccessToken: connectionData.encryptedAccessToken,
+            accessTokenIv: connectionData.accessTokenIv,
+            accessTokenAuthTag: connectionData.accessTokenAuthTag,
+            encryptedRefreshToken: connectionData.encryptedRefreshToken || null,
+            refreshTokenIv: connectionData.refreshTokenIv || null,
+            refreshTokenAuthTag: connectionData.refreshTokenAuthTag || null,
+            keyVersion: connectionData.keyVersion,
+            expiresAt: connectionData.expiresAt,
+            grantedScopes: connectionData.grantedScopes || [],
+            socialAccountId: account.id,
+          },
+          update: updateData,
+        });
 
       return { account, isNew };
     });

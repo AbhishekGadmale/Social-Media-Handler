@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { LinkedInProvider } from './linkedin.provider.js';
+import { LinkedInProvider } from './linkedin.provider';
 
 // Minimal mock for global fetch
 const mockFetch = vi.fn();
@@ -24,7 +24,7 @@ describe('LinkedInProvider', () => {
       workspaceId: 'ws1',
       redirectUri: 'http://localhost/callback',
       state: 'random-state',
-      codeChallenge: 'challenge123',
+      codeChallenge: 'challenge123', // PKCE should be ignored by LinkedIn provider
     });
 
     const parsedUrl = new URL(url);
@@ -34,8 +34,8 @@ describe('LinkedInProvider', () => {
     expect(parsedUrl.searchParams.get('redirect_uri')).toBe('http://localhost/callback');
     expect(parsedUrl.searchParams.get('state')).toBe('random-state');
     expect(parsedUrl.searchParams.get('scope')).toBe('openid profile email');
-    expect(parsedUrl.searchParams.get('code_challenge')).toBe('challenge123');
-    expect(parsedUrl.searchParams.get('code_challenge_method')).toBe('S256');
+    expect(parsedUrl.searchParams.has('code_challenge')).toBe(false);
+    expect(parsedUrl.searchParams.has('code_challenge_method')).toBe(false);
   });
 
   it('should omit Community Management API methods', () => {
@@ -65,9 +65,23 @@ describe('LinkedInProvider', () => {
     expect(creds.accessToken).toBe('access-123');
     expect(creds.refreshToken).toBe('refresh-456');
     expect(creds.scopes).toEqual(['openid', 'profile', 'email']);
+    
+    // Check that code_verifier is NOT sent
     expect(mockFetch).toHaveBeenCalledWith('https://www.linkedin.com/oauth/v2/accessToken', expect.objectContaining({
       method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
     }));
+    
+    const callArgs = mockFetch.mock.calls[0][1];
+    const bodyParams = new URLSearchParams(callArgs.body);
+    expect(bodyParams.get('grant_type')).toBe('authorization_code');
+    expect(bodyParams.get('code')).toBe('auth-code');
+    expect(bodyParams.get('client_id')).toBe('test-client');
+    expect(bodyParams.get('client_secret')).toBe('test-secret');
+    expect(bodyParams.get('redirect_uri')).toBe('http://localhost/callback');
+    expect(bodyParams.has('code_verifier')).toBe(false);
   });
 
   it('should fetch user profile successfully', async () => {

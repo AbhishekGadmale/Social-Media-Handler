@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { z } from 'zod';
-import { IPublishingProvider, ProviderOptionsValidationResult, ProviderPublicationInput, ProviderPublishResult, PublishingCapabilities, ProviderExecutionCredentials } from '../interfaces/IPublishingProvider.js';
-import { ISocialProvider } from '../interfaces/ISocialProvider.js';
-import { providerRegistry } from '../provider-registry.js';
-import { ProviderCapabilityError } from '../errors/index.js';
+import { IPublishingProvider, ProviderOptionsValidationResult, ProviderPublicationInput, ProviderPublishResult, PublishingCapabilities, ProviderExecutionCredentials } from '../interfaces/IPublishingProvider';
+import { ISocialProvider } from '../interfaces/ISocialProvider';
+import { providerRegistry } from '../provider-registry';
+import { ProviderCapabilityError } from '../errors/index';
 
 // Define Zod schema for mock options
 const MockOptionsSchema = z.object({
@@ -142,7 +142,7 @@ describe('PublishingProvider Contracts & Registry', () => {
 
     it('returns normalized success response on publish', async () => {
       const input: ProviderPublicationInput = {
-        attemptId: 'a1', targetId: 't1', workspaceId: 'w1', content: 'Hello World', providerOptions: {}
+        attemptId: 'a1', targetId: 't1', workspaceId: 'w1', content: 'Hello World', providerOptions: {}, externalAccountId: 'ext-1'
       };
       const res = await adapter.publish({ accessToken: 'valid' }, input);
       
@@ -155,7 +155,7 @@ describe('PublishingProvider Contracts & Registry', () => {
 
     it('returns normalized failure taxonomy on error', async () => {
       const input: ProviderPublicationInput = {
-        attemptId: 'a2', targetId: 't2', workspaceId: 'w2', content: 'FAIL_TRANSIENT', providerOptions: {}
+        attemptId: 'a2', targetId: 't2', workspaceId: 'w2', content: 'FAIL_TRANSIENT', providerOptions: {}, externalAccountId: 'ext-2'
       };
       const res = await adapter.publish({ accessToken: 'valid' }, input);
       

@@ -145,6 +145,7 @@ model SocialConnection {
   keyVersion       Int       @default(1)
   expiresAt        DateTime?
   refreshExpiresAt DateTime?
+  grantedScopes    String[]  @default([])
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
 
@@ -179,11 +180,18 @@ model PostPlatformVariant {
   content         String?
   providerOptions Json?
 
+  dispatchVersion         Int       @default(0)
+  providerProcessingState String?
+
   scheduledAt         DateTime?
   queuedAt            DateTime?
   publishingStartedAt DateTime?
   publishedAt         DateTime?
   cancelledAt         DateTime?
+
+  reconciledAt        DateTime?
+  reconciledBy        String?
+  reconciliationReason String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -208,6 +216,7 @@ model PublicationAttempt {
   failureCategory  FailureCategory?
   failureCode      String?
   providerResponse Json?
+  executionHeartbeatAt DateTime?
 
   startedAt   DateTime  @default(now())
   completedAt DateTime?
@@ -218,15 +227,23 @@ model PublicationAttempt {
   @@index([variantId])
 }
 
+enum MediaAssetStatus {
+  UPLOADING
+  PROCESSING
+  READY
+  FAILED
+}
+
 model MediaAsset {
-  id          String   @id @db.Uuid
-  workspaceId String   @db.Uuid
+  id          String           @id @db.Uuid
+  workspaceId String           @db.Uuid
   filename    String
   mimeType    String
   byteSize    Int
   storageKey  String
-  status      String
-  createdAt   DateTime @default(now())
+  status      MediaAssetStatus
+  processingStartedAt DateTime?
+  createdAt   DateTime         @default(now())
 
   workspace Workspace   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   posts     PostMedia[]

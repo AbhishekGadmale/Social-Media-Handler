@@ -152,10 +152,10 @@ describe('OAuthController', () => {
       expect(mockAuditService.logAction).toHaveBeenCalledWith(
         expect.objectContaining({
           action: 'OAUTH_CONNECTION_FAILED',
-          metadata: {
-            provider: SocialProvider.YOUTUBE,
+          metadata: expect.objectContaining({
+            provider: 'YOUTUBE',
             reason: 'OAUTH_CALLBACK_FAILED',
-          },
+          }),
         }),
       );
     });

@@ -1,3 +1,4 @@
+
 'use client';
 
 import { useParams } from 'next/navigation';
@@ -13,7 +14,8 @@ export default function AccountsPage() {
   const params = useParams();
   const workspaceId = params.workspaceId as string;
 
-  const [isConnecting, setIsConnecting] = useState(false);
+  const [isConnectingYt, setIsConnectingYt] = useState(false);
+  const [isConnectingLi, setIsConnectingLi] = useState(false);
   const [connectError, setConnectError] = useState<string | null>(null);
 
   const {
@@ -26,10 +28,11 @@ export default function AccountsPage() {
 
   const accounts = data?.accounts || [];
   const hasYoutube = accounts.some(a => a.provider === 'YOUTUBE');
+  const hasLinkedin = accounts.some(a => a.provider === 'LINKEDIN');
 
-  const handleConnect = async () => {
+  const handleConnectYoutube = async () => {
     try {
-      setIsConnecting(true);
+      setIsConnectingYt(true);
       setConnectError(null);
       const res = await api.post<{ url: string }>(`workspaces/${workspaceId}/oauth/youtube/connect`);
       if (res.url) {
@@ -37,9 +40,25 @@ export default function AccountsPage() {
       } else {
         throw new Error('No authorization URL returned');
       }
-    } catch (err) {
-      setConnectError('Failed to initiate connection. Please try again.');
-      setIsConnecting(false);
+    } catch {
+      setConnectError('Failed to initiate YouTube connection. Please try again.');
+      setIsConnectingYt(false);
+    }
+  };
+
+  const handleConnectLinkedin = async () => {
+    try {
+      setIsConnectingLi(true);
+      setConnectError(null);
+      const res = await api.post<{ url: string }>(`workspaces/${workspaceId}/oauth/linkedin/connect?scopes=w_member_social`);
+      if (res.url) {
+        window.location.href = res.url;
+      } else {
+        throw new Error('No authorization URL returned');
+      }
+    } catch {
+      setConnectError('Failed to initiate LinkedIn connection. Please try again.');
+      setIsConnectingLi(false);
     }
   };
 
@@ -53,17 +72,31 @@ export default function AccountsPage() {
           </p>
         </div>
         
-        {!isLoading && !isError && accounts.length > 0 && !hasYoutube && (
-          <div className="flex flex-col items-end">
-            <Button onClick={handleConnect} disabled={isConnecting}>
-              {isConnecting ? (
-                <RefreshCw className="w-4 h-4 mr-2 animate-spin" aria-hidden="true" />
-              ) : (
-                <Plus className="w-4 h-4 mr-2" aria-hidden="true" />
+        {!isLoading && !isError && accounts.length > 0 && (
+          <div className="flex flex-col items-end gap-2">
+            <div className="flex gap-2">
+              {!hasYoutube && (
+                <Button onClick={handleConnectYoutube} disabled={isConnectingYt || isConnectingLi}>
+                  {isConnectingYt ? (
+                    <RefreshCw className="w-4 h-4 mr-2 animate-spin" aria-hidden="true" />
+                  ) : (
+                    <Plus className="w-4 h-4 mr-2" aria-hidden="true" />
+                  )}
+                  Connect YouTube
+                </Button>
               )}
-              Connect YouTube
-            </Button>
-            {connectError && <p className="text-xs text-red-600 mt-2">{connectError}</p>}
+              {!hasLinkedin && (
+                <Button onClick={handleConnectLinkedin} disabled={isConnectingYt || isConnectingLi}>
+                  {isConnectingLi ? (
+                    <RefreshCw className="w-4 h-4 mr-2 animate-spin" aria-hidden="true" />
+                  ) : (
+                    <Plus className="w-4 h-4 mr-2" aria-hidden="true" />
+                  )}
+                  Connect LinkedIn
+                </Button>
+              )}
+            </div>
+            {connectError && <p className="text-xs text-red-600">{connectError}</p>}
           </div>
         )}
       </div>
@@ -120,16 +153,26 @@ export default function AccountsPage() {
           <p className="mt-2 text-sm text-gray-500 max-w-sm">
             You haven&apos;t connected any social media accounts to this workspace yet.
           </p>
-          <div className="mt-6 flex flex-col items-center">
-            <Button onClick={handleConnect} disabled={isConnecting}>
-              {isConnecting ? (
-                <RefreshCw className="w-4 h-4 mr-2 animate-spin" aria-hidden="true" />
-              ) : (
-                <Plus className="w-4 h-4 mr-2" aria-hidden="true" />
-              )}
-              Connect YouTube
-            </Button>
-            {connectError && <p className="text-xs text-red-600 mt-2">{connectError}</p>}
+          <div className="mt-6 flex flex-col items-center gap-2">
+            <div className="flex gap-2">
+              <Button onClick={handleConnectYoutube} disabled={isConnectingYt || isConnectingLi}>
+                {isConnectingYt ? (
+                  <RefreshCw className="w-4 h-4 mr-2 animate-spin" aria-hidden="true" />
+                ) : (
+                  <Plus className="w-4 h-4 mr-2" aria-hidden="true" />
+                )}
+                Connect YouTube
+              </Button>
+              <Button onClick={handleConnectLinkedin} disabled={isConnectingYt || isConnectingLi}>
+                {isConnectingLi ? (
+                  <RefreshCw className="w-4 h-4 mr-2 animate-spin" aria-hidden="true" />
+                ) : (
+                  <Plus className="w-4 h-4 mr-2" aria-hidden="true" />
+                )}
+                Connect LinkedIn
+              </Button>
+            </div>
+            {connectError && <p className="text-xs text-red-600">{connectError}</p>}
           </div>
         </div>
       ) : (

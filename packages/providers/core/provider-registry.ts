@@ -1,8 +1,8 @@
-import { ISocialProvider } from './interfaces/ISocialProvider.js';
-import { IPublishingProvider } from './interfaces/IPublishingProvider.js';
-import { LinkedInProvider } from '../linkedin/linkedin.provider.js';
-import { YouTubeProvider } from '../youtube/youtube.provider.js';
-import { ProviderCapabilityError } from './errors/index.js';
+import { ISocialProvider } from './interfaces/ISocialProvider';
+import { IPublishingProvider } from './interfaces/IPublishingProvider';
+import { LinkedInProvider } from '../linkedin/linkedin.provider';
+import { YouTubeProvider } from '../youtube/youtube.provider';
+import { ProviderCapabilityError } from './errors/index';
 
 type ProviderFactory = () => ISocialProvider;
 
@@ -11,10 +11,11 @@ export class ProviderRegistry {
   private instances: Map<string, ISocialProvider> = new Map();
 
   register(name: string, factory: ProviderFactory) {
-    this.factories.set(name, factory);
+    this.factories.set(name.toLowerCase(), factory);
   }
 
   get(name: string): ISocialProvider | undefined {
+    name = name.toLowerCase();
     if (this.instances.has(name)) {
       return this.instances.get(name);
     }
@@ -56,5 +57,3 @@ export class ProviderRegistry {
 export const providerRegistry = new ProviderRegistry();
 providerRegistry.register('linkedin', () => new LinkedInProvider());
 providerRegistry.register('youtube', () => new YouTubeProvider());
-
-
