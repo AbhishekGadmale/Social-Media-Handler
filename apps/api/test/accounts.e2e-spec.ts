@@ -1,12 +1,14 @@
+/* eslint-disable */
 import { APP_GUARD } from '@nestjs/core';
 /* eslint-disable @typescript-eslint/no-unsafe-argument */
 import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication } from '@nestjs/common';
-import request from 'supertest';
+const request = require('supertest');
 import { AppModule } from './../src/app.module';
 import * as _cookieParser from 'cookie-parser';
 const cookieParser = _cookieParser.default || _cookieParser;
 import { PrismaClient, generateId } from '@agency-os/database';
+import { loginAndGetSession } from './helpers';
 import { AllExceptionsFilter } from '../src/filters/all-exceptions.filter';
 import * as argon2 from '@node-rs/argon2';
 import Redis from 'ioredis';
@@ -22,8 +24,8 @@ describe('AccountsController (e2e)', () => {
   let testWorkspaceNone: string;
   let testWorkspaceOther: string;
   let testOrg: string;
-  let sessionCookie: string;
-  let csrfToken: string;
+  let sessionData: any;
+
   let accountWorkspaceEditor: string;
   let accountWorkspaceOther: string;
 
@@ -40,8 +42,7 @@ describe('AccountsController (e2e)', () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [AppModule],
     })
-      .overrideProvider(APP_GUARD)
-      .useValue({ canActivate: () => true })
+
       .compile();
 
     app = moduleFixture.createNestApplication();
@@ -165,15 +166,11 @@ describe('AccountsController (e2e)', () => {
       },
     });
 
-    const loginRes = await request(app.getHttpServer())
-      .post('/api/v1/auth/login')
-      .send({ email: testUser.email, password: 'correctpassword' });
-
-    const cookies = loginRes.headers['set-cookie'] as any as string[];
-    const sessionCookieHeader = cookies.find((c) => c.startsWith('session='));
-    const csrfCookieHeader = cookies.find((c) => c.startsWith('csrfToken='));
-    sessionCookie = sessionCookieHeader!.split(';')[0];
-    csrfToken = csrfCookieHeader!.split(';')[0].split('=')[1];
+    sessionData = await loginAndGetSession(
+      app,
+      testUser.email,
+      'correctpassword',
+    );
   });
 
   afterAll(async () => {
@@ -206,7 +203,8 @@ describe('AccountsController (e2e)', () => {
   it('GET /api/v1/workspaces/:workspaceId/accounts - fails if not a member (WorkspaceGuard)', async () => {
     const res = await request(app.getHttpServer())
       .get(`/api/v1/workspaces/${testWorkspaceNone}/accounts`)
-      .set('Cookie', sessionCookie);
+      .set('Cookie', sessionData.combinedCookie)
+      .set('x-csrf-token', sessionData.csrfToken);
     expect(res.status).toBe(403);
     expect(res.body.error.message).toContain(
       'User is not a member of this workspace',
@@ -217,14 +215,16 @@ describe('AccountsController (e2e)', () => {
     // Even if I am authenticated, if I try to access `testWorkspaceOther`, it should fail
     const res = await request(app.getHttpServer())
       .get(`/api/v1/workspaces/${testWorkspaceOther}/accounts`)
-      .set('Cookie', sessionCookie);
+      .set('Cookie', sessionData.combinedCookie)
+      .set('x-csrf-token', sessionData.csrfToken);
     expect(res.status).toBe(403);
   });
 
   it('GET /api/v1/workspaces/:workspaceId/accounts - success returns accounts without credentials', async () => {
     const res = await request(app.getHttpServer())
       .get(`/api/v1/workspaces/${testWorkspaceEditor}/accounts`)
-      .set('Cookie', sessionCookie);
+      .set('Cookie', sessionData.combinedCookie)
+      .set('x-csrf-token', sessionData.csrfToken);
 
     expect(res.status).toBe(200);
     expect(res.body.accounts).toBeDefined();

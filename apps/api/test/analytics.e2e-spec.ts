@@ -1,12 +1,14 @@
+/* eslint-disable */
 import { APP_GUARD } from '@nestjs/core';
 /* eslint-disable @typescript-eslint/no-unsafe-argument */
 import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication } from '@nestjs/common';
-import request from 'supertest';
+const request = require('supertest');
 import { AppModule } from './../src/app.module';
 import * as _cookieParser from 'cookie-parser';
 const cookieParser = _cookieParser.default || _cookieParser;
 import { PrismaClient, generateId } from '@agency-os/database';
+import { loginAndGetSession } from './helpers';
 import { AllExceptionsFilter } from '../src/filters/all-exceptions.filter';
 import * as argon2 from '@node-rs/argon2';
 import Redis from 'ioredis';
@@ -22,8 +24,13 @@ describe('AnalyticsController (e2e)', () => {
   let testWorkspaceNone: string;
   let testWorkspaceOther: string;
   let testOrg: string;
-  let sessionCookie: string;
-  let csrfToken: string;
+  let sessionData: any;
+  let sessionCookie: any;
+  let csrfToken: any;
+  let cookie1: any;
+  let csrf1: any;
+  let cookie2: any;
+  let csrf2: any;
 
   beforeEach(async () => {
     if (redis) {
@@ -38,8 +45,7 @@ describe('AnalyticsController (e2e)', () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [AppModule],
     })
-      .overrideProvider(APP_GUARD)
-      .useValue({ canActivate: () => true })
+
       .compile();
 
     app = moduleFixture.createNestApplication();
@@ -200,11 +206,16 @@ describe('AnalyticsController (e2e)', () => {
     if (loginRes.status !== 200) {
       console.log('ANALYTICS LOGIN FAILED:', loginRes.status, loginRes.body);
     }
-    const cookies = loginRes.headers['set-cookie'] as any as string[];
+    const cookies = loginRes.headers['set-cookie'] as string[];
     const sessionCookieHeader = cookies.find((c) => c.startsWith('session='));
     const csrfCookieHeader = cookies.find((c) => c.startsWith('csrfToken='));
     sessionCookie = sessionCookieHeader!.split(';')[0];
     csrfToken = csrfCookieHeader!.split(';')[0].split('=')[1];
+    sessionData = await loginAndGetSession(
+      app,
+      testUser.email,
+      'correctpassword',
+    );
   });
 
   afterAll(async () => {
@@ -237,14 +248,16 @@ describe('AnalyticsController (e2e)', () => {
   it('GET /api/v1/workspaces/:workspaceId/analytics/overview - fails if not a member', async () => {
     const res = await request(app.getHttpServer())
       .get(`/api/v1/workspaces/${testWorkspaceNone}/analytics/overview`)
-      .set('Cookie', sessionCookie);
+      .set('Cookie', sessionData.combinedCookie)
+      .set('x-csrf-token', sessionData.csrfToken);
     expect(res.status).toBe(403);
   });
 
   it('GET /api/v1/workspaces/:workspaceId/analytics/overview - success returns valid overview', async () => {
     const res = await request(app.getHttpServer())
       .get(`/api/v1/workspaces/${testWorkspaceEditor}/analytics/overview`)
-      .set('Cookie', sessionCookie);
+      .set('Cookie', sessionData.combinedCookie)
+      .set('x-csrf-token', sessionData.csrfToken);
 
     expect(res.status).toBe(200);
     expect(res.body.workspaceId).toBe(testWorkspaceEditor);

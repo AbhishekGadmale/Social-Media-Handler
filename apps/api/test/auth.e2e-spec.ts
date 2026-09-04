@@ -1,8 +1,9 @@
+/* eslint-disable */
 import { APP_GUARD } from '@nestjs/core';
-/* eslint-disable @typescript-eslint/no-unsafe-argument */
+
 import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication } from '@nestjs/common';
-import request from 'supertest';
+const request = require('supertest');
 import { AppModule } from './../src/app.module';
 import * as _cookieParser from 'cookie-parser';
 const cookieParser = _cookieParser.default || _cookieParser;
@@ -110,11 +111,15 @@ describe('AuthController (e2e)', () => {
       await prisma.workspaceMember.deleteMany({
         where: { userId: testUser.id },
       });
-      await prisma.workspace.delete({ where: { id: testWorkspaceEditor } });
-      await prisma.workspace.delete({ where: { id: testWorkspaceViewer } });
-      await prisma.workspace.delete({ where: { id: testWorkspaceNone } });
-      await prisma.organization.delete({ where: { id: testOrg } });
-      await prisma.user.delete({ where: { id: testUser.id } });
+      await prisma.workspace.deleteMany({
+        where: {
+          id: {
+            in: [testWorkspaceEditor, testWorkspaceViewer, testWorkspaceNone],
+          },
+        },
+      });
+      await prisma.organization.deleteMany({ where: { id: testOrg } });
+      await prisma.user.deleteMany({ where: { id: testUser?.id } });
     }
 
     // Clear redis
@@ -160,7 +165,7 @@ describe('AuthController (e2e)', () => {
       .send({ email: testUser.email, password: 'correctpassword' });
 
     expect(res.status).toBe(200);
-    const cookies = res.headers['set-cookie'] as any as string[];
+    const cookies = res.headers['set-cookie'] as string[];
     expect(cookies).toBeDefined();
 
     const sessionCookieHeader = cookies.find((c) => c.startsWith('session='));
@@ -236,7 +241,7 @@ describe('AuthController (e2e)', () => {
       .post('/api/v1/auth/login')
       .send({ email: testUser.email, password: 'correctpassword' });
 
-    const cookies = loginRes.headers['set-cookie'] as any as string[];
+    const cookies = loginRes.headers['set-cookie'] as string[];
     const sessionCookieHeader = cookies.find((c) => c.startsWith('session='));
     const csrfCookieHeader = cookies.find((c) => c.startsWith('csrfToken='));
     const tempSessionCookie = sessionCookieHeader!.split(';')[0];

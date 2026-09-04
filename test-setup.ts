@@ -25,12 +25,19 @@ if (envPath && fs.existsSync(envPath)) {
   });
 }
 
-if (process.env.TEST_DATABASE_URL) {
-  process.env.DATABASE_URL = process.env.TEST_DATABASE_URL;
-} else {
+if (!process.env.TEST_DATABASE_URL) {
   throw new Error(`TEST_DATABASE_URL is not set in root .env. Loaded from: ${envPath}`);
 }
 
-if (!process.env.DATABASE_URL.includes('test')) {
-  throw new Error('DATABASE_URL does not contain test substring');
+const parsedUrl = new URL(process.env.TEST_DATABASE_URL);
+const dbName = parsedUrl.pathname.slice(1);
+
+if (dbName === 'agency_os') {
+  throw new Error('SAFETY CHECK FAILED: agency_os explicitly rejected for destructive test operations.');
 }
+
+if (dbName !== 'agency_os_test') {
+  throw new Error(`SAFETY CHECK FAILED: Destructive test operations must target exact database agency_os_test, got: ${dbName}`);
+}
+
+process.env.DATABASE_URL = process.env.TEST_DATABASE_URL;
