@@ -157,7 +157,7 @@ export class LinkedInProvider implements ISocialProvider, IPublishingProvider {
     return {
       contentTypes: {
         TEXT_POST: { supported: true, maxLength: 3000 },
-        IMAGE_POST: { supported: false },
+        IMAGE_POST: { supported: true, maxCount: 1 },
         MULTI_IMAGE_POST: { supported: false },
         VIDEO_POST: { supported: false },
         LINK_POST: { supported: false },
@@ -193,16 +193,182 @@ export class LinkedInProvider implements ISocialProvider, IPublishingProvider {
       };
     }
 
+    let imageUrn: string | undefined;
+
     if (input.media && input.media.length > 0) {
-      return {
-        success: false,
-        failureCategory: 'VALIDATION',
-        failureCode: 'MEDIA_NOT_SUPPORTED',
-        message: 'LinkedIn provider currently only supports text posts',
-      };
+      if (input.media.length > 1) {
+        return {
+          success: false,
+          failureCategory: 'VALIDATION',
+          failureCode: 'MEDIA_COUNT_EXCEEDED',
+          message: 'LinkedIn provider currently only supports exactly one image',
+        };
+      }
+      
+      const media = input.media[0];
+      if (!media.mimeType.startsWith('image/')) {
+        return {
+          success: false,
+          failureCategory: 'VALIDATION',
+          failureCode: 'UNSUPPORTED_MEDIA_TYPE',
+          message: 'LinkedIn single image post requires a valid image type',
+        };
+      }
+      
+      if (!media.key || !mediaSource) {
+        return {
+          success: false,
+          failureCategory: 'PERMANENT',
+          failureCode: 'MISSING_MEDIA_SOURCE',
+          message: 'Media content source or storage key is missing',
+        };
+      }
+
+      // 1. Initialize upload
+      let initResponse: Response;
+      try {
+        initResponse = await fetch('https://api.linkedin.com/rest/images?action=initializeUpload', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${credentials.accessToken}`,
+            'Linkedin-Version': '202608',
+            'X-Restli-Protocol-Version': '2.0.0',
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            initializeUploadRequest: {
+              owner: `urn:li:person:${input.externalAccountId}`
+            }
+          })
+        });
+      } catch (err) {
+        return {
+          success: false,
+          failureCategory: 'UNKNOWN_RESULT',
+          failureCode: 'NETWORK_ERROR',
+          message: `Network error during initializeUpload: ${err instanceof Error ? err.message : String(err)}`,
+        };
+      }
+
+      if (!initResponse.ok) {
+        if (initResponse.status === 401) return { success: false, failureCategory: 'AUTH_REQUIRED', failureCode: 'UNAUTHORIZED', message: 'Unauthorized at initializeUpload' };
+        if (initResponse.status === 403) return { success: false, failureCategory: 'AUTH_REQUIRED', failureCode: 'FORBIDDEN', message: 'Forbidden at initializeUpload' };
+        if (initResponse.status === 429) return { success: false, failureCategory: 'RATE_LIMITED', failureCode: 'TOO_MANY_REQUESTS', message: 'Rate limit at initializeUpload' };
+        if (initResponse.status >= 500) return { success: false, failureCategory: 'TRANSIENT', failureCode: 'SERVER_ERROR', message: 'Server error at initializeUpload' };
+        return { success: false, failureCategory: 'PERMANENT', failureCode: `HTTP_${initResponse.status}`, message: 'Failed to initialize upload' };
+      }
+
+      const initData = await initResponse.json();
+      const uploadUrl = initData.value?.uploadUrl;
+      imageUrn = initData.value?.image;
+
+      if (!uploadUrl || !imageUrn) {
+        return {
+          success: false,
+          failureCategory: 'PERMANENT',
+          failureCode: 'INVALID_INITIALIZE_RESPONSE',
+          message: 'Missing uploadUrl or image URN in initializeUpload response',
+        };
+      }
+
+      // 2. Upload image bytes
+      let stream;
+      try {
+        stream = await mediaSource.getStream(media.key);
+      } catch (err) {
+        return {
+          success: false,
+          failureCategory: 'TRANSIENT',
+          failureCode: 'STORAGE_UNAVAILABLE',
+          message: 'Failed to read from media content source',
+        };
+      }
+
+      let uploadRes: Response;
+      try {
+        uploadRes = await fetch(uploadUrl, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': media.mimeType,
+          },
+          body: stream,
+          duplex: 'half'
+        } as unknown as RequestInit);
+      } catch (err) {
+        return {
+          success: false,
+          failureCategory: 'TRANSIENT', // Safe to retry, post mutation hasn't happened
+          failureCode: 'NETWORK_ERROR',
+          message: 'Network error during image upload',
+        };
+      }
+
+      if (!uploadRes.ok) {
+        if (uploadRes.status >= 500) return { success: false, failureCategory: 'TRANSIENT', failureCode: 'SERVER_ERROR', message: 'Server error during image upload' };
+        return { success: false, failureCategory: 'TRANSIENT', failureCode: `HTTP_${uploadRes.status}`, message: 'Failed to upload image bytes' }; // uploadUrl might be expired, transient is safe
+      }
+
+      // 3. Poll readiness
+      let isAvailable = false;
+      let attempts = 0;
+      const maxAttempts = 10;
+      const encodedUrn = encodeURIComponent(imageUrn);
+
+      while (attempts < maxAttempts && !isAvailable) {
+        attempts++;
+        // Backoff: 2s
+        await new Promise(resolve => setTimeout(resolve, 2000));
+
+        let pollRes: Response;
+        try {
+          pollRes = await fetch(`https://api.linkedin.com/rest/images/${encodedUrn}`, {
+            headers: {
+              'Authorization': `Bearer ${credentials.accessToken}`,
+              'Linkedin-Version': '202608',
+              'X-Restli-Protocol-Version': '2.0.0',
+            }
+          });
+        } catch (err) {
+          continue; // retry network error on polling
+        }
+
+        if (pollRes.ok) {
+          const pollData = await pollRes.json();
+          if (pollData.status === 'AVAILABLE') {
+            isAvailable = true;
+          } else if (pollData.status && pollData.status !== 'WAITING_UPLOAD' && pollData.status !== 'PROCESSING') {
+             // Permanent failure state in image processing? (e.g. FAILED)
+             if (pollData.status === 'FAILED') {
+               return {
+                 success: false,
+                 failureCategory: 'PERMANENT',
+                 failureCode: 'IMAGE_PROCESSING_FAILED',
+                 message: 'LinkedIn image processing failed permanently',
+               };
+             }
+          }
+        } else if (pollRes.status === 401 || pollRes.status === 403 || pollRes.status === 404) {
+           // Permanent errors during poll
+           return {
+             success: false,
+             failureCategory: 'PERMANENT',
+             failureCode: 'IMAGE_NOT_FOUND',
+             message: 'Image check returned fatal error',
+           };
+        }
+      }
+
+      if (!isAvailable) {
+        return {
+          success: false,
+          failureCategory: 'TRANSIENT',
+          failureCode: 'IMAGE_PROCESSING_TIMEOUT',
+          message: 'Timeout waiting for LinkedIn image to become AVAILABLE',
+        };
+      }
     }
 
-    const payload = {
+    const payload: any = {
       author: `urn:li:person:${input.externalAccountId}`,
       commentary: input.content,
       visibility: 'PUBLIC',
@@ -214,6 +380,17 @@ export class LinkedInProvider implements ISocialProvider, IPublishingProvider {
       lifecycleState: 'PUBLISHED',
       isReshareDisabledByAuthor: false
     };
+
+    if (imageUrn) {
+      payload.content = {
+        media: {
+          id: imageUrn
+          // Note on altText: The existing schema (ProviderPublicationInput media array) 
+          // does not support altText. We intentionally omit it for MVP rather than 
+          // introducing a broad schema redesign.
+        }
+      };
+    }
 
     let response: Response;
     try {
