@@ -34,7 +34,7 @@ describe('Publishing API (e2e)', () => {
   beforeAll(async () => {
     const {
       assertTestDatabaseUrl,
-    } = require('@agency-os/database/check-test-db');
+    } = require('@agency-os/database');
     assertTestDatabaseUrl(process.env.DATABASE_URL);
 
     const moduleFixture = await Test.createTestingModule({

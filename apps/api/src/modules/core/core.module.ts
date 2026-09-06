@@ -3,6 +3,7 @@ import {
   Module,
   OnApplicationShutdown,
   Provider,
+  Inject,
 } from '@nestjs/common';
 import {
   PrismaClient,
@@ -15,40 +16,40 @@ import { SessionManager } from '@agency-os/session';
 import Redis from 'ioredis';
 import { AuditService } from './audit.service';
 
-const prisma = new PrismaClient();
-const redis = new Redis(process.env.REDIS_URL || 'redis://localhost:6379');
-// eslint-disable-next-line @typescript-eslint/no-unsafe-argument
-const sessionManager = new SessionManager(redis as any);
-const userRepository = new UserRepository(prisma);
-
 const providers: Provider[] = [
   {
     provide: PrismaClient,
-    useValue: prisma,
+    useFactory: () => new PrismaClient(),
   },
   {
     provide: 'REDIS_CLIENT',
-    useValue: redis,
+    useFactory: () =>
+      new Redis(process.env.REDIS_URL || 'redis://localhost:6379'),
   },
   {
     provide: SessionManager,
-    useValue: sessionManager,
+    useFactory: (redis: Redis) => new SessionManager(redis as any),
+    inject: ['REDIS_CLIENT'],
   },
   {
     provide: UserRepository,
-    useValue: userRepository,
+    useFactory: (prisma: PrismaClient) => new UserRepository(prisma),
+    inject: [PrismaClient],
   },
   {
     provide: WorkspaceMemberRepository,
-    useValue: new WorkspaceMemberRepository(prisma),
+    useFactory: (prisma: PrismaClient) => new WorkspaceMemberRepository(prisma),
+    inject: [PrismaClient],
   },
   {
     provide: SocialAccountRepository,
-    useValue: new SocialAccountRepository(prisma),
+    useFactory: (prisma: PrismaClient) => new SocialAccountRepository(prisma),
+    inject: [PrismaClient],
   },
   {
     provide: AuditLogRepository,
-    useValue: new AuditLogRepository(prisma),
+    useFactory: (prisma: PrismaClient) => new AuditLogRepository(prisma),
+    inject: [PrismaClient],
   },
   AuditService,
 ];
@@ -59,8 +60,13 @@ const providers: Provider[] = [
   exports: providers,
 })
 export class CoreModule implements OnApplicationShutdown {
+  constructor(
+    private readonly prisma: PrismaClient,
+    @Inject('REDIS_CLIENT') private readonly redis: Redis,
+  ) {}
+
   async onApplicationShutdown() {
-    await prisma.$disconnect();
-    redis.disconnect();
+    await this.prisma.$disconnect();
+    this.redis.disconnect();
   }
 }

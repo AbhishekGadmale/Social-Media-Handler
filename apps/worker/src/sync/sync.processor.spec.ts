@@ -15,6 +15,7 @@ import {
 import * as invokeMod from '@agency-os/providers';
 import { Job, UnrecoverableError } from 'bullmq';
 import { encrypt } from '@agency-os/database/src/crypto/encryption';
+import { assertTestDatabaseUrl } from '@agency-os/database';
 
 jest.mock('@agency-os/providers', () => {
   const original = jest.requireActual('@agency-os/providers');
@@ -46,14 +47,7 @@ describe('SyncProcessor', () => {
 
     processor = module.get<SyncProcessor>(SyncProcessor);
 
-    if (
-      !process.env.DATABASE_URL ||
-      !process.env.DATABASE_URL.includes('test')
-    ) {
-      throw new Error(
-        'SAFETY CHECK FAILED: Tests that clear the database must run against a test database. DATABASE_URL does not contain "test".',
-      );
-    }
+    assertTestDatabaseUrl(process.env.DATABASE_URL);
 
     await prisma.accountMetricDaily.deleteMany({});
     await prisma.syncRun.deleteMany({});

@@ -6,12 +6,10 @@ import {
 } from '@nestjs/common';
 import { PrismaClient } from '@agency-os/database';
 
-const prisma = new PrismaClient();
-
 const providers: Provider[] = [
   {
     provide: PrismaClient,
-    useValue: prisma,
+    useFactory: () => new PrismaClient(),
   },
 ];
 
@@ -21,7 +19,9 @@ const providers: Provider[] = [
   exports: providers,
 })
 export class CoreModule implements OnApplicationShutdown {
+  constructor(private readonly prisma: PrismaClient) {}
+
   async onApplicationShutdown() {
-    await prisma.$disconnect();
+    await this.prisma.$disconnect();
   }
 }
