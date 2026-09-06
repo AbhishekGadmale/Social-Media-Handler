@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { YouTubeProvider } from './youtube.provider.js';
-import { providerRegistry } from '../core/provider-registry.js';
+import { YouTubeProvider } from './youtube.provider';
+import { providerRegistry } from '../core/provider-registry';
 
 describe('YouTubeProvider', () => {
   let provider: YouTubeProvider;
@@ -38,6 +38,26 @@ describe('YouTubeProvider', () => {
     expect(url).toContain('code_challenge_method=S256');
     expect(url).toContain('access_type=offline');
     expect(url).toContain('prompt=consent');
+  });
+
+  it('generates correct authorization URL with allowed scopes', () => {
+    const url = provider.getAuthorizationUrl({
+      workspaceId: 'ws-123',
+      redirectUri: 'http://localhost/callback',
+      state: 'some-state',
+      requestedScopes: ['https://www.googleapis.com/auth/youtube.upload'],
+    });
+
+    expect(url).toContain('scope=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fyoutube.readonly+https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fyoutube.upload');
+  });
+
+  it('rejects authorization URL with arbitrary unknown scopes', () => {
+    expect(() => provider.getAuthorizationUrl({
+      workspaceId: 'ws-123',
+      redirectUri: 'http://localhost/callback',
+      state: 'some-state',
+      requestedScopes: ['https://www.googleapis.com/auth/drive'],
+    })).toThrow('Invalid or unauthorized OAuth scope requested');
   });
 
   it('exchanges authorization code correctly', async () => {

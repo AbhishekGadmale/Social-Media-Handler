@@ -7,7 +7,7 @@ import {
   isTerminalPublicationState,
   isRetryablePublicationState,
   isReconciliationRequiredState
-} from '../state-machine.js';
+} from '../state-machine';
 
 describe('Publishing State Machine', () => {
   describe('canTransitionPublication', () => {

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { encrypt, decrypt } from './encryption.js';
+import { encrypt, decrypt } from './encryption';
 
 describe('Encryption Utility', () => {
   const originalEnv = process.env;

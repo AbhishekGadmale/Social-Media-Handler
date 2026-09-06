@@ -1,1 +1,1 @@
-export * from './youtube.provider.js';
+export * from './youtube.provider';

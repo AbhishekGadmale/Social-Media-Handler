@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { resolveCapabilities } from '../capability-resolver.js';
+import { resolveCapabilities } from '../capability-resolver';
 
 describe('Capability Resolver', () => {
   it('resolves basic read capabilities based on full scopes', () => {

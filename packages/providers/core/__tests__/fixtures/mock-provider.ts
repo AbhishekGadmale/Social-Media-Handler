@@ -1,10 +1,10 @@
-import { ISocialProvider } from '../../interfaces/ISocialProvider.js';
+import { ISocialProvider } from '../../interfaces/ISocialProvider';
 import {
   AuthUrlInput,
   OAuthCredentials,
   SocialProfile,
   RawAccountMetrics,
-} from '../../types/index.js';
+} from '../../types/index';
 
 export class MockLimitedProvider implements ISocialProvider {
   getAuthorizationUrl(input: AuthUrlInput): string {

@@ -63,6 +63,22 @@ export class LinkedInProvider implements ISocialProvider, IPublishingProvider {
     return `${this.authorizeUrl}?${params.toString()}`;
   }
 
+  private async fetchWithTimeout(url: string, options: RequestInit, timeoutMs: number): Promise<Response> {
+    const controller = new AbortController();
+    const id = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const response = await fetch(url, { ...options, signal: controller.signal as any });
+      clearTimeout(id);
+      return response;
+    } catch (err: any) {
+      clearTimeout(id);
+      if (err.name === 'AbortError') {
+        throw new Error(`Request timed out after ${timeoutMs}ms`);
+      }
+      throw err;
+    }
+  }
+
   async exchangeAuthorizationCode(input: { code: string; redirectUri: string; codeVerifier?: string }): Promise<OAuthCredentials> {
     const params = new URLSearchParams({
       grant_type: 'authorization_code',
@@ -159,7 +175,7 @@ export class LinkedInProvider implements ISocialProvider, IPublishingProvider {
         TEXT_POST: { supported: true, maxLength: 3000 },
         IMAGE_POST: { supported: true, maxCount: 1 },
         MULTI_IMAGE_POST: { supported: false },
-        VIDEO_POST: { supported: false },
+        VIDEO_POST: { supported: true, maxCount: 1, maxBytes: 500 * 1024 * 1024, mimeTypes: ['video/mp4'] },
         LINK_POST: { supported: false },
       },
       features: [],
@@ -194,6 +210,7 @@ export class LinkedInProvider implements ISocialProvider, IPublishingProvider {
     }
 
     let imageUrn: string | undefined;
+    let videoUrn: string | undefined;
 
     if (input.media && input.media.length > 0) {
       if (input.media.length > 1) {
@@ -206,12 +223,14 @@ export class LinkedInProvider implements ISocialProvider, IPublishingProvider {
       }
       
       const media = input.media[0];
-      if (!media.mimeType.startsWith('image/')) {
+      const isImage = media.mimeType.startsWith('image/');
+      const isVideo = media.mimeType.startsWith('video/');
+      if (!isImage && !isVideo) {
         return {
           success: false,
           failureCategory: 'VALIDATION',
           failureCode: 'UNSUPPORTED_MEDIA_TYPE',
-          message: 'LinkedIn single image post requires a valid image type',
+          message: 'LinkedIn post requires a valid image or video type',
         };
       }
       
@@ -224,10 +243,184 @@ export class LinkedInProvider implements ISocialProvider, IPublishingProvider {
         };
       }
 
-      // 1. Initialize upload
-      let initResponse: Response;
+      if (isVideo) {
+        // VIDEO FLOW
+        let initResponse: Response;
+        try {
+          initResponse = await this.fetchWithTimeout('https://api.linkedin.com/rest/videos?action=initializeUpload', {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${credentials.accessToken}`,
+              'Linkedin-Version': '202608',
+              'X-Restli-Protocol-Version': '2.0.0',
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              initializeUploadRequest: {
+                owner: `urn:li:person:${input.externalAccountId}`,
+                fileSizeBytes: media.sizeBytes,
+                uploadCaptions: false,
+                uploadThumbnail: false
+              }
+            })
+          }, 15000);
+        } catch (err) {
+          return {
+            success: false,
+            failureCategory: 'TRANSIENT',
+            failureCode: 'NETWORK_ERROR',
+            message: `Network error during video initializeUpload: ${err instanceof Error ? err.message : String(err)}`,
+          };
+        }
+
+        if (!initResponse.ok) {
+          if (initResponse.status === 401) return { success: false, failureCategory: 'AUTH_REQUIRED', failureCode: 'UNAUTHORIZED', message: 'Unauthorized at initializeUpload' };
+          if (initResponse.status === 403) return { success: false, failureCategory: 'AUTH_REQUIRED', failureCode: 'FORBIDDEN', message: 'Forbidden at initializeUpload' };
+          if (initResponse.status === 429) return { success: false, failureCategory: 'RATE_LIMITED', failureCode: 'TOO_MANY_REQUESTS', message: 'Rate limit at initializeUpload' };
+          if (initResponse.status >= 500) return { success: false, failureCategory: 'TRANSIENT', failureCode: 'SERVER_ERROR', message: 'Server error at initializeUpload' };
+          return { success: false, failureCategory: 'PERMANENT', failureCode: `HTTP_${initResponse.status}`, message: 'Failed to initialize video upload' };
+        }
+
+        const initData = await initResponse.json();
+        videoUrn = initData.value?.video;
+        const uploadInstructions = initData.value?.uploadInstructions;
+        const uploadToken = initData.value?.uploadToken;
+
+        if (!videoUrn || !uploadInstructions || typeof uploadToken !== 'string') {
+          return {
+            success: false,
+            failureCategory: 'PERMANENT',
+            failureCode: 'INVALID_INITIALIZE_RESPONSE',
+            message: 'Missing video URN, uploadInstructions, or uploadToken in response',
+          };
+        }
+
+        const uploadedPartIds: string[] = [];
+
+        for (const instruction of uploadInstructions) {
+          const { firstByte, lastByte, uploadUrl } = instruction;
+          let buffer: Buffer;
+          try {
+            console.log(`[LINKEDIN] Requesting stream from Minio for ${media.key} (${firstByte}-${lastByte})`);
+            const stream = await mediaSource.getStream(media.key, { start: firstByte, end: lastByte });
+            console.log(`[LINKEDIN] Stream obtained. Buffering...`);
+            const chunks = [];
+            for await (const chunk of stream) chunks.push(chunk);
+            buffer = Buffer.concat(chunks);
+            console.log(`[LINKEDIN] Buffered ${buffer.length} bytes for upload.`);
+          } catch (err) {
+            console.error(`[LINKEDIN] Stream error:`, err);
+            return {
+              success: false,
+              failureCategory: 'TRANSIENT',
+              failureCode: 'STORAGE_UNAVAILABLE',
+              message: 'Failed to read video part from media content source',
+            };
+          }
+
+          let uploadRes: Response;
+          try {
+            console.log(`[LINKEDIN] PUT to ${uploadUrl.substring(0, 50)}...`);
+            uploadRes = await this.fetchWithTimeout(uploadUrl, {
+              method: 'PUT',
+              headers: { 'Content-Type': media.mimeType },
+              body: buffer,
+            } as any, 60000);
+            console.log(`[LINKEDIN] PUT response: ${uploadRes.status}`);
+          } catch (err) {
+            console.error(`[LINKEDIN] Fetch error:`, err);
+            return { success: false, failureCategory: 'TRANSIENT', failureCode: 'NETWORK_ERROR', message: 'Network error during video part upload' };
+          }
+
+          if (!uploadRes.ok) {
+            return { success: false, failureCategory: 'TRANSIENT', failureCode: `HTTP_${uploadRes.status}`, message: 'Failed to upload video part bytes' };
+          }
+
+          let etag = uploadRes.headers.get('etag');
+          if (!etag) {
+            return { success: false, failureCategory: 'PERMANENT', failureCode: 'MISSING_ETAG', message: 'Provider returned no ETag for video part' };
+          }
+          etag = etag.replace(/(^"|"$)/g, '');
+          uploadedPartIds.push(etag);
+        }
+
+        let finalizeRes: Response;
+        try {
+          finalizeRes = await this.fetchWithTimeout('https://api.linkedin.com/rest/videos?action=finalizeUpload', {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${credentials.accessToken}`,
+              'Linkedin-Version': '202608',
+              'X-Restli-Protocol-Version': '2.0.0',
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              finalizeUploadRequest: {
+                video: videoUrn,
+                uploadToken: uploadToken,
+                uploadedPartIds
+              }
+            })
+          }, 15000);
+        } catch (err) {
+          return { success: false, failureCategory: 'TRANSIENT', failureCode: 'NETWORK_ERROR', message: 'Network error during finalizeUpload' };
+        }
+
+        if (!finalizeRes.ok) {
+          return { success: false, failureCategory: 'PERMANENT', failureCode: `HTTP_${finalizeRes.status}`, message: 'Failed to finalize video upload' };
+        }
+
+        let isAvailable = false;
+        let attempts = 0;
+        const maxAttempts = 60; // 60 * 10s = 10 mins
+        const encodedUrn = encodeURIComponent(videoUrn);
+
+        while (attempts < maxAttempts && !isAvailable) {
+          attempts++;
+          await new Promise(resolve => setTimeout(resolve, 10000));
+
+          let pollRes: Response;
+          try {
+            pollRes = await this.fetchWithTimeout(`https://api.linkedin.com/rest/videos/${encodedUrn}`, {
+              headers: {
+                'Authorization': `Bearer ${credentials.accessToken}`,
+                'Linkedin-Version': '202608',
+                'X-Restli-Protocol-Version': '2.0.0',
+              }
+            }, 10000);
+          } catch (err) {
+            continue;
+          }
+
+          if (pollRes.ok) {
+            const pollData = await pollRes.json();
+            if (pollData.status === 'AVAILABLE') {
+              isAvailable = true;
+            } else if (pollData.status && pollData.status !== 'WAITING_UPLOAD' && pollData.status !== 'PROCESSING') {
+               if (pollData.status === 'PROCESSING_FAILED' || pollData.status === 'FAILED') {
+                 return {
+                   success: false,
+                   failureCategory: 'PERMANENT',
+                   failureCode: 'VIDEO_PROCESSING_FAILED',
+                   message: `LinkedIn video processing failed permanently (${pollData.status})`,
+                 };
+               }
+            }
+          } else if (pollRes.status === 401 || pollRes.status === 403 || pollRes.status === 404) {
+             return { success: false, failureCategory: 'PERMANENT', failureCode: 'VIDEO_NOT_FOUND', message: 'Video check returned fatal error' };
+          }
+        }
+
+        if (!isAvailable) {
+          return { success: false, failureCategory: 'TRANSIENT', failureCode: 'VIDEO_PROCESSING_TIMEOUT', message: 'Timeout waiting for LinkedIn video to become AVAILABLE' };
+        }
+
+      } else {
+        // IMAGE FLOW
+        // 1. Initialize upload
+        let initResponse: Response;
       try {
-        initResponse = await fetch('https://api.linkedin.com/rest/images?action=initializeUpload', {
+        initResponse = await this.fetchWithTimeout('https://api.linkedin.com/rest/images?action=initializeUpload', {
           method: 'POST',
           headers: {
             'Authorization': `Bearer ${credentials.accessToken}`,
@@ -240,11 +433,11 @@ export class LinkedInProvider implements ISocialProvider, IPublishingProvider {
               owner: `urn:li:person:${input.externalAccountId}`
             }
           })
-        });
+        }, 15000);
       } catch (err) {
         return {
           success: false,
-          failureCategory: 'UNKNOWN_RESULT',
+          failureCategory: 'TRANSIENT',
           failureCode: 'NETWORK_ERROR',
           message: `Network error during initializeUpload: ${err instanceof Error ? err.message : String(err)}`,
         };
@@ -272,9 +465,12 @@ export class LinkedInProvider implements ISocialProvider, IPublishingProvider {
       }
 
       // 2. Upload image bytes
-      let stream;
+      let buffer: Buffer;
       try {
-        stream = await mediaSource.getStream(media.key);
+        const stream = await mediaSource.getStream(media.key);
+        const chunks = [];
+        for await (const chunk of stream) chunks.push(chunk);
+        buffer = Buffer.concat(chunks);
       } catch (err) {
         return {
           success: false,
@@ -286,14 +482,13 @@ export class LinkedInProvider implements ISocialProvider, IPublishingProvider {
 
       let uploadRes: Response;
       try {
-        uploadRes = await fetch(uploadUrl, {
+        uploadRes = await this.fetchWithTimeout(uploadUrl, {
           method: 'PUT',
           headers: {
             'Content-Type': media.mimeType,
           },
-          body: stream,
-          duplex: 'half'
-        } as unknown as RequestInit);
+          body: buffer,
+        } as unknown as RequestInit, 30000);
       } catch (err) {
         return {
           success: false,
@@ -321,13 +516,13 @@ export class LinkedInProvider implements ISocialProvider, IPublishingProvider {
 
         let pollRes: Response;
         try {
-          pollRes = await fetch(`https://api.linkedin.com/rest/images/${encodedUrn}`, {
+          pollRes = await this.fetchWithTimeout(`https://api.linkedin.com/rest/images/${encodedUrn}`, {
             headers: {
               'Authorization': `Bearer ${credentials.accessToken}`,
               'Linkedin-Version': '202608',
               'X-Restli-Protocol-Version': '2.0.0',
             }
-          });
+          }, 10000);
         } catch (err) {
           continue; // retry network error on polling
         }
@@ -366,6 +561,7 @@ export class LinkedInProvider implements ISocialProvider, IPublishingProvider {
           message: 'Timeout waiting for LinkedIn image to become AVAILABLE',
         };
       }
+      } // end isImage block
     }
 
     const payload: any = {
@@ -381,20 +577,17 @@ export class LinkedInProvider implements ISocialProvider, IPublishingProvider {
       isReshareDisabledByAuthor: false
     };
 
-    if (imageUrn) {
+    if (imageUrn || videoUrn) {
       payload.content = {
         media: {
-          id: imageUrn
-          // Note on altText: The existing schema (ProviderPublicationInput media array) 
-          // does not support altText. We intentionally omit it for MVP rather than 
-          // introducing a broad schema redesign.
+          id: imageUrn || videoUrn
         }
       };
     }
 
     let response: Response;
     try {
-      response = await fetch('https://api.linkedin.com/rest/posts', {
+      response = await this.fetchWithTimeout('https://api.linkedin.com/rest/posts', {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${credentials.accessToken}`,
@@ -403,7 +596,7 @@ export class LinkedInProvider implements ISocialProvider, IPublishingProvider {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify(payload),
-      });
+      }, 30000);
     } catch (err) {
       // Network/fetch error could mean it reached the server but connection dropped
       return {

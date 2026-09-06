@@ -18,11 +18,11 @@ describe('LinkedInProvider Publishing', () => {
     process.env = originalEnv;
   });
 
-  it('should advertise TEXT_POST and IMAGE_POST', () => {
+  it('should advertise TEXT_POST and IMAGE_POST and VIDEO_POST', () => {
     const caps = provider.getPublishingCapabilities();
     expect(caps.contentTypes.TEXT_POST.supported).toBe(true);
     expect(caps.contentTypes.IMAGE_POST.supported).toBe(true);
-    expect(caps.contentTypes.VIDEO_POST.supported).toBe(false);
+    expect(caps.contentTypes.VIDEO_POST.supported).toBe(true);
     expect(caps.contentTypes.MULTI_IMAGE_POST.supported).toBe(false);
     expect(caps.contentTypes.LINK_POST.supported).toBe(false);
   });
@@ -159,16 +159,183 @@ describe('LinkedInProvider Publishing', () => {
     }
   });
 
-  it('should return VALIDATION error if non-image media is provided', async () => {
+  it('should return VALIDATION error if unsupported media is provided', async () => {
     const result = await provider.publish(
       { accessToken: 'token' },
-      { attemptId: 'a1', targetId: 't1', workspaceId: 'w1', externalAccountId: 'u', content: 'txt', providerOptions: {}, media: [{ mimeType: 'video/mp4', sizeBytes: 100 }] }
+      { attemptId: 'a1', targetId: 't1', workspaceId: 'w1', externalAccountId: 'u', content: 'txt', providerOptions: {}, media: [{ mimeType: 'application/pdf', sizeBytes: 100, key: 'test' }] },
+      {} as any
     );
     expect(result.success).toBe(false);
     if (!result.success) {
       expect(result.failureCategory).toBe('VALIDATION');
       expect(result.failureCode).toBe('UNSUPPORTED_MEDIA_TYPE');
     }
+  });
+
+  it('should successfully publish a single video post with multipart mock streaming', async () => {
+    // 1. Initialize Upload
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        value: {
+          video: 'urn:li:video:111',
+          uploadToken: 'token123',
+          uploadInstructions: [
+            { firstByte: 0, lastByte: 49, uploadUrl: 'https://mock.upload/part1' },
+            { firstByte: 50, lastByte: 99, uploadUrl: 'https://mock.upload/part2' }
+          ]
+        }
+      })
+    });
+
+    // 2. Upload Part 1
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      headers: new Headers({ etag: '"etag1"' })
+    });
+
+    // 3. Upload Part 2
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      headers: new Headers({ etag: 'etag2' })
+    });
+
+    // 4. Finalize
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200
+    });
+
+    // 5. Poll readiness
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ status: 'AVAILABLE' })
+    });
+
+    // 6. Create Post
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 201,
+      headers: new Headers({
+        'x-restli-id': 'urn:li:share:vidpost',
+        'x-li-uuid': 'req-uuid'
+      })
+    });
+
+    const mockMediaSource = {
+      getStream: vi.fn().mockResolvedValue([Buffer.from('video-data')])
+    };
+
+    vi.useFakeTimers();
+
+    const publishPromise = provider.publish(
+      { accessToken: 'token' },
+      { 
+        attemptId: 'a1', targetId: 't1', workspaceId: 'w1', externalAccountId: 'user123', content: 'Here is a video!', providerOptions: {},
+        media: [{ mimeType: 'video/mp4', sizeBytes: 100, key: 's3/video.mp4' }]
+      },
+      mockMediaSource as any
+    );
+
+    await vi.runAllTimersAsync();
+    const result = await publishPromise;
+    vi.useRealTimers();
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.externalPostId).toBe('urn:li:share:vidpost');
+    }
+
+    // Verify Initialize Request
+    expect(mockFetch).toHaveBeenCalledTimes(6);
+    const [initUrl, initOptions] = mockFetch.mock.calls[0];
+    expect(initUrl).toBe('https://api.linkedin.com/rest/videos?action=initializeUpload');
+    expect(JSON.parse(initOptions.body)).toEqual({
+      initializeUploadRequest: { owner: 'urn:li:person:user123', fileSizeBytes: 100, uploadCaptions: false, uploadThumbnail: false }
+    });
+
+    // Verify Finalize Request
+    const [finUrl, finOptions] = mockFetch.mock.calls[3];
+    expect(finUrl).toBe('https://api.linkedin.com/rest/videos?action=finalizeUpload');
+    expect(JSON.parse(finOptions.body)).toEqual({
+      finalizeUploadRequest: { video: 'urn:li:video:111', uploadToken: 'token123', uploadedPartIds: ['etag1', 'etag2'] }
+    });
+
+    // Verify Post Request
+    const [postUrl, postOptions] = mockFetch.mock.calls[5];
+    expect(postUrl).toBe('https://api.linkedin.com/rest/posts');
+    const postBody = JSON.parse(postOptions.body);
+    expect(postBody.content.media.id).toBe('urn:li:video:111');
+
+    // Verify IMediaContentSource Range Reads
+    expect(mockMediaSource.getStream).toHaveBeenCalledTimes(2);
+    expect(mockMediaSource.getStream).toHaveBeenNthCalledWith(1, 's3/video.mp4', { start: 0, end: 49 });
+    expect(mockMediaSource.getStream).toHaveBeenNthCalledWith(2, 's3/video.mp4', { start: 50, end: 99 });
+  });
+
+  it('should reject missing, null, or non-string uploadToken', async () => {
+    const invalidTokens = [undefined, null, 123, {}];
+    for (const token of invalidTokens) {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          value: { video: 'urn:li:video:111', uploadToken: token, uploadInstructions: [] }
+        })
+      });
+
+      const result = await provider.publish(
+        { accessToken: 'token' },
+        { attemptId: 'a1', targetId: 't1', workspaceId: 'w1', externalAccountId: 'u', content: 'txt', providerOptions: {}, media: [{ mimeType: 'video/mp4', sizeBytes: 100, key: 's3/v.mp4' }] },
+        { getStream: vi.fn() } as any
+      );
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.failureCode).toBe('INVALID_INITIALIZE_RESPONSE');
+      }
+    }
+  });
+
+  it('should accept empty string uploadToken and pass it to finalizeUpload', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        value: {
+          video: 'urn:li:video:empty',
+          uploadToken: '',
+          uploadInstructions: [
+            { firstByte: 0, lastByte: 99, uploadUrl: 'https://mock.upload/part1' }
+          ]
+        }
+      })
+    });
+    mockFetch.mockResolvedValueOnce({ ok: true, status: 200, headers: new Headers({ etag: '"etag1"' }) });
+    mockFetch.mockResolvedValueOnce({ ok: true, status: 200 }); // finalize
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'AVAILABLE' }) });
+    mockFetch.mockResolvedValueOnce({
+      ok: true, status: 201, headers: new Headers({ 'x-restli-id': 'urn:li:share:empty' })
+    });
+
+    vi.useFakeTimers();
+    const publishPromise = provider.publish(
+      { accessToken: 'token' },
+      { attemptId: 'a1', targetId: 't1', workspaceId: 'w1', externalAccountId: 'u', content: 'txt', providerOptions: {}, media: [{ mimeType: 'video/mp4', sizeBytes: 100, key: 's3/v.mp4' }] },
+      { getStream: vi.fn().mockResolvedValue([Buffer.from('video-data')]) } as any
+    );
+    await vi.runAllTimersAsync();
+    const result = await publishPromise;
+    vi.useRealTimers();
+
+    expect(result.success).toBe(true);
+    
+    // Verify Finalize Request
+    const [finUrl, finOptions] = mockFetch.mock.calls[2];
+    expect(finUrl).toBe('https://api.linkedin.com/rest/videos?action=finalizeUpload');
+    expect(JSON.parse(finOptions.body)).toEqual({
+      finalizeUploadRequest: { video: 'urn:li:video:empty', uploadToken: '', uploadedPartIds: ['etag1'] }
+    });
   });
 
   it('should successfully publish a single image post with mock streaming', async () => {
@@ -205,7 +372,7 @@ describe('LinkedInProvider Publishing', () => {
       })
     });
 
-    const mockStream = { mock: 'stream' };
+    const mockStream = [Buffer.from('image-data')];
     const mockMediaSource = {
       getStream: vi.fn().mockResolvedValue(mockStream)
     };
@@ -235,7 +402,7 @@ describe('LinkedInProvider Publishing', () => {
     const [uploadUrl, uploadOptions] = mockFetch.mock.calls[1];
     expect(uploadUrl).toBe('https://mock.upload.url');
     expect(uploadOptions.method).toBe('PUT');
-    expect(uploadOptions.body).toBe(mockStream);
+    expect(uploadOptions.body.toString()).toBe('image-data');
     expect(uploadOptions.headers['Content-Type']).toBe('image/png');
     
     // Verify Poll Request
@@ -264,7 +431,7 @@ describe('LinkedInProvider Publishing', () => {
       mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'PROCESSING' }) });
     }
 
-    const mockMediaSource = { getStream: vi.fn().mockResolvedValue({}) };
+    const mockMediaSource = { getStream: vi.fn().mockResolvedValue([Buffer.from('image-data')]) };
 
     const publishPromise = provider.publish(
       { accessToken: 'token' },
@@ -284,5 +451,132 @@ describe('LinkedInProvider Publishing', () => {
     // ensure no POST /rest/posts was called
     const postCalls = mockFetch.mock.calls.filter(c => c[0] === 'https://api.linkedin.com/rest/posts');
     expect(postCalls.length).toBe(0);
+  });
+
+  it('should return TRANSIENT pre-post failure if initialize fails', async () => {
+    mockFetch.mockResolvedValueOnce({ ok: false, status: 500 });
+    const result = await provider.publish(
+      { accessToken: 'token' },
+      { attemptId: 'a1', targetId: 't1', workspaceId: 'w1', externalAccountId: 'user', content: 'Video', providerOptions: {}, media: [{ mimeType: 'video/mp4', sizeBytes: 100, key: 's3/video.mp4' }] },
+      { getStream: vi.fn() } as any
+    );
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.failureCategory).toBe('TRANSIENT');
+      expect(result.failureCode).toBe('SERVER_ERROR');
+    }
+  });
+
+  it('should return TRANSIENT pre-post failure if multipart upload fails part way', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        value: {
+          video: 'urn:li:video:111', uploadToken: 'token123',
+          uploadInstructions: [
+            { firstByte: 0, lastByte: 49, uploadUrl: 'https://mock.upload/part1' },
+            { firstByte: 50, lastByte: 99, uploadUrl: 'https://mock.upload/part2' }
+          ]
+        }
+      })
+    });
+    mockFetch.mockResolvedValueOnce({ ok: true, status: 200, headers: new Headers({ etag: '"etag1"' }) });
+    mockFetch.mockResolvedValueOnce({ ok: false, status: 502 });
+
+    const result = await provider.publish(
+      { accessToken: 'token' },
+      { attemptId: 'a1', targetId: 't1', workspaceId: 'w1', externalAccountId: 'u', content: 'Video', providerOptions: {}, media: [{ mimeType: 'video/mp4', sizeBytes: 100, key: 's3/vid' }] },
+      { getStream: vi.fn().mockResolvedValue([Buffer.from('video-data')]) } as any
+    );
+
+    expect(result.success).toBe(false);
+    if (!result.success) expect(result.failureCategory).toBe('TRANSIENT');
+    const postCalls = mockFetch.mock.calls.filter(c => c[0] === 'https://api.linkedin.com/rest/posts');
+    expect(postCalls.length).toBe(0);
+  });
+
+  it('should return PERMANENT failure if finalize fails', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true, json: async () => ({ value: { video: 'urn:li:video:111', uploadToken: 't', uploadInstructions: [] } })
+    });
+    mockFetch.mockResolvedValueOnce({ ok: false, status: 400 }); // Finalize fails
+
+    const result = await provider.publish(
+      { accessToken: 'token' },
+      { attemptId: 'a1', targetId: 't1', workspaceId: 'w1', externalAccountId: 'u', content: 'Vid', providerOptions: {}, media: [{ mimeType: 'video/mp4', sizeBytes: 100, key: 's3' }] },
+      { getStream: vi.fn() } as any
+    );
+
+    expect(result.success).toBe(false);
+    if (!result.success) expect(result.failureCategory).toBe('PERMANENT');
+    const postCalls = mockFetch.mock.calls.filter(c => c[0] === 'https://api.linkedin.com/rest/posts');
+    expect(postCalls.length).toBe(0);
+  });
+
+  it('should return PERMANENT failure if video processing fails', async () => {
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ value: { video: 'urn:v', uploadToken: 't', uploadInstructions: [] } }) }); // Init
+    mockFetch.mockResolvedValueOnce({ ok: true, status: 200 }); // Finalize
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'PROCESSING_FAILED' }) }); // Poll
+
+    vi.useFakeTimers();
+    const p = provider.publish(
+      { accessToken: 'token' },
+      { attemptId: 'a1', targetId: 't1', workspaceId: 'w1', externalAccountId: 'u', content: 'Vid', providerOptions: {}, media: [{ mimeType: 'video/mp4', sizeBytes: 100, key: 's3' }] },
+      { getStream: vi.fn() } as any
+    );
+    await vi.runAllTimersAsync();
+    const result = await p;
+    vi.useRealTimers();
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.failureCategory).toBe('PERMANENT');
+      expect(result.failureCode).toBe('VIDEO_PROCESSING_FAILED');
+    }
+    const postCalls = mockFetch.mock.calls.filter(c => c[0] === 'https://api.linkedin.com/rest/posts');
+    expect(postCalls.length).toBe(0);
+  });
+
+  it('should return TRANSIENT if video readiness times out', async () => {
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ value: { video: 'urn:v', uploadToken: 't', uploadInstructions: [] } }) });
+    mockFetch.mockResolvedValueOnce({ ok: true, status: 200 });
+    for (let i = 0; i < 60; i++) {
+      mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'PROCESSING' }) });
+    }
+
+    vi.useFakeTimers();
+    const p = provider.publish(
+      { accessToken: 'token' },
+      { attemptId: 'a1', targetId: 't1', workspaceId: 'w1', externalAccountId: 'u', content: 'Vid', providerOptions: {}, media: [{ mimeType: 'video/mp4', sizeBytes: 100, key: 's3' }] },
+      { getStream: vi.fn() } as any
+    );
+    await vi.runAllTimersAsync();
+    const result = await p;
+    vi.useRealTimers();
+
+    expect(result.success).toBe(false);
+    if (!result.success) expect(result.failureCategory).toBe('TRANSIENT');
+    const postCalls = mockFetch.mock.calls.filter(c => c[0] === 'https://api.linkedin.com/rest/posts');
+    expect(postCalls.length).toBe(0);
+  });
+
+  it('should return UNKNOWN_RESULT if uncertain response from rest posts', async () => {
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ value: { video: 'urn:v', uploadToken: 't', uploadInstructions: [] } }) });
+    mockFetch.mockResolvedValueOnce({ ok: true, status: 200 });
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'AVAILABLE' }) });
+    mockFetch.mockRejectedValueOnce(new Error('Network drop after posts')); // Post
+
+    vi.useFakeTimers();
+    const p = provider.publish(
+      { accessToken: 'token' },
+      { attemptId: 'a1', targetId: 't1', workspaceId: 'w1', externalAccountId: 'u', content: 'Vid', providerOptions: {}, media: [{ mimeType: 'video/mp4', sizeBytes: 100, key: 's3' }] },
+      { getStream: vi.fn() } as any
+    );
+    await vi.runAllTimersAsync();
+    const result = await p;
+    vi.useRealTimers();
+
+    expect(result.success).toBe(false);
+    if (!result.success) expect(result.failureCategory).toBe('UNKNOWN_RESULT');
   });
 });

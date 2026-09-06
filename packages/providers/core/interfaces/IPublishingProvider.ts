@@ -1,4 +1,5 @@
 import { ZodSchema, z } from 'zod';
+import { IMediaContentSource } from './IMediaContentSource';
 
 export type ProviderFailureCategory = 
   | 'TRANSIENT'
@@ -43,6 +44,7 @@ export interface ProviderPublicationInput {
   attemptId: string;
   targetId: string; // The variant UUID
   workspaceId: string;
+  externalAccountId: string;
   content: string; // Normalized common content
   media?: Array<{
     url?: string;
@@ -76,8 +78,6 @@ export type ProviderPublishResult = ProviderPublishSuccess | ProviderPublishFail
 
 export interface ProviderExecutionCredentials {
   accessToken: string;
-  refreshToken?: string;
-  expiresAt?: Date;
 }
 
 export interface IPublishingProvider {
@@ -97,6 +97,7 @@ export interface IPublishingProvider {
    */
   publish(
     credentials: ProviderExecutionCredentials, 
-    input: ProviderPublicationInput
+    input: ProviderPublicationInput,
+    mediaSource?: IMediaContentSource
   ): Promise<ProviderPublishResult>;
 }

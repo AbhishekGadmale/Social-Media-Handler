@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient, PostStatus, FailureCategory } from '@prisma/client';
-import { PublishingRepository } from './PublishingRepository.js';
-import { generateId } from '../id.js';
+import { PublishingRepository } from './PublishingRepository';
+import { generateId } from '../id';
 
 const prisma = new PrismaClient();
 

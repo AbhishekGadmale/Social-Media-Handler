@@ -1,4 +1,4 @@
-import { CapabilityContext, ProviderCapabilities, Capability } from './types/index.js';
+import { CapabilityContext, ProviderCapabilities, Capability } from './types/index';
 
 /**
  * Pure function to resolve the effective capabilities of a social provider.

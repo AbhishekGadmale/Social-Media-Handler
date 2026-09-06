@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient, Prisma, SocialAccount } from '@prisma/client';
-import { WorkspaceScopedRepository } from './WorkspaceScopedRepository.js';
-import { generateId } from '../id.js';
+import { WorkspaceScopedRepository } from './WorkspaceScopedRepository';
+import { generateId } from '../id';
 
 class SocialAccountRepository extends WorkspaceScopedRepository<
   Prisma.SocialAccountDelegate,

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { generateId } from './id.js';
+import { generateId } from './id';
 
 describe('generateId', () => {
   it('generates IDs that sort monotonically', () => {

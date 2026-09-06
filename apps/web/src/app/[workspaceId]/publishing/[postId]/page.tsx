@@ -136,14 +136,33 @@ export default function PostDetailPage() {
         {post.media.length > 0 && (
           <div className="bg-gray-50 shadow sm:rounded-lg p-6 border border-gray-200">
             <h3 className="text-md font-medium text-gray-900 mb-4">Attached Media</h3>
-            {post.media.map(m => (
-              <div key={m.id} className="flex items-center space-x-3 p-3 bg-white rounded border">
-                <div className="text-sm">
-                  <p className="font-medium">{m.asset.mimeType}</p>
-                  <p className="text-gray-500 text-xs">Status: {m.asset.status}</p>
+            {post.media.map(m => {
+              if (!m.media) {
+                return (
+                  <div key={m.id} className="flex items-center space-x-3 p-3 bg-red-50 text-red-700 rounded border border-red-200">
+                    <p className="text-sm">Media record missing</p>
+                  </div>
+                );
+              }
+              const isVideo = m.media.mimeType.startsWith('video/');
+              const isImage = m.media.mimeType.startsWith('image/');
+              const mediaUrl = m.media.storageKey ? `http://localhost:9000/agency-os-media/${m.media.storageKey}` : '';
+              
+              return (
+                <div key={m.id} className="flex flex-col space-y-2 p-3 bg-white rounded border">
+                  <div className="text-sm">
+                    <p className="font-medium">{m.media.mimeType}</p>
+                    <p className="text-gray-500 text-xs">Status: {m.media.status}</p>
+                  </div>
+                  {isVideo && mediaUrl && (
+                    <video src={mediaUrl} controls className="w-full max-w-sm rounded" />
+                  )}
+                  {isImage && mediaUrl && (
+                    <img src={mediaUrl} alt="Preview" className="w-full max-w-sm rounded object-contain" />
+                  )}
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
