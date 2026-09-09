@@ -23,7 +23,7 @@ describe('LinkedInProvider Publishing', () => {
     expect(caps.contentTypes.TEXT_POST.supported).toBe(true);
     expect(caps.contentTypes.IMAGE_POST.supported).toBe(true);
     expect(caps.contentTypes.VIDEO_POST.supported).toBe(true);
-    expect(caps.contentTypes.MULTI_IMAGE_POST.supported).toBe(false);
+    expect(caps.contentTypes.MULTI_IMAGE_POST.supported).toBe(true);
     expect(caps.contentTypes.LINK_POST.supported).toBe(false);
   });
 
@@ -147,17 +147,7 @@ describe('LinkedInProvider Publishing', () => {
     }
   });
 
-  it('should return VALIDATION error if more than one image is provided', async () => {
-    const result = await provider.publish(
-      { accessToken: 'token' },
-      { attemptId: 'a1', targetId: 't1', workspaceId: 'w1', externalAccountId: 'u', content: 'txt', providerOptions: {}, media: [{ mimeType: 'image/jpeg', sizeBytes: 100 }, { mimeType: 'image/png', sizeBytes: 200 }] }
-    );
-    expect(result.success).toBe(false);
-    if (!result.success) {
-      expect(result.failureCategory).toBe('VALIDATION');
-      expect(result.failureCode).toBe('MEDIA_COUNT_EXCEEDED');
-    }
-  });
+
 
   it('should return VALIDATION error if unsupported media is provided', async () => {
     const result = await provider.publish(
@@ -181,8 +171,8 @@ describe('LinkedInProvider Publishing', () => {
           video: 'urn:li:video:111',
           uploadToken: 'token123',
           uploadInstructions: [
-            { firstByte: 0, lastByte: 49, uploadUrl: 'https://mock.upload/part1' },
-            { firstByte: 50, lastByte: 99, uploadUrl: 'https://mock.upload/part2' }
+            { firstByte: 0, lastByte: 49, uploadUrl: 'https://api.linkedin.com/part1' },
+            { firstByte: 50, lastByte: 99, uploadUrl: 'https://api.linkedin.com/part2' }
           ]
         }
       })
@@ -306,7 +296,7 @@ describe('LinkedInProvider Publishing', () => {
           video: 'urn:li:video:empty',
           uploadToken: '',
           uploadInstructions: [
-            { firstByte: 0, lastByte: 99, uploadUrl: 'https://mock.upload/part1' }
+            { firstByte: 0, lastByte: 99, uploadUrl: 'https://api.linkedin.com/part1' }
           ]
         }
       })
@@ -344,7 +334,7 @@ describe('LinkedInProvider Publishing', () => {
       ok: true,
       json: async () => ({
         value: {
-          uploadUrl: 'https://mock.upload.url',
+          uploadUrl: 'https://api.linkedin.com/upload',
           image: 'urn:li:image:999'
         }
       })
@@ -400,7 +390,7 @@ describe('LinkedInProvider Publishing', () => {
     
     // Verify Upload Request
     const [uploadUrl, uploadOptions] = mockFetch.mock.calls[1];
-    expect(uploadUrl).toBe('https://mock.upload.url');
+    expect(uploadUrl).toBe('https://api.linkedin.com/upload');
     expect(uploadOptions.method).toBe('PUT');
     expect(uploadOptions.body.toString()).toBe('image-data');
     expect(uploadOptions.headers['Content-Type']).toBe('image/png');
@@ -421,7 +411,7 @@ describe('LinkedInProvider Publishing', () => {
     // Initialize Upload
     mockFetch.mockResolvedValueOnce({
       ok: true,
-      json: async () => ({ value: { uploadUrl: 'url', image: 'urn:li:image:999' } })
+      json: async () => ({ value: { uploadUrl: 'https://api.linkedin.com/upload/timeout', image: 'urn:li:image:999' } })
     });
     // Upload Bytes
     mockFetch.mockResolvedValueOnce({ ok: true, status: 200 });
@@ -474,8 +464,8 @@ describe('LinkedInProvider Publishing', () => {
         value: {
           video: 'urn:li:video:111', uploadToken: 'token123',
           uploadInstructions: [
-            { firstByte: 0, lastByte: 49, uploadUrl: 'https://mock.upload/part1' },
-            { firstByte: 50, lastByte: 99, uploadUrl: 'https://mock.upload/part2' }
+            { firstByte: 0, lastByte: 49, uploadUrl: 'https://api.linkedin.com/part1' },
+            { firstByte: 50, lastByte: 99, uploadUrl: 'https://api.linkedin.com/part2' }
           ]
         }
       })
@@ -578,5 +568,312 @@ describe('LinkedInProvider Publishing', () => {
 
     expect(result.success).toBe(false);
     if (!result.success) expect(result.failureCategory).toBe('UNKNOWN_RESULT');
+  });
+
+  it('should successfully publish a multi-image post sequentially and construct payload correctly', async () => {
+    // Media 1
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ value: { uploadUrl: 'https://api.linkedin.com/upload/url1', image: 'urn:i1' } }) });
+    mockFetch.mockResolvedValueOnce({ ok: true, status: 200 }); // PUT
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'AVAILABLE' }) }); // POLL
+    // Media 2
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ value: { uploadUrl: 'https://api.linkedin.com/upload/url2', image: 'urn:i2' } }) });
+    mockFetch.mockResolvedValueOnce({ ok: true, status: 200 }); // PUT
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'AVAILABLE' }) }); // POLL
+
+    // POST /rest/posts
+    mockFetch.mockResolvedValueOnce({ ok: true, status: 201, headers: { get: (h) => h === 'x-restli-id' ? 'post_id' : null } });
+
+    const mediaSource = {
+      getStream: vi.fn().mockResolvedValue((async function* () { yield Buffer.from('img'); })())
+    };
+
+    vi.useFakeTimers();
+    const p = provider.publish(
+      { accessToken: 'token' },
+      { 
+        attemptId: 'a1', targetId: 't1', workspaceId: 'w1', externalAccountId: 'u', content: 'MULTI', providerOptions: {}, 
+        
+        media: [
+          { mimeType: 'image/jpeg', sizeBytes: 100, key: 's3/1.jpg' },
+          { mimeType: 'image/png', sizeBytes: 100, key: 's3/2.png' }
+        ] 
+      },
+      mediaSource as any
+    );
+    await vi.runAllTimersAsync();
+    const result = await p;
+    vi.useRealTimers();
+
+    expect(result.success).toBe(true);
+    
+    // Check payload
+    const postCall = mockFetch.mock.calls.find(c => c[0] === 'https://api.linkedin.com/rest/posts');
+    expect(postCall).toBeDefined();
+    const body = JSON.parse(postCall[1].body);
+    expect(body.content.multiImage.images).toEqual([{ id: 'urn:i1' }, { id: 'urn:i2' }]);
+  });
+
+  it('should abort multi-image post early if first image fails before /rest/posts with TRANSIENT error', async () => {
+    // Media 1 fails at PUT
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ value: { uploadUrl: 'https://api.linkedin.com/upload/url1', image: 'urn:i1' } }) });
+    mockFetch.mockResolvedValueOnce({ ok: false, status: 502 }); // PUT fails TRANSIENT
+
+    const mediaSource = {
+      getStream: vi.fn().mockResolvedValue((async function* () { yield Buffer.from('img'); })())
+    };
+
+    const p = await provider.publish(
+      { accessToken: 'token' },
+      { 
+        attemptId: 'a1', targetId: 't1', workspaceId: 'w1', externalAccountId: 'u', content: 'MULTI', providerOptions: {}, 
+        
+        media: [
+          { mimeType: 'image/jpeg', sizeBytes: 100, key: 's3/1.jpg' },
+          { mimeType: 'image/png', sizeBytes: 100, key: 's3/2.png' }
+        ] 
+      },
+      mediaSource as any
+    );
+
+    expect(p.success).toBe(false);
+    if (!p.success) console.log('FAILURE CODE:', p.failureCode, p.message);
+    if (!p.success) expect(p.failureCategory).toBe('TRANSIENT');
+    // Ensure media 2 was NOT attempted
+    expect(mockFetch).toHaveBeenCalledTimes(2); // 1 INIT + 1 PUT for media 1
+  });
+
+
+
+
+  it('should use Readable stream with duplex: half for image upload and include Authorization header on PUT', async () => {
+    const mockStream = {
+      [Symbol.asyncIterator]: async function* () {
+        yield Buffer.from('chunk');
+      }
+    };
+    const mockMediaSource = { getStream: vi.fn().mockResolvedValue(mockStream) };
+
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ value: { uploadUrl: 'https://api.linkedin.com/upload/url', image: 'urn:li:image:123' } })
+    });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200
+    });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ status: 'AVAILABLE' })
+    });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 201,
+      headers: { get: (name: string) => name === 'x-restli-id' ? 'urn:li:post:abc' : null }
+    });
+
+    const result = await provider.publish(
+      { accessToken: 'token' },
+      { attemptId: '1', targetId: '1', workspaceId: '1', externalAccountId: 'u', content: 'Testing regression', providerOptions: {}, media: [{ key: '1.jpg', mimeType: 'image/jpeg' }] },
+      mockMediaSource as any
+    );
+
+    expect(result.success).toBe(true);
+    
+    // Check the PUT request
+    const putCall = mockFetch.mock.calls.find((call: any[]) => call[0] === 'https://api.linkedin.com/upload/url' && call[1] && call[1].method === 'PUT');
+    expect(putCall).toBeDefined();
+    
+    const putOptions = putCall[1];
+    
+    // 1. Verify duplex: 'half'
+    expect(putOptions.duplex).toBe('half');
+    
+    // 2. Verify body is a stream (not a buffer)
+    expect(putOptions.body).toBeDefined();
+    expect(Buffer.isBuffer(putOptions.body)).toBe(false);
+    
+    // 3. Verify Authorization header is present
+    const headers = putOptions.headers || {};
+    expect(headers['Authorization']).toBe('Bearer token');
+  });
+
+  it('should attach Authorization header to every image PUT in a 3-image MULTI_IMAGE_POST (3 image PUTs, 3 authenticated PUTs)', async () => {
+    for (let i = 1; i <= 3; i++) {
+      mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ value: { uploadUrl: `https://api.linkedin.com/upload/img${i}`, image: `urn:li:image:${i}` } }) });
+      mockFetch.mockResolvedValueOnce({ ok: true, status: 200 }); // PUT
+      mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'AVAILABLE' }) }); // Poll
+    }
+    mockFetch.mockResolvedValueOnce({ ok: true, status: 201, headers: { get: (h: string) => h === 'x-restli-id' ? 'urn:li:share:multi3' : null } });
+
+    const mediaSource = {
+      getStream: vi.fn().mockResolvedValue((async function* () { yield Buffer.from('img-bytes'); })())
+    };
+
+    vi.useFakeTimers();
+    const p = provider.publish(
+      { accessToken: 'secret_token_abc' },
+      {
+        attemptId: 'a3', targetId: 't3', workspaceId: 'w3', externalAccountId: 'user123', content: 'Three images post', providerOptions: {},
+        media: [
+          { mimeType: 'image/png', sizeBytes: 100, key: 's3/img1.png' },
+          { mimeType: 'image/png', sizeBytes: 200, key: 's3/img2.png' },
+          { mimeType: 'image/png', sizeBytes: 300, key: 's3/img3.png' },
+        ]
+      },
+      mediaSource as any
+    );
+    await vi.runAllTimersAsync();
+    const result = await p;
+    vi.useRealTimers();
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.externalPostId).toBe('urn:li:share:multi3');
+    }
+
+    const putCalls = mockFetch.mock.calls.filter((call: any[]) => call[1] && call[1].method === 'PUT' && call[0].includes('upload/img'));
+    expect(putCalls.length).toBe(3);
+    for (let i = 0; i < 3; i++) {
+      expect(putCalls[i][0]).toBe(`https://api.linkedin.com/upload/img${i + 1}`);
+      expect(putCalls[i][1].headers['Authorization']).toBe('Bearer secret_token_abc');
+      expect(putCalls[i][1].duplex).toBe('half');
+    }
+
+    const postCall = mockFetch.mock.calls.find((c: any[]) => c[0] === 'https://api.linkedin.com/rest/posts');
+    expect(postCall).toBeDefined();
+    const postPayload = JSON.parse(postCall[1].body);
+    expect(postPayload.content.multiImage.images).toEqual([
+      { id: 'urn:li:image:1' },
+      { id: 'urn:li:image:2' },
+      { id: 'urn:li:image:3' },
+    ]);
+  });
+
+  it('should reject untrusted upload host without sending request or leaking token', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ value: { uploadUrl: 'https://evil.attacker.com/upload', image: 'urn:li:image:leak' } })
+    });
+
+    const mediaSource = { getStream: vi.fn().mockResolvedValue({}) };
+
+    const result = await provider.publish(
+      { accessToken: 'super_secret_oauth_token' },
+      { attemptId: '1', targetId: '1', workspaceId: '1', externalAccountId: 'u', content: 'Testing leak', providerOptions: {}, media: [{ key: '1.jpg', mimeType: 'image/jpeg' }] },
+      mediaSource as any
+    );
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.failureCategory).toBe('PERMANENT');
+      expect(result.failureCode).toBe('INVALID_UPLOAD_URL');
+      expect(result.message).not.toContain('super_secret_oauth_token');
+    }
+
+    const evilCall = mockFetch.mock.calls.find((call: any[]) => call[0] && call[0].includes('evil.attacker.com'));
+    expect(evilCall).toBeUndefined();
+  });
+
+  it('should not send Authorization header to video upload URLs', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        value: {
+          video: 'urn:li:video:test',
+          uploadToken: 'token123',
+          uploadInstructions: [
+            { firstByte: 0, lastByte: 99, uploadUrl: 'https://api.linkedin.com/video-part1' }
+          ]
+        }
+      })
+    });
+    mockFetch.mockResolvedValueOnce({ ok: true, status: 200, headers: new Headers({ etag: '"etag1"' }) }); // part 1 PUT
+    mockFetch.mockResolvedValueOnce({ ok: true, status: 200 }); // finalizeUpload
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'AVAILABLE' }) }); // poll
+    mockFetch.mockResolvedValueOnce({ ok: true, status: 201, headers: new Headers({ 'x-restli-id': 'urn:li:post:vid' }) }); // /rest/posts
+
+    const mockMediaSource = {
+      getStream: vi.fn().mockResolvedValue([Buffer.from('video-bytes-chunk')])
+    };
+
+    vi.useFakeTimers();
+    const p = provider.publish(
+      { accessToken: 'video_secret_token' },
+      { attemptId: 'v1', targetId: 't1', workspaceId: 'w1', externalAccountId: 'u', content: 'Video test', providerOptions: {}, media: [{ mimeType: 'video/mp4', sizeBytes: 100, key: 's3/v.mp4' }] },
+      mockMediaSource as any
+    );
+    await vi.runAllTimersAsync();
+    const result = await p;
+    vi.useRealTimers();
+
+    expect(result.success).toBe(true);
+
+    const videoPutCall = mockFetch.mock.calls.find((call: any[]) => call[0] === 'https://api.linkedin.com/video-part1' && call[1]?.method === 'PUT');
+    expect(videoPutCall).toBeDefined();
+    expect(videoPutCall[1].headers['Authorization']).toBeUndefined();
+    expect(videoPutCall[1].headers['authorization']).toBeUndefined();
+  });
+
+  it('should reject more than 20 images with MEDIA_COUNT_EXCEEDED', async () => {
+    const images = Array.from({ length: 21 }, (_, i) => ({
+      mimeType: 'image/png',
+      sizeBytes: 100,
+      key: `s3/img${i}.png`
+    }));
+
+    const result = await provider.publish(
+      { accessToken: 'token' },
+      { attemptId: '1', targetId: '1', workspaceId: '1', externalAccountId: 'u', content: 'Too many', providerOptions: {}, media: images },
+      { getStream: vi.fn() } as any
+    );
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.failureCategory).toBe('VALIDATION');
+      expect(result.failureCode).toBe('MEDIA_COUNT_EXCEEDED');
+    }
+  });
+
+  it('should successfully publish a 20-image post sequentially with authenticated PUTs', async () => {
+    const images = Array.from({ length: 20 }, (_, i) => ({
+      mimeType: 'image/png',
+      sizeBytes: 100,
+      key: `s3/img${i}.png`
+    }));
+
+    for (let i = 0; i < 20; i++) {
+      mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ value: { uploadUrl: `https://api.linkedin.com/upload/batch${i}`, image: `urn:li:image:batch${i}` } }) });
+      mockFetch.mockResolvedValueOnce({ ok: true, status: 200 }); // PUT
+      mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'AVAILABLE' }) }); // Poll
+    }
+
+    mockFetch.mockResolvedValueOnce({ ok: true, status: 201, headers: { get: (h: string) => h === 'x-restli-id' ? 'urn:li:share:twenty' : null } });
+
+    const mediaSource = {
+      getStream: vi.fn().mockResolvedValue((async function* () { yield Buffer.from('img'); })())
+    };
+
+    vi.useFakeTimers();
+    const p = provider.publish(
+      { accessToken: 'twenty_token' },
+      { attemptId: 'a20', targetId: 't20', workspaceId: 'w20', externalAccountId: 'u', content: '20 images', providerOptions: {}, media: images },
+      mediaSource as any
+    );
+    await vi.runAllTimersAsync();
+    const result = await p;
+    vi.useRealTimers();
+
+    expect(result.success).toBe(true);
+
+    const putCalls = mockFetch.mock.calls.filter((c: any[]) => c[1]?.method === 'PUT' && c[0].includes('upload/batch'));
+    expect(putCalls.length).toBe(20);
+    for (const call of putCalls) {
+      expect(call[1].headers['Authorization']).toBe('Bearer twenty_token');
+    }
+
+    const postCall = mockFetch.mock.calls.find((c: any[]) => c[0] === 'https://api.linkedin.com/rest/posts');
+    expect(postCall).toBeDefined();
+    const body = JSON.parse(postCall[1].body);
+    expect(body.content.multiImage.images.length).toBe(20);
   });
 });
