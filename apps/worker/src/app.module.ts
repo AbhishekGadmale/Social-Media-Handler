@@ -3,6 +3,8 @@ import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { CoreModule } from './core/core.module';
 import { SyncModule } from './sync/sync.module';
+import { PublishingModule } from './publishing/publishing.module';
+import { MediaWorkerModule } from './media/media.module';
 
 import { BullModule } from '@nestjs/bullmq';
 
@@ -24,6 +26,8 @@ import { loggerConfig } from './logger.config';
       },
     }),
     SyncModule,
+    PublishingModule,
+    MediaWorkerModule,
   ],
   controllers: [AppController],
   providers: [AppService],
