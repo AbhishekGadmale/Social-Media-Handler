@@ -11,7 +11,7 @@ import {
   ProviderCapabilities,
   WebhookRequest,
   NormalizedWebhookEvent,
-} from '../types/index.js';
+} from '../types/index';
 
 export interface ISocialProvider {
   getAuthorizationUrl(input: AuthUrlInput): string;

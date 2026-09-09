@@ -3,6 +3,8 @@ export interface AuthUrlInput {
   redirectUri: string;
   state: string;
   codeChallenge?: string;
+  requestedScopes?: string[];
+  includeGrantedScopes?: boolean;
 }
 
 export interface OAuthCredentials {
@@ -66,6 +68,7 @@ export interface CapabilityContext {
   grantedScopes: string[];
   pendingApproval?: boolean;
   lastApiResponse?: any;
+  externalId?: string;
 }
 
 export interface WebhookRequest {
