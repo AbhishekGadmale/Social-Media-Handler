@@ -1,5 +1,5 @@
 import { PrismaClient } from '@prisma/client';
-import { generateId } from './src/id.js';
+import { generateId } from './src/id';
 import * as argon2 from '@node-rs/argon2';
 
 const prisma = new PrismaClient();

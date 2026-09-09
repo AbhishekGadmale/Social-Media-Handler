@@ -13,7 +13,19 @@ export class WorkspaceScopedRepository<
     public readonly workspaceId: string
   ) {}
 
-  findUnique(args: { where: WhereInput } & Record<string, unknown>): Promise<Entity | null> {
+  
+  findById(id: string, args: Record<string, unknown> = {}): Promise<Entity | null> {
+    // Prisma's generated generic delegates are structurally distinct. We must bypass strict typing locally.
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
+    return (this.modelDelegate as any).findFirst({
+      ...args,
+      where: {
+        id,
+        workspaceId: this.workspaceId,
+      },
+    });
+  }
+findUnique(args: { where: WhereInput } & Record<string, unknown>): Promise<Entity | null> {
     // Prisma's generated generic delegates are structurally distinct. We must bypass strict typing locally.
     // eslint-disable-next-line @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
     return (this.modelDelegate as any).findFirst({
@@ -50,13 +62,12 @@ export class WorkspaceScopedRepository<
   }
 
   create(args: { data: CreateInput } & Record<string, unknown>): Promise<Entity> {
-    // Prisma's generated generic delegates are structurally distinct. We must bypass strict typing locally.
     // eslint-disable-next-line @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
     return (this.modelDelegate as any).create({
       ...args,
       data: {
         ...args.data,
-        workspaceId: this.workspaceId,
+        workspace: { connect: { id: this.workspaceId } },
       },
     });
   }

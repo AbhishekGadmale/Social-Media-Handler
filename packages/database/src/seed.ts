@@ -1,5 +1,5 @@
 import { PrismaClient } from '@prisma/client';
-import { generateId } from './id.js';
+import { generateId } from './id';
 
 const prisma = new PrismaClient();
 

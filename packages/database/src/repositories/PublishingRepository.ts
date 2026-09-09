@@ -1,7 +1,7 @@
 import { PrismaClient, Post, PostPlatformVariant, PublicationAttempt, PostStatus, Prisma, FailureCategory } from '@prisma/client';
-import { WorkspaceScopedRepository } from './WorkspaceScopedRepository.js';
-import { assertPublicationTransition } from '../publishing/state-machine.js';
-import { generateId } from '../id.js';
+import { WorkspaceScopedRepository } from './WorkspaceScopedRepository';
+import { assertPublicationTransition } from '../publishing/state-machine';
+import { generateId } from '../id';
 
 export class PublishingRepository {
   public readonly posts: WorkspaceScopedRepository<PrismaClient['post'], Post, Prisma.PostWhereInput, Prisma.PostCreateInput, Prisma.PostUpdateInput>;
@@ -62,6 +62,7 @@ export class PublishingRepository {
       data: {
         ...updateData,
         status: newState,
+        ...(newState === PostStatus.QUEUED ? { dispatchVersion: { increment: 1 } } : {})
       },
     });
 
@@ -75,7 +76,7 @@ export class PublishingRepository {
   async queueForPublishing(variantId: string): Promise<boolean> {
     return this.transitionVariantState(
       variantId, 
-      [PostStatus.DRAFT, PostStatus.SCHEDULED, PostStatus.FAILED], 
+      [PostStatus.DRAFT, PostStatus.SCHEDULED], 
       PostStatus.QUEUED,
       { queuedAt: new Date() }
     );
