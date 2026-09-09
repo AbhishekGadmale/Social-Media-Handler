@@ -17,6 +17,21 @@ export const PermissionMatrix: Record<string, string[]> = {
   'posts.create/edit': ['OWNER', 'MANAGER', 'EDITOR'],
   'posts.publish': ['OWNER', 'MANAGER', 'EDITOR'],
   'posts.approve': ['OWNER', 'MANAGER', 'CLIENT_APPROVER'],
+  'posts.read': ['OWNER', 'MANAGER', 'EDITOR', 'CLIENT_APPROVER', 'VIEWER'],
+  'posts.create': ['OWNER', 'MANAGER', 'EDITOR'],
+  'posts.update': ['OWNER', 'MANAGER', 'EDITOR'],
+  'posts.delete': ['OWNER', 'MANAGER', 'EDITOR'],
+  'publishing.validate': [
+    'OWNER',
+    'MANAGER',
+    'EDITOR',
+    'CLIENT_APPROVER',
+    'VIEWER',
+  ],
+  'publishing.publish': ['OWNER', 'MANAGER', 'EDITOR'],
+  'publishing.schedule': ['OWNER', 'MANAGER', 'EDITOR'],
+  'publishing.cancel': ['OWNER', 'MANAGER', 'EDITOR'],
+  'publishing.retry': ['OWNER', 'MANAGER', 'EDITOR'],
   'audit.view': ['OWNER', 'MANAGER'],
 };
 

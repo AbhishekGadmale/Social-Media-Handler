@@ -10,6 +10,8 @@ import { OAuthModule } from './modules/oauth/oauth.module';
 import { AccountsModule } from './modules/accounts/accounts.module';
 import { AnalyticsModule } from './modules/analytics/analytics.module';
 import { HealthModule } from './modules/health/health.module';
+import { PublishingModule } from './modules/publishing/publishing.module';
+import { MediaModule } from './modules/media/media.module';
 
 import { APP_GUARD } from '@nestjs/core';
 import { ThrottlerGuard } from '@nestjs/throttler';
@@ -48,6 +50,8 @@ import { TerminusModule } from '@nestjs/terminus';
     OAuthModule,
     AccountsModule,
     AnalyticsModule,
+    PublishingModule,
+    MediaModule,
   ],
   controllers: [AppController],
   providers: [
