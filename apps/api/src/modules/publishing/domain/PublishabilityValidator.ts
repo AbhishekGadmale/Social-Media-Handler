@@ -173,6 +173,9 @@ export class PublishabilityValidator {
         // usually 1 video max per post is standard but could be more
         contentType = 'VIDEO_POST';
       } else if (allDocuments) {
+        // MVP_PAGE_COUNT_VALIDATION_DEBT: We do not parse PDF page counts locally yet.
+        // LinkedIn limits documents to 300 pages, but introducing a heavy PDF parser 
+        // to the API layer right now is out of scope. LinkedIn will reject it at upload/processing if > 300.
         contentType = 'DOCUMENT_POST';
       } else {
         // Check if there are any documents mixed with other media
