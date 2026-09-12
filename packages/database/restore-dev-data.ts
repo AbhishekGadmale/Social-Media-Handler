@@ -2,6 +2,11 @@ import { PrismaClient } from '@prisma/client';
 import { generateId } from './src/id';
 import * as argon2 from '@node-rs/argon2';
 
+if (process.env.NODE_ENV === 'production') {
+  console.error('Cannot run seed in production!');
+  process.exit(1);
+}
+
 const prisma = new PrismaClient();
 
 async function main() {

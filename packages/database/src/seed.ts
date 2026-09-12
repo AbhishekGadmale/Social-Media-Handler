@@ -1,6 +1,12 @@
 import { PrismaClient } from '@prisma/client';
 import { generateId } from './id';
 
+
+if (process.env.NODE_ENV === 'production') {
+  console.error('Cannot run seed in production!');
+  process.exit(1);
+}
+
 const prisma = new PrismaClient();
 
 async function main() {
