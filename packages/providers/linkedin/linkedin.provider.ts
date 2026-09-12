@@ -176,6 +176,7 @@ export class LinkedInProvider implements ISocialProvider, IPublishingProvider {
         IMAGE_POST: { supported: true, maxCount: 1 },
         MULTI_IMAGE_POST: { supported: true, maxCount: 20 },
         VIDEO_POST: { supported: true, maxCount: 1, maxBytes: 500 * 1024 * 1024, mimeTypes: ['video/mp4'] },
+        DOCUMENT_POST: { supported: true, maxCount: 1, maxBytes: 100 * 1024 * 1024, mimeTypes: ['application/pdf'] },
         LINK_POST: { supported: false },
       },
       features: [],
@@ -186,6 +187,191 @@ export class LinkedInProvider implements ISocialProvider, IPublishingProvider {
     return { valid: true, issues: [] };
   }
 
+
+
+  private async uploadLinkedInDocument(
+    credentials: ProviderExecutionCredentials,
+    media: { key?: string; mimeType: string; sizeBytes?: number; title?: string; filename?: string },
+    mediaSource: IMediaContentSource,
+    externalAccountId: string
+  ): Promise<{ urn?: string; error?: ProviderPublishResult }> {
+    if (!media.key) {
+      return { error: {
+        success: false,
+        failureCategory: 'PERMANENT',
+        failureCode: 'MISSING_MEDIA_SOURCE',
+        message: 'Media content source or storage key is missing',
+      } };
+    }
+
+    // 1. Initialize upload
+    let initResponse: Response;
+    try {
+      initResponse = await this.fetchWithTimeout('https://api.linkedin.com/rest/documents?action=initializeUpload', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${credentials.accessToken}`,
+          'Linkedin-Version': '202608',
+          'X-Restli-Protocol-Version': '2.0.0',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          initializeUploadRequest: {
+            owner: `urn:li:person:${externalAccountId}`
+          }
+        })
+      }, 15000);
+    } catch (err) {
+      return { error: {
+        success: false,
+        failureCategory: 'TRANSIENT',
+        failureCode: 'NETWORK_ERROR',
+        message: `Network error during initializeUpload: ${err instanceof Error ? err.message : String(err)}`,
+      } };
+    }
+
+    if (!initResponse.ok) {
+      if (initResponse.status === 401) return { error: { success: false, failureCategory: 'AUTH_REQUIRED', failureCode: 'UNAUTHORIZED', message: 'Unauthorized at initializeUpload' } };
+      if (initResponse.status === 403) return { error: { success: false, failureCategory: 'AUTH_REQUIRED', failureCode: 'FORBIDDEN', message: 'Forbidden at initializeUpload' } };
+      if (initResponse.status === 429) return { error: { success: false, failureCategory: 'RATE_LIMITED', failureCode: 'TOO_MANY_REQUESTS', message: 'Rate limit at initializeUpload' } };
+      if (initResponse.status >= 500) return { error: { success: false, failureCategory: 'TRANSIENT', failureCode: 'SERVER_ERROR', message: 'Server error at initializeUpload' } };
+      return { error: { success: false, failureCategory: 'PERMANENT', failureCode: `HTTP_${initResponse.status}`, message: 'Failed to initialize document upload' } };
+    }
+
+    const initData = await initResponse.json();
+    const uploadUrl = initData.value?.uploadUrl;
+    const documentUrn = initData.value?.document;
+
+    if (!uploadUrl || !documentUrn) {
+      return { error: {
+        success: false,
+        failureCategory: 'PERMANENT',
+        failureCode: 'INVALID_INITIALIZE_RESPONSE',
+        message: 'Missing uploadUrl or document URN in initializeUpload response',
+      } };
+    }
+
+    // 2. Upload document bytes - USING READABLE STREAM + DUPLEX: 'HALF'
+    let stream;
+    try {
+      stream = await mediaSource.getStream(media.key);
+    } catch (err) {
+      return { error: {
+        success: false,
+        failureCategory: 'TRANSIENT',
+        failureCode: 'STORAGE_UNAVAILABLE',
+        message: 'Failed to read from media content source',
+      } };
+    }
+
+    let parsedUrl: URL;
+    try {
+      parsedUrl = new URL(uploadUrl);
+    } catch {
+      return { error: {
+        success: false,
+        failureCategory: 'PERMANENT',
+        failureCode: 'INVALID_UPLOAD_URL',
+        message: 'Upload URL failed trust validation',
+      } };
+    }
+
+    const isTrustedHost = parsedUrl.protocol === 'https:' &&
+      (parsedUrl.hostname === 'linkedin.com' || parsedUrl.hostname.endsWith('.linkedin.com') ||
+       parsedUrl.hostname === 'licdn.com' || parsedUrl.hostname.endsWith('.licdn.com'));
+
+    if (!isTrustedHost) {
+      return { error: {
+        success: false,
+        failureCategory: 'PERMANENT',
+        failureCode: 'INVALID_UPLOAD_URL',
+        message: 'Upload URL failed trust validation',
+      } };
+    }
+
+    let uploadRes: Response;
+    try {
+      uploadRes = await this.fetchWithTimeout(uploadUrl, {
+        method: 'PUT',
+        headers: {
+          'Authorization': `Bearer ${credentials.accessToken}`,
+          'Content-Type': media.mimeType,
+        },
+        body: stream,
+        duplex: 'half',
+      } as unknown as RequestInit, 60000); // Documents can be larger, give it 60s
+    } catch (err) {
+      return { error: {
+        success: false,
+        failureCategory: 'TRANSIENT',
+        failureCode: 'NETWORK_ERROR',
+        message: 'Network error during document upload',
+      } };
+    }
+
+    if (!uploadRes.ok) {
+      if (uploadRes.status >= 500) return { error: { success: false, failureCategory: 'TRANSIENT', failureCode: 'SERVER_ERROR', message: 'Server error during document upload' } };
+      return { error: { success: false, failureCategory: 'TRANSIENT', failureCode: `HTTP_${uploadRes.status}`, message: 'Failed to upload document bytes' } };
+    }
+
+    // 3. Poll readiness
+    let isAvailable = false;
+    let attempts = 0;
+    const maxAttempts = 30; // up to 60s
+    const encodedUrn = encodeURIComponent(documentUrn);
+
+    while (attempts < maxAttempts && !isAvailable) {
+      attempts++;
+      await new Promise(resolve => setTimeout(resolve, 2000));
+
+      let pollRes: Response;
+      try {
+        pollRes = await this.fetchWithTimeout(`https://api.linkedin.com/rest/documents/${encodedUrn}`, {
+          headers: {
+            'Authorization': `Bearer ${credentials.accessToken}`,
+            'Linkedin-Version': '202608',
+            'X-Restli-Protocol-Version': '2.0.0',
+          }
+        }, 10000);
+      } catch (err) {
+        continue;
+      }
+
+      if (pollRes.ok) {
+        const pollData = await pollRes.json();
+        if (pollData.status === 'AVAILABLE') {
+          isAvailable = true;
+        } else if (pollData.status && pollData.status !== 'WAITING_UPLOAD' && pollData.status !== 'PROCESSING') {
+           if (pollData.status === 'FAILED' || pollData.status === 'PROCESSING_FAILED') {
+             return { error: {
+               success: false,
+               failureCategory: 'PERMANENT',
+               failureCode: 'DOCUMENT_PROCESSING_FAILED',
+               message: 'LinkedIn document processing failed permanently',
+             } };
+           }
+        }
+      } else if (pollRes.status === 401 || pollRes.status === 403 || pollRes.status === 404) {
+         return { error: {
+           success: false,
+           failureCategory: 'PERMANENT',
+           failureCode: 'DOCUMENT_NOT_FOUND',
+           message: 'Document check returned fatal error',
+         } };
+      }
+    }
+
+    if (!isAvailable) {
+      return { error: {
+        success: false,
+        failureCategory: 'TRANSIENT',
+        failureCode: 'DOCUMENT_PROCESSING_TIMEOUT',
+        message: 'Timeout waiting for LinkedIn document to become AVAILABLE',
+      } };
+    }
+
+    return { urn: documentUrn };
+  }
 
   private async uploadLinkedInImage(
     credentials: ProviderExecutionCredentials,
@@ -413,17 +599,47 @@ export class LinkedInProvider implements ISocialProvider, IPublishingProvider {
     if (input.media && input.media.length > 0) {
       const allImages = input.media.every(m => m.mimeType.startsWith('image/'));
       const allVideos = input.media.every(m => m.mimeType.startsWith('video/'));
+      const allDocuments = input.media.every(m => m.mimeType === 'application/pdf');
 
-      if (!allImages && !allVideos) {
+      if (!allImages && !allVideos && !allDocuments) {
         return {
           success: false,
           failureCategory: 'VALIDATION',
           failureCode: 'UNSUPPORTED_MEDIA_TYPE',
-          message: 'LinkedIn provider cannot mix images and videos',
+          message: 'LinkedIn provider cannot mix images, videos, and documents',
         };
       }
 
-      if (allVideos) {
+      if (allDocuments) {
+        if (input.media.length > 1) {
+          return {
+            success: false,
+            failureCategory: 'VALIDATION',
+            failureCode: 'MEDIA_COUNT_EXCEEDED',
+            message: 'LinkedIn provider currently only supports exactly one document',
+          };
+        }
+        
+        const media = input.media[0];
+        if (!media.key || !mediaSource) {
+          return {
+            success: false,
+            failureCategory: 'PERMANENT',
+            failureCode: 'MISSING_MEDIA_SOURCE',
+            message: 'Media content source or storage key is missing',
+          };
+        }
+
+        const res = await this.uploadLinkedInDocument(credentials, media, mediaSource, input.externalAccountId);
+        if (res.error) return res.error;
+
+        payload.content = {
+          media: {
+            id: res.urn,
+            title: (media as any).title || (media as any).filename || 'Document.pdf'
+          }
+        };
+      } else if (allVideos) {
         if (input.media.length > 1) {
           return {
             success: false,

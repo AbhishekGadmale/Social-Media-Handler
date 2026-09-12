@@ -152,7 +152,7 @@ describe('LinkedInProvider Publishing', () => {
   it('should return VALIDATION error if unsupported media is provided', async () => {
     const result = await provider.publish(
       { accessToken: 'token' },
-      { attemptId: 'a1', targetId: 't1', workspaceId: 'w1', externalAccountId: 'u', content: 'txt', providerOptions: {}, media: [{ mimeType: 'application/pdf', sizeBytes: 100, key: 'test' }] },
+      { attemptId: 'a1', targetId: 't1', workspaceId: 'w1', externalAccountId: 'u', content: 'txt', providerOptions: {}, media: [{ mimeType: 'application/msword', sizeBytes: 100, key: 'test' }] },
       {} as any
     );
     expect(result.success).toBe(false);

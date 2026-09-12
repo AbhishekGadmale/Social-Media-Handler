@@ -163,15 +163,30 @@ export class PublishabilityValidator {
       const allVideos = variant.post.media.every((m: any) =>
         m.media.mimeType.startsWith('video/'),
       );
+      const allDocuments = variant.post.media.every((m: any) =>
+        m.media.mimeType === 'application/pdf',
+      );
 
       if (allImages) {
         contentType = mediaCount === 1 ? 'IMAGE_POST' : 'MULTI_IMAGE_POST';
       } else if (allVideos) {
         // usually 1 video max per post is standard but could be more
         contentType = 'VIDEO_POST';
+      } else if (allDocuments) {
+        contentType = 'DOCUMENT_POST';
       } else {
-        // mixed media - typically fallback to MULTI_IMAGE_POST or fail if unsupported
-        contentType = 'MULTI_IMAGE_POST'; // Depending on exact domain logic
+        // Check if there are any documents mixed with other media
+        const anyDocuments = variant.post.media.some((m: any) => m.media.mimeType === 'application/pdf');
+        if (anyDocuments) {
+          issues.push({
+            code: 'CONTENT_TYPE_UNSUPPORTED',
+            message: 'Documents cannot be mixed with other media types.',
+          });
+          contentType = 'DOCUMENT_POST'; // Assigning it so the rest doesn't crash, but validation will fail.
+        } else {
+          // mixed media - typically fallback to MULTI_IMAGE_POST or fail if unsupported
+          contentType = 'MULTI_IMAGE_POST'; // Depending on exact domain logic
+        }
       }
     } else {
       // Check for link (rough heuristic, real logic might use explicit link field)

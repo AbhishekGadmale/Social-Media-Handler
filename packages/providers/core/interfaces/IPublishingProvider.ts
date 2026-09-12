@@ -14,6 +14,7 @@ export type PublicationContentType =
   | 'IMAGE_POST'
   | 'MULTI_IMAGE_POST'
   | 'VIDEO_POST'
+  | 'DOCUMENT_POST'
   | 'LINK_POST';
 
 export interface ContentConstraint {

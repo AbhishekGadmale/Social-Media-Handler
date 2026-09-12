@@ -214,6 +214,7 @@ export class YouTubeProvider implements ISocialProvider, IPublishingProvider {
         IMAGE_POST: { supported: false },
         MULTI_IMAGE_POST: { supported: false },
         LINK_POST: { supported: false },
+        DOCUMENT_POST: { supported: false },
       },
       features: ['TITLE', 'DESCRIPTION', 'PRIVACY_STATUS', 'TAGS', 'CATEGORY'],
     };

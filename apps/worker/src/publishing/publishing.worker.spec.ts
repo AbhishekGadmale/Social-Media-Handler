@@ -28,6 +28,7 @@ class TestPublishingProvider implements IPublishingProvider {
         MULTI_IMAGE_POST: { supported: false },
         VIDEO_POST: { supported: true },
         LINK_POST: { supported: true },
+        DOCUMENT_POST: { supported: false },
       },
       features: [],
     };

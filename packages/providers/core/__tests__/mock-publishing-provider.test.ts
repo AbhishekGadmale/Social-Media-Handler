@@ -25,6 +25,7 @@ class MockFullProvider implements ISocialProvider, IPublishingProvider {
         MULTI_IMAGE_POST: { supported: true, maxCount: 4 },
         VIDEO_POST: { supported: false },
         LINK_POST: { supported: true },
+        DOCUMENT_POST: { supported: false },
       },
       features: ['TAGS'],
     };
