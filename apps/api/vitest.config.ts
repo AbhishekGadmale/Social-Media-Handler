@@ -1,4 +1,5 @@
 import swc from 'unplugin-swc';
+// @ts-ignore
 import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
