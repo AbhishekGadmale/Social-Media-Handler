@@ -152,7 +152,7 @@ describe('LinkedInProvider Publishing', () => {
   it('should return VALIDATION error if unsupported media is provided', async () => {
     const result = await provider.publish(
       { accessToken: 'token' },
-      { attemptId: 'a1', targetId: 't1', workspaceId: 'w1', externalAccountId: 'u', content: 'txt', providerOptions: {}, media: [{ mimeType: 'application/pdf', sizeBytes: 100, key: 'test' }] },
+      { attemptId: 'a1', targetId: 't1', workspaceId: 'w1', externalAccountId: 'u', content: 'txt', providerOptions: {}, media: [{ mimeType: 'application/msword', sizeBytes: 100, key: 'test' }] },
       {} as any
     );
     expect(result.success).toBe(false);
@@ -876,4 +876,204 @@ describe('LinkedInProvider Publishing', () => {
     const body = JSON.parse(postCall[1].body);
     expect(body.content.multiImage.images.length).toBe(20);
   });
+
+  describe('Document Post (Phase 8.7)', () => {
+    const mockMediaSource = { getStream: vi.fn().mockResolvedValue([Buffer.from('doc')]) } as any;
+
+    it('DOCUMENT_POST capability advertised', () => {
+      const caps = provider.getPublishingCapabilities();
+      expect(caps.contentTypes.DOCUMENT_POST).toBeDefined();
+      expect(caps.contentTypes.DOCUMENT_POST.supported).toBe(true);
+      expect(caps.contentTypes.DOCUMENT_POST.mimeTypes).toContain('application/pdf');
+    });
+
+    it('should correctly execute the entire document upload and publish flow', async () => {
+      let uploadPutUrl = '';
+      let uploadPutHeaders: Headers;
+      global.fetch = vi.fn().mockImplementation(async (url: string, init: any) => {
+        if (url === 'https://api.linkedin.com/rest/documents?action=initializeUpload') {
+          const body = JSON.parse(init.body);
+          expect(body.initializeUploadRequest.owner).toBe('urn:li:person:acc1'); // authenticated member Person URN used
+          return { ok: true, json: async () => ({ value: { uploadUrl: 'https://linkedin.com/upload-doc', document: 'urn:li:document:789' } }) };
+        }
+        if (url === 'https://linkedin.com/upload-doc') {
+          uploadPutUrl = url;
+          uploadPutHeaders = new Headers(init.headers);
+          return { ok: true, status: 200, headers: new Headers() };
+        }
+        if (url === 'https://api.linkedin.com/rest/documents/urn%3Ali%3Adocument%3A789') {
+          return { ok: true, json: async () => ({ status: 'AVAILABLE' }) };
+        }
+        if (url === 'https://api.linkedin.com/rest/posts') {
+          const body = JSON.parse(init.body);
+          expect(body.content.media.id).toBe('urn:li:document:789'); // document URN captured and used
+          expect(body.content.media.title).toBe('my-doc.pdf'); // required media.title
+          return { ok: true, status: 201, headers: new Headers({ 'x-restli-id': 'urn:li:share:doc1' }) };
+        }
+        return { ok: false };
+      });
+
+      const result = await provider.publish(
+        { accessToken: 'token123' },
+        { externalAccountId: 'acc1', content: 'Here is my document', media: [{ key: 'doc1.pdf', mimeType: 'application/pdf', sizeBytes: 1000, filename: 'my-doc.pdf' }] },
+        mockMediaSource
+      );
+
+      // trusted upload host accepted
+      expect(uploadPutUrl).toBe('https://linkedin.com/upload-doc');
+      // PDF upload PUT carries Authorization
+      expect(uploadPutHeaders.get('Authorization')).toBe('Bearer token123');
+      
+      expect(result.success).toBe(true);
+      // x-restli-id returned/persistable
+      expect((result as any).externalPostId).toBe('urn:li:share:doc1');
+    });
+
+    it('malicious host rejected', async () => {
+      global.fetch = vi.fn().mockImplementation(async (url: string, init: any) => {
+        if (url === 'https://api.linkedin.com/rest/documents?action=initializeUpload') {
+          // Attacker suffix confusion
+          return { ok: true, json: async () => ({ value: { uploadUrl: 'https://linkedin.com.attacker.example/upload', document: 'urn:li:document:789' } }) };
+        }
+      });
+
+      const result = await provider.publish(
+        { accessToken: 'token123' },
+        { externalAccountId: 'acc1', content: 'Doc', media: [{ key: 'doc1.pdf', mimeType: 'application/pdf' }] },
+        mockMediaSource
+      );
+
+      expect(result.success).toBe(false);
+      expect((result as any).failureCode).toBe('INVALID_UPLOAD_URL');
+    });
+
+    it('WAITING_UPLOAD and PROCESSING handling -> AVAILABLE', async () => {
+      let pollCount = 0;
+      global.fetch = vi.fn().mockImplementation(async (url: string, init: any) => {
+        if (url.includes('initializeUpload')) {
+          return { ok: true, json: async () => ({ value: { uploadUrl: 'https://linkedin.com/up', document: 'urn:li:document:789' } }) };
+        }
+        if (url.includes('linkedin.com/up')) {
+          return { ok: true, status: 200, headers: new Headers() };
+        }
+        if (url.includes('rest/documents/')) {
+          pollCount++;
+          if (pollCount === 1) return { ok: true, json: async () => ({ status: 'WAITING_UPLOAD' }) };
+          if (pollCount === 2) return { ok: true, json: async () => ({ status: 'PROCESSING' }) };
+          if (pollCount >= 3) return { ok: true, json: async () => ({ status: 'AVAILABLE' }) };
+        }
+        if (url.includes('rest/posts')) {
+          return { ok: true, status: 201, headers: new Headers({ 'x-restli-id': 'urn:li:share:doc1' }) };
+        }
+      });
+
+      vi.useFakeTimers();
+      const p = provider.publish(
+        { accessToken: 'token123' },
+        { externalAccountId: 'acc1', content: 'Doc', media: [{ key: 'doc1.pdf', mimeType: 'application/pdf', filename: 'd.pdf' }] },
+        mockMediaSource
+      );
+      await vi.runAllTimersAsync();
+      const result = await p;
+      vi.useRealTimers();
+
+      expect(result.success).toBe(true);
+      expect(pollCount).toBe(3);
+    });
+
+    it('PROCESSING_FAILED', async () => {
+      global.fetch = vi.fn().mockImplementation(async (url: string, init: any) => {
+        if (url.includes('initializeUpload')) {
+          return { ok: true, json: async () => ({ value: { uploadUrl: 'https://linkedin.com/up', document: 'urn:li:document:789' } }) };
+        }
+        if (url.includes('linkedin.com/up')) return { ok: true, status: 200, headers: new Headers() };
+        if (url.includes('rest/documents/')) return { ok: true, json: async () => ({ status: 'PROCESSING_FAILED' }) };
+      });
+
+      vi.useFakeTimers();
+      const p = provider.publish(
+        { accessToken: 'token123' },
+        { externalAccountId: 'acc1', content: 'Doc', media: [{ key: 'doc1.pdf', mimeType: 'application/pdf', filename: 'd.pdf' }] },
+        mockMediaSource
+      );
+      await vi.runAllTimersAsync();
+      const result = await p;
+      vi.useRealTimers();
+
+      expect(result.success).toBe(false);
+      expect((result as any).failureCode).toBe('DOCUMENT_PROCESSING_FAILED');
+      expect((result as any).failureCategory).toBe('PERMANENT');
+    });
+
+    it('polling timeout', async () => {
+      global.fetch = vi.fn().mockImplementation(async (url: string, init: any) => {
+        if (url.includes('initializeUpload')) {
+          return { ok: true, json: async () => ({ value: { uploadUrl: 'https://linkedin.com/up', document: 'urn:li:document:789' } }) };
+        }
+        if (url.includes('linkedin.com/up')) return { ok: true, status: 200, headers: new Headers() };
+        if (url.includes('rest/documents/')) return { ok: true, json: async () => ({ status: 'PROCESSING' }) };
+      });
+
+      vi.useFakeTimers();
+      const publishPromise = provider.publish(
+        { accessToken: 'token123' },
+        { externalAccountId: 'acc1', content: 'Doc', media: [{ key: 'doc1.pdf', mimeType: 'application/pdf', filename: 'd.pdf' }] },
+        mockMediaSource
+      );
+      await vi.runAllTimersAsync();
+      const result = await publishPromise;
+      vi.useRealTimers();
+
+      expect(result.success).toBe(false);
+      expect((result as any).failureCode).toBe('DOCUMENT_PROCESSING_TIMEOUT');
+      expect((result as any).failureCategory).toBe('TRANSIENT');
+    });
+
+    it('pre-post known failure classification (upload PUT fails)', async () => {
+      global.fetch = vi.fn().mockImplementation(async (url: string, init: any) => {
+        if (url.includes('initializeUpload')) {
+          return { ok: true, json: async () => ({ value: { uploadUrl: 'https://linkedin.com/up', document: 'urn:li:document:789' } }) };
+        }
+        if (url.includes('linkedin.com/up')) return { ok: false, status: 502, headers: new Headers() }; // 502 Gateway Error
+      });
+
+      const result = await provider.publish(
+        { accessToken: 'token123' },
+        { externalAccountId: 'acc1', content: 'Doc', media: [{ key: 'doc1.pdf', mimeType: 'application/pdf', filename: 'd.pdf' }] },
+        mockMediaSource
+      );
+      
+      expect(result.success).toBe(false);
+      expect((result as any).failureCategory).toBe('TRANSIENT');
+      expect((result as any).failureCode).toBe('SERVER_ERROR');
+    });
+
+    it('ambiguous final post create -> UNKNOWN', async () => {
+      global.fetch = vi.fn().mockImplementation(async (url: string, init: any) => {
+        if (url.includes('initializeUpload')) {
+          return { ok: true, json: async () => ({ value: { uploadUrl: 'https://linkedin.com/up', document: 'urn:li:document:789' } }) };
+        }
+        if (url.includes('linkedin.com/up')) return { ok: true, status: 200, headers: new Headers() };
+        if (url.includes('rest/documents/')) return { ok: true, json: async () => ({ status: 'AVAILABLE' }) };
+        if (url.includes('rest/posts')) {
+          // Throw network error during final post create
+          throw new Error('ECONNRESET');
+        }
+      });
+
+      vi.useFakeTimers();
+      const p = provider.publish(
+        { accessToken: 'token123' },
+        { externalAccountId: 'acc1', content: 'Doc', media: [{ key: 'doc1.pdf', mimeType: 'application/pdf', filename: 'd.pdf' }] },
+        mockMediaSource
+      );
+      await vi.runAllTimersAsync();
+      const result = await p;
+      vi.useRealTimers();
+
+      expect(result.success).toBe(false);
+      expect((result as any).failureCategory).toBe('UNKNOWN_RESULT'); // MUST be UNKNOWN!
+    });
+  });
+
 });

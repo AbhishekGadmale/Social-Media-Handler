@@ -59,7 +59,7 @@ export class ExecutionValidator {
     let contentType: PublicationContentType | null = null;
     const hasLink = /https?:\/\//i.test(textContent || '');
 
-    if (mediaCount > 0) {
+      if (mediaCount > 0) {
       const allImages = variant.post.media.every(
         (m: { media: { mimeType: string } }) =>
           m.media.mimeType.startsWith('image/'),
@@ -68,9 +68,15 @@ export class ExecutionValidator {
         (m: { media: { mimeType: string } }) =>
           m.media.mimeType.startsWith('video/'),
       );
+      const allPdfs = variant.post.media.every(
+        (m: { media: { mimeType: string } }) =>
+          m.media.mimeType === 'application/pdf',
+      );
+
       if (allImages)
         contentType = mediaCount === 1 ? 'IMAGE_POST' : 'MULTI_IMAGE_POST';
       else if (allVideos && mediaCount === 1) contentType = 'VIDEO_POST';
+      else if (allPdfs && mediaCount === 1) contentType = 'DOCUMENT_POST';
     } else if (hasLink) {
       contentType = 'LINK_POST';
     } else if (textContent) {

@@ -145,10 +145,12 @@ export function MediaUploader({ workspaceId, onUploadsChange, onUploadingStateCh
 
     // Analyze current state
     const currentImages = items.filter(i => i.file.type.startsWith('image/'));
+    const currentDocuments = items.filter(i => i.file.type === 'application/pdf');
     const currentVideos = items.filter(i => i.file.type.startsWith('video/'));
     
     const newImages = files.filter(f => ['image/jpeg', 'image/png', 'image/webp'].includes(f.type));
     const newVideos = files.filter(f => f.type === 'video/mp4' || f.type === 'video/webm' || f.type.startsWith('video/'));
+    const newDocuments = files.filter(f => f.type === 'application/pdf');
 
     // Validation
     if (newVideos.length > 0 && currentImages.length > 0) {
@@ -267,11 +269,11 @@ export function MediaUploader({ workspaceId, onUploadsChange, onUploadingStateCh
           <div className="mt-2 flex text-sm text-gray-600 justify-center">
             <label className="relative cursor-pointer bg-transparent rounded-md font-medium text-blue-600 hover:text-blue-500 focus-within:outline-none focus-within:ring-2 focus-within:ring-offset-2 focus-within:ring-blue-500">
               <span>Select files</span>
-              <input type="file" multiple className="sr-only" accept="image/jpeg,image/png,image/webp,video/mp4" onChange={handleFileSelect} />
+              <input type="file" multiple className="sr-only" accept="image/jpeg,image/png,image/webp,video/mp4,application/pdf" onChange={handleFileSelect} />
             </label>
             <p className="pl-1">or drag and drop</p>
           </div>
-          <p className="text-xs text-gray-500 mt-1">JPEG, PNG, WEBP, MP4 (Max 20 images or 1 video, 500MB/file)</p>
+          <p className="text-xs text-gray-500 mt-1">JPEG, PNG, WEBP, MP4, PDF (Max 20 images, 1 video, or 1 document)</p>
         </div>
       </div>
     </div>
