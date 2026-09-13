@@ -28,7 +28,7 @@ class TestPublishingProvider implements IPublishingProvider {
         MULTI_IMAGE_POST: { supported: false },
         VIDEO_POST: { supported: true },
         LINK_POST: { supported: true },
-        DOCUMENT_POST: { supported: false },
+        DOCUMENT_POST: { supported: true, mimeTypes: ['application/pdf'], maxBytes: 104857600 },
       },
       features: [],
     };
@@ -499,5 +499,78 @@ describe('Publishing Worker (e2e)', () => {
       const serialized = JSON.stringify(attempt.providerResponse);
       expect(serialized).not.toContain('SECRET_TEST_VALUE');
     });
+  });
+});
+
+describe('ExecutionValidator Content Classification', () => {
+  let validator: ExecutionValidator;
+
+  beforeEach(() => {
+    validator = new ExecutionValidator(providerRegistry);
+  });
+
+  const createVariant = (media: any[]) => ({
+    socialAccount: { provider: 'LINKEDIN', status: 'ACTIVE' },
+    post: { content: 'Test content', media },
+    providerOptions: {},
+  });
+
+  it('accepts single PDF shape as DOCUMENT_POST', () => {
+    const variant = createVariant([{ media: { mimeType: 'application/pdf', byteSize: 100, status: 'READY' } }]);
+    const result = validator.validate(variant as any);
+    expect(result.valid).toBe(true);
+  });
+
+  it('rejects multiple PDFs', () => {
+    const variant = createVariant([
+      {
+        media: { mimeType: 'application/pdf', byteSize: 100, status: 'READY' },
+      },
+      {
+        media: { mimeType: 'application/pdf', byteSize: 100, status: 'READY' },
+      },
+    ]);
+    const result = validator.validate(variant as any);
+    expect(result.valid).toBe(false);
+    expect(result.failureCode).toBe('CONTENT_SHAPE_UNSUPPORTED');
+  });
+
+  it('rejects PDF mixed with image', () => {
+    const variant = createVariant([
+      {
+        media: { mimeType: 'application/pdf', byteSize: 100, status: 'READY' },
+      },
+      { media: { mimeType: 'image/png', byteSize: 100, status: 'READY' } },
+    ]);
+    const result = validator.validate(variant as any);
+    expect(result.valid).toBe(false);
+    expect(result.failureCode).toBe('CONTENT_SHAPE_UNSUPPORTED');
+  });
+
+  it('rejects PDF mixed with video', () => {
+    const variant = createVariant([
+      {
+        media: { mimeType: 'application/pdf', byteSize: 100, status: 'READY' },
+      },
+      { media: { mimeType: 'video/mp4', byteSize: 100, status: 'READY' } },
+    ]);
+    const result = validator.validate(variant as any);
+    expect(result.valid).toBe(false);
+    expect(result.failureCode).toBe('CONTENT_SHAPE_UNSUPPORTED');
+  });
+
+  it('rejects unsupported non-PDF document MIME', () => {
+    const variant = createVariant([
+      {
+        media: {
+          mimeType: 'application/msword',
+          byteSize: 100,
+          status: 'READY',
+        },
+      },
+    ]);
+    const result = validator.validate(variant as any);
+    expect(result.valid).toBe(false);
+    expect(result.failureCode).toBe('CONTENT_SHAPE_UNSUPPORTED');
   });
 });
