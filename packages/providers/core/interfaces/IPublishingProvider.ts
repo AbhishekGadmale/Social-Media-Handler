@@ -75,6 +75,9 @@ export interface ProviderPublishFailure {
   providerRequestId?: string;
 }
 
+export interface ProviderDeleteSuccess { success: true; }
+export type ProviderDeleteResult = ProviderDeleteSuccess | ProviderPublishFailure;
+
 export type ProviderPublishResult = ProviderPublishSuccess | ProviderPublishFailure;
 
 export interface ProviderExecutionCredentials {
@@ -96,6 +99,8 @@ export interface IPublishingProvider {
    * Executes the logical publish operation. 
    * Credentials (e.g. OAuth tokens) are injected by the execution boundary, not passed in the domain input payload.
    */
+  deletePost?(credentials: ProviderExecutionCredentials, externalPostId: string): Promise<ProviderDeleteResult>;
+
   publish(
     credentials: ProviderExecutionCredentials, 
     input: ProviderPublicationInput,

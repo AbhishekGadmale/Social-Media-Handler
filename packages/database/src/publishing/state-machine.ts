@@ -16,9 +16,11 @@ const LEGAL_TRANSITIONS: Record<PostStatus, PostStatus[]> = {
     PostStatus.FAILED,
     PostStatus.UNKNOWN,
   ],
-  [PostStatus.PUBLISHED]: [], // Terminal
-  [PostStatus.FAILED]: [PostStatus.QUEUED, PostStatus.DRAFT], // Allow going back to DRAFT for edits, or QUEUED for retry
-  [PostStatus.UNKNOWN]: [PostStatus.PUBLISHED, PostStatus.FAILED], // Manual reconciliation
+  [PostStatus.PUBLISHED]: [PostStatus.DELETING], // Terminal but can be deleted
+  [PostStatus.FAILED]: [PostStatus.QUEUED, PostStatus.DRAFT, PostStatus.DELETING], // Allow going back to DRAFT for edits, or QUEUED for retry
+  [PostStatus.UNKNOWN]: [PostStatus.PUBLISHED, PostStatus.FAILED, PostStatus.DELETING], // Manual reconciliation
+  [PostStatus.DELETING]: [PostStatus.DELETED, PostStatus.UNKNOWN],
+  [PostStatus.DELETED]: [],
   [PostStatus.PARTIAL]: [], // Aggregate state, not applicable to single variant
 };
 

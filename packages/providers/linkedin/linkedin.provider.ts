@@ -560,6 +560,29 @@ export class LinkedInProvider implements ISocialProvider, IPublishingProvider {
     return { urn: imageUrn };
   }
 
+      async deletePost(credentials: ProviderExecutionCredentials, externalPostId: string): Promise<any> {
+    if (!externalPostId) return { success: false, failureCategory: "VALIDATION", failureCode: "MISSING_ID", message: "No external post ID provided" };
+    try {
+      const res = await this.fetchWithTimeout("https://api.linkedin.com/rest/posts/" + encodeURIComponent(externalPostId), {
+        method: "DELETE",
+        headers: {
+          "Authorization": "Bearer " + credentials.accessToken,
+          "Linkedin-Version": "202608",
+          "X-Restli-Protocol-Version": "2.0.0",
+          "X-RestLi-Method": "DELETE"
+        }
+      }, 15000);
+      if (res.status === 204) return { success: true };
+      if (res.status === 404) return { success: true };
+      if (res.status === 401 || res.status === 403) return { success: false, failureCategory: "AUTH_REQUIRED", failureCode: "UNAUTHORIZED", message: "Unauthorized to delete" };
+      if (res.status === 429) return { success: false, failureCategory: "RATE_LIMITED", failureCode: "TOO_MANY_REQUESTS", message: "Rate limit exceeded" };
+      if (res.status >= 500) return { success: false, failureCategory: "TRANSIENT", failureCode: "SERVER_ERROR", message: "Server error" };
+      return { success: false, failureCategory: "PERMANENT", failureCode: "HTTP_" + res.status, message: "Failed to delete post" };
+    } catch (err) {
+      return { success: false, failureCategory: "UNKNOWN_RESULT", failureCode: "NETWORK_ERROR", message: "Network error: " + err };
+    }
+  }
+
   async publish(
     credentials: ProviderExecutionCredentials,
     input: ProviderPublicationInput,

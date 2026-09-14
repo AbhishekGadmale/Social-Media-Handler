@@ -221,6 +221,7 @@ function TargetCard({ variant, workspaceId }: { variant: PostPlatformVariant, wo
   const queryClient = useQueryClient();
   const [isPublishing, setIsPublishing] = useState(false);
   const [isActioning, setIsActioning] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
   
   const [title, setTitle] = useState(variant.providerOptions?.title || '');
   const [privacyStatus, setPrivacyStatus] = useState(variant.providerOptions?.privacyStatus || 'PRIVATE');
@@ -232,10 +233,10 @@ function TargetCard({ variant, workspaceId }: { variant: PostPlatformVariant, wo
   const [reconcileUrl, setReconcileUrl] = useState('');
   const [reconcileOutcome, setReconcileOutcome] = useState<'CONFIRM_PUBLISHED' | 'CONFIRM_FAILED' | null>(null);
 
-  const handleAction = async (action: 'publish' | 'schedule' | 'cancel' | 'retry' | 'unschedule' | 'reschedule' | 'reconcile', payload?: unknown) => {
+  const handleAction = async (action: 'publish' | 'schedule' | 'cancel' | 'retry' | 'unschedule' | 'reschedule' | 'reconcile' | 'remote', payload?: unknown, method: 'POST' | 'DELETE' = 'POST') => {
     try {
       setIsActioning(true);
-      await api.post(`workspaces/${workspaceId}/publications/${variant.id}/${action}`, payload);
+      if (method === 'DELETE') { await api.delete(`workspaces/${workspaceId}/publications/${variant.id}/${action}`); } else { await api.post(`workspaces/${workspaceId}/publications/${variant.id}/${action}`, payload); }
       queryClient.invalidateQueries({ queryKey: ['workspaces', workspaceId, 'posts', variant.postId] });
     } catch (err: unknown) {
       const errorObj = err instanceof Error ? err : new Error('Unknown error');
@@ -369,6 +370,21 @@ function TargetCard({ variant, workspaceId }: { variant: PostPlatformVariant, wo
           </a>
         )}
       </div>
+
+      
+      {isDeleting && (
+        <div className="absolute inset-0 bg-white bg-opacity-95 p-4 flex flex-col justify-center items-center z-10 rounded-md text-center border-2 border-red-500">
+          <p className="font-bold mb-2 text-red-600">Delete from LinkedIn?</p>
+          <div className="text-xs text-gray-700 mb-4 text-left">
+            <p>- LinkedIn post will be removed externally.</p>
+            <p>- Local publishing history remains.</p>
+          </div>
+          <div className="flex gap-2">
+            <Button size="sm" variant="outline" onClick={() => setIsDeleting(false)}>Cancel</Button>
+            <Button size="sm" variant="destructive" onClick={() => handleAction('remote', undefined, 'DELETE')}>Confirm Delete</Button>
+          </div>
+        </div>
+      )}
 
       {isPublishing && (
         <div className="absolute inset-0 bg-white bg-opacity-95 p-4 flex flex-col justify-center items-center z-10 rounded-md text-center border-2 border-blue-500">

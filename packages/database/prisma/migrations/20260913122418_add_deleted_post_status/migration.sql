@@ -1,0 +1,3 @@
+-- AlterEnum
+ALTER TYPE "PostStatus" ADD VALUE 'DELETING';
+ALTER TYPE "PostStatus" ADD VALUE 'DELETED';
