@@ -573,7 +573,7 @@ export class LinkedInProvider implements ISocialProvider, IPublishingProvider {
         }
       }, 15000);
       if (res.status === 204) return { success: true };
-      if (res.status === 404) return { success: true };
+      if (res.status === 404) return { success: false, failureCategory: 'PERMANENT', failureCode: 'NOT_FOUND', message: 'Post not found on provider' };
       if (res.status === 401 || res.status === 403) return { success: false, failureCategory: "AUTH_REQUIRED", failureCode: "UNAUTHORIZED", message: "Unauthorized to delete" };
       if (res.status === 429) return { success: false, failureCategory: "RATE_LIMITED", failureCode: "TOO_MANY_REQUESTS", message: "Rate limit exceeded" };
       if (res.status >= 500) return { success: false, failureCategory: "TRANSIENT", failureCode: "SERVER_ERROR", message: "Server error" };

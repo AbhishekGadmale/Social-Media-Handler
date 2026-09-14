@@ -1092,10 +1092,11 @@ describe('LinkedInProvider Deleting', () => {
     expect(res.success).toBe(true);
   });
 
-  it('should treat 404 as success (idempotent)', async () => {
+  it('should treat 404 as PERMANENT failure', async () => {
     vi.spyOn(global, 'fetch').mockResolvedValueOnce({ ok: false, status: 404 } as any);
     const res = await provider.deletePost({ accessToken: 'token' }, 'urn:123');
-    expect(res.success).toBe(true);
+    expect(res.success).toBe(false);
+    expect((res as any).failureCategory).toBe('PERMANENT');
   });
 
   it('should classify 401 as AUTH_REQUIRED', async () => {
