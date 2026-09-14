@@ -77,7 +77,7 @@ export class PublishingProcessor extends WorkerHost {
         if (res.failureCategory === 'AUTH_REQUIRED' || res.failureCategory === 'PERMANENT') {
           // Leave it in UNKNOWN or return to FAILED delete state? Let's mark it UNKNOWN for manual reconciliation
           await this.prisma.postPlatformVariant.update({ where: { id: publicationId }, data: { status: 'UNKNOWN' } });
-          await this.emitAudit(workspaceId, publicationId, 'PUBLICATION_DELETE_FAILED', { error: res.message });
+          await this.emitAudit(workspaceId, publicationId, 'PUBLICATION_DELETE_FAILED');
         } else {
           throw new Error('Transient failure: ' + res.message); // retry
         }

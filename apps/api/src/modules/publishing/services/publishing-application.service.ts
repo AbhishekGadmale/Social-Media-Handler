@@ -352,7 +352,7 @@ export class PublishingApplicationService {
     if (!variant.externalPostId) throw new UnprocessableEntityException('Cannot delete publication without an external ID');
     const success = await repo.queueForDeletion(variantId);
     if (!success) throw new ConflictException('Cannot delete variant in this state');
-    this.audit.logAction({ workspaceId, actorId: authorId, action: 'PUBLICATION_DELETE_REQUESTED', targetId: variantId, metadata: { publicationId: variantId } });
+    this.audit.logAction({ workspaceId, actorId: authorId, action: 'PUBLICATION_DELETE_REQUESTED' as any, targetType: 'Publication', targetId: variantId, metadata: { publicationId: variantId } });
     return repo.variants.findById(variantId, { include: { socialAccount: true } });
   }
 
