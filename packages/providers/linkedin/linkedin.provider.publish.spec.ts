@@ -1077,3 +1077,52 @@ describe('LinkedInProvider Publishing', () => {
   });
 
 });
+
+describe('LinkedInProvider Deleting', () => {
+  let provider: LinkedInProvider;
+    beforeEach(() => {
+    process.env = { ...process.env, LINKEDIN_CLIENT_ID: 'test', LINKEDIN_CLIENT_SECRET: 'test' };
+    provider = new LinkedInProvider();
+    mockFetch.mockReset();
+  });
+  
+  it('should successfully delete a post and return success: true on 204', async () => {
+    const mockFetch = vi.spyOn(global, 'fetch').mockResolvedValueOnce({ ok: true, status: 204 } as any);
+    const res = await provider.deletePost({ accessToken: 'test-token' }, 'urn:li:ugcPost:123');
+    expect(res.success).toBe(true);
+  });
+
+  it('should treat 404 as PERMANENT failure', async () => {
+    vi.spyOn(global, 'fetch').mockResolvedValueOnce({ ok: false, status: 404 } as any);
+    const res = await provider.deletePost({ accessToken: 'token' }, 'urn:123');
+    expect(res.success).toBe(false);
+    expect((res as any).failureCategory).toBe('PERMANENT');
+  });
+
+  it('should classify 401 as AUTH_REQUIRED', async () => {
+    vi.spyOn(global, 'fetch').mockResolvedValueOnce({ ok: false, status: 401 } as any);
+    const res = await provider.deletePost({ accessToken: 'token' }, 'urn:123');
+    expect(res).toEqual({ success: false, failureCategory: 'AUTH_REQUIRED', failureCode: 'UNAUTHORIZED', message: 'Unauthorized to delete' });
+  });
+
+  it('should classify 429 as RATE_LIMITED', async () => {
+    vi.spyOn(global, 'fetch').mockResolvedValueOnce({ ok: false, status: 429 } as any);
+    const res = await provider.deletePost({ accessToken: 'token' }, 'urn:123');
+    expect(res.success).toBe(false);
+    if (!res.success) expect(res.failureCategory).toBe('RATE_LIMITED');
+  });
+
+  it('should classify 500 as TRANSIENT', async () => {
+    vi.spyOn(global, 'fetch').mockResolvedValueOnce({ ok: false, status: 500 } as any);
+    const res = await provider.deletePost({ accessToken: 'token' }, 'urn:123');
+    expect(res.success).toBe(false);
+    if (!res.success) expect(res.failureCategory).toBe('TRANSIENT');
+  });
+
+  it('should classify network error as UNKNOWN_RESULT', async () => {
+    vi.spyOn(global, 'fetch').mockRejectedValueOnce(new Error('Network disconnected'));
+    const res = await provider.deletePost({ accessToken: 'token' }, 'urn:123');
+    expect(res.success).toBe(false);
+    if (!res.success) expect(res.failureCategory).toBe('UNKNOWN_RESULT');
+  });
+});

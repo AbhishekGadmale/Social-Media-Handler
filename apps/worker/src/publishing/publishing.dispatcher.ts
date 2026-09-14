@@ -41,6 +41,7 @@ export class PublishingDispatcher implements OnModuleInit, OnModuleDestroy {
     try {
       await this.promoteScheduled();
       await this.dispatchQueued();
+      await this.dispatchDeleting();
       await this.recoverStalePublishing();
     } catch (error) {
       this.logger.error('Error in publishing dispatcher scan loop', error);
@@ -87,6 +88,18 @@ export class PublishingDispatcher implements OnModuleInit, OnModuleDestroy {
   /**
    * Scans QUEUED publications and ensures they are in BullMQ.
    */
+  
+  private async dispatchDeleting() {
+    const queuedTargets = await this.prisma.postPlatformVariant.findMany({ where: { status: 'DELETING' }, select: { id: true, workspaceId: true, dispatchVersion: true }, take: this.BATCH_SIZE });
+    for (const target of queuedTargets) {
+      const jobId = `delete-${target.id}-v${target.dispatchVersion}`;
+      const payload = { workspaceId: target.workspaceId, publicationId: target.id };
+      try {
+        await this.publishQueue.add('publishing.delete', payload, { jobId, attempts: 3, backoff: { type: 'exponential', delay: 5000 }, removeOnComplete: true, removeOnFail: false });
+        this.logger.debug({ msg: 'delete.dispatch.enqueued', publicationId: target.id });
+      } catch (error: any) { this.logger.error('Failed to enqueue delete', error); }
+    }
+  }
   private async dispatchQueued() {
     const queuedTargets = await this.prisma.postPlatformVariant.findMany({
       where: {

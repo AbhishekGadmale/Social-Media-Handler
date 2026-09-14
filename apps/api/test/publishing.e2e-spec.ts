@@ -345,6 +345,52 @@ describe('Publishing API (e2e)', () => {
     });
   });
 
+
+  describe('Remote Deletion', () => {
+    it('enqueues deletion for an existing publication', async () => {
+      await prisma.postPlatformVariant.update({
+        where: { id: variant1Id },
+        data: { status: 'PUBLISHED', externalPostId: 'urn:li:123' },
+      });
+
+      const delRes = await request(app.getHttpServer())
+        .delete(`/api/v1/workspaces/${ws1}/publications/${variant1Id}/remote`)
+        .set('Cookie', session1.combinedCookie)
+        .set('x-csrf-token', session1.csrfToken);
+      
+      if (delRes.status !== 202) console.error(delRes.body);
+      expect(delRes.status).toBe(202);
+      
+      const variant = await prisma.postPlatformVariant.findUnique({
+        where: { id: variant1Id },
+      });
+      expect(variant?.status).toBe('DELETING');
+    });
+
+    it('rejects deletion for invalid state', async () => {
+      await prisma.postPlatformVariant.update({
+        where: { id: variant1Id },
+        data: { status: 'QUEUED' },
+      });
+
+      const delRes = await request(app.getHttpServer())
+        .delete(`/api/v1/workspaces/${ws1}/publications/${variant1Id}/remote`)
+        .set('Cookie', session1.combinedCookie)
+        .set('x-csrf-token', session1.csrfToken);
+      
+      expect(delRes.status).toBe(409);
+    });
+
+    it('prevents user2 from deleting user1 publication', async () => {
+      const delRes = await request(app.getHttpServer())
+        .delete(`/api/v1/workspaces/${ws1}/publications/${variant1Id}/remote`)
+        .set('Cookie', session2.combinedCookie)
+        .set('x-csrf-token', session2.csrfToken);
+      
+      expect(delRes.status).toBe(403);
+    });
+  });
+
   describe('Tenant Isolation', () => {
     it('prevents user2 from reading user1 post', async () => {
       const readRes = await request(app.getHttpServer())

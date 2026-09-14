@@ -39,6 +39,8 @@ enum PostStatus {
   PUBLISHED
   FAILED
   UNKNOWN
+  DELETING
+  DELETED
 }
 
 enum FailureCategory {

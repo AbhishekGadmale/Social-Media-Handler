@@ -61,6 +61,7 @@ export class PublicationsController {
   @Delete('publications/:publicationId')
   @RequirePermission('posts.update')
   async removeTarget(
+
     @Param('workspaceId') workspaceId: string,
     @CurrentUser() user: any,
     @Param('publicationId') publicationId: string,
@@ -70,6 +71,17 @@ export class PublicationsController {
       user.id,
       publicationId,
     );
+  }
+
+  @Delete('publications/:publicationId/remote')
+  @RequirePermission('posts.delete')
+  @HttpCode(202)
+  async requestRemoteDelete(
+    @Param('workspaceId') workspaceId: string,
+    @CurrentUser() user: any,
+    @Param('publicationId') publicationId: string,
+  ) {
+    return this.publishingService.requestRemoteDelete(workspaceId, user.id, publicationId);
   }
 
   @Post('publications/:publicationId/validate')

@@ -33,6 +33,7 @@ class TestPublishingProvider implements IPublishingProvider {
       features: [],
     };
   }
+  deletePost = jest.fn();
   validateProviderOptions(options: unknown): ProviderOptionsValidationResult {
     return { valid: true, issues: [] };
   }
@@ -500,6 +501,61 @@ describe('Publishing Worker (e2e)', () => {
       expect(serialized).not.toContain('SECRET_TEST_VALUE');
     });
   });
+
+    describe('Delete Processing', () => {
+      it('should successfully delete a post and transition to DELETED', async () => {
+        const workspaceId = generateId();
+        const publicationId = generateId();
+        const variant = await prisma.workspace.create({ data: { id: workspaceId, name: 'w', organization: { create: { id: generateId(), name: 'o' } } } });
+        const postId = generateId();
+        const socialAccountId = generateId();
+        await prisma.post.create({ data: { id: postId, workspaceId, content: 'test', status: 'PUBLISHED' } });
+        await prisma.socialAccount.create({ data: { id: socialAccountId, workspaceId, provider: 'LINKEDIN', externalId: '123', name: 'Test', status: 'ACTIVE' } });
+        await prisma.postPlatformVariant.create({ data: { id: publicationId, workspaceId, postId, socialAccountId, status: 'DELETING', externalPostId: 'urn:li:ugcPost:123' } });
+        const provider = providerRegistry.get('LINKEDIN');
+        (provider.deletePost as jest.Mock).mockResolvedValueOnce({ success: true });
+        (tokenService.getExecutionCredentials as jest.Mock).mockResolvedValueOnce({ accessToken: 'test-token' });
+        await processor.process({ name: 'publishing.delete', data: { workspaceId, publicationId, dispatchVersion: 1 } } as any);
+        const updated = await prisma.postPlatformVariant.findUnique({ where: { id: publicationId } });
+        expect(updated?.status).toBe('DELETED');
+        expect(provider.deletePost).toHaveBeenCalledWith({ accessToken: 'test-token' }, 'urn:li:ugcPost:123');
+      });
+
+      it('should handle already deleted (no external ID)', async () => {
+        (providerRegistry.get('LINKEDIN').deletePost as jest.Mock).mockClear();
+        const workspaceId = generateId();
+        const publicationId = generateId();
+        await prisma.workspace.create({ data: { id: workspaceId, name: 'w', organization: { create: { id: generateId(), name: 'o' } } } });
+        const postId = generateId();
+        const socialAccountId = generateId();
+        await prisma.post.create({ data: { id: postId, workspaceId, content: 'test', status: 'PUBLISHED' } });
+        await prisma.socialAccount.create({ data: { id: socialAccountId, workspaceId, provider: 'LINKEDIN', externalId: '123', name: 'Test', status: 'ACTIVE' } });
+        await prisma.postPlatformVariant.create({ data: { id: publicationId, workspaceId, postId, socialAccountId, status: 'DELETING', externalPostId: null } });
+        const provider = providerRegistry.get('LINKEDIN');
+        await processor.process({ name: 'publishing.delete', data: { workspaceId, publicationId, dispatchVersion: 1 } } as any);
+        const updated = await prisma.postPlatformVariant.findUnique({ where: { id: publicationId } });
+        expect(updated?.status).toBe('DELETED');
+        expect(provider.deletePost).not.toHaveBeenCalled();
+      });
+
+      it('should transition to UNKNOWN on permanent failure', async () => {
+        const workspaceId = generateId();
+        const publicationId = generateId();
+        await prisma.workspace.create({ data: { id: workspaceId, name: 'w', organization: { create: { id: generateId(), name: 'o' } } } });
+        const postId = generateId();
+        const socialAccountId = generateId();
+        await prisma.post.create({ data: { id: postId, workspaceId, content: 'test', status: 'PUBLISHED' } });
+        await prisma.socialAccount.create({ data: { id: socialAccountId, workspaceId, provider: 'LINKEDIN', externalId: '123', name: 'Test', status: 'ACTIVE' } });
+        await prisma.postPlatformVariant.create({ data: { id: publicationId, workspaceId, postId, socialAccountId, status: 'DELETING', externalPostId: 'urn:li:ugcPost:123' } });
+        const provider = providerRegistry.get('LINKEDIN');
+        (provider.deletePost as jest.Mock).mockResolvedValueOnce({ success: false, failureCategory: 'PERMANENT', message: 'Failed' });
+        (tokenService.getExecutionCredentials as jest.Mock).mockResolvedValueOnce({ accessToken: 'test-token' });
+        await processor.process({ name: 'publishing.delete', data: { workspaceId, publicationId, dispatchVersion: 1 } } as any);
+        const updated = await prisma.postPlatformVariant.findUnique({ where: { id: publicationId } });
+        expect(updated?.status).toBe('UNKNOWN');
+      });
+    });
+
 });
 
 describe('ExecutionValidator Content Classification', () => {

@@ -42,7 +42,7 @@ describe('LinkedInProvider', () => {
     expect(provider.publishPost).toBeUndefined();
     expect(provider.getAccountMetrics).toBeUndefined();
     expect(provider.getPostMetrics).toBeUndefined();
-    expect(provider.deletePost).toBeUndefined();
+    
   });
 
   it('should exchange authorization code successfully', async () => {

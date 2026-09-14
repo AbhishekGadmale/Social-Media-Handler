@@ -34,7 +34,62 @@ export class PublishingProcessor extends WorkerHost {
     super();
   }
 
-  async process(job: Job<PublishJobData>) {
+  
+  private async processDelete(job: Job<any>) {
+    const { workspaceId, publicationId } = job.data;
+    
+    // 1. Authoritative load
+    const variant = await this.prisma.postPlatformVariant.findFirst({
+      where: { id: publicationId, workspaceId },
+      include: { socialAccount: true },
+    });
+    
+    if (!variant) return; // Deleted already
+    if (variant.status === 'DELETED') return; // Idempotent
+    if (!variant.externalPostId) {
+      await this.prisma.postPlatformVariant.update({ where: { id: publicationId }, data: { status: 'DELETED' } });
+      return;
+    }
+    
+    // 2. Validate provider
+    const provider = this.providerRegistry.get(variant.socialAccount.provider);
+    if (!provider || !provider.deletePost) {
+      this.logger.error({ msg: 'delete.provider_not_found_or_unsupported', provider: variant.socialAccount.provider });
+      throw new Error('Provider does not support deletion');
+    }
+    
+    // 3. Decrypt token
+    let credentials;
+    try {
+      credentials = await this.tokenService.getExecutionCredentials(variant.socialAccountId);
+    } catch (err: any) {
+      // Mark as unknown or failed depending on the error
+      throw err;
+    }
+    
+    // 4. Call provider
+    try {
+      const res = (await provider.deletePost(credentials, variant.externalPostId)) as any;
+      if (res.success) {
+        await this.prisma.postPlatformVariant.update({ where: { id: publicationId }, data: { status: 'DELETED' } });
+        await this.emitAudit(workspaceId, publicationId, 'PUBLICATION_DELETED_REMOTELY');
+      } else {
+        if (res.failureCategory === 'AUTH_REQUIRED' || res.failureCategory === 'PERMANENT') {
+          // Leave it in UNKNOWN or return to FAILED delete state? Let's mark it UNKNOWN for manual reconciliation
+          await this.prisma.postPlatformVariant.update({ where: { id: publicationId }, data: { status: 'UNKNOWN' } });
+          await this.emitAudit(workspaceId, publicationId, 'PUBLICATION_DELETE_FAILED');
+        } else {
+          throw new Error('Transient failure: ' + res.message); // retry
+        }
+      }
+    } catch (error) {
+      throw error; // Let BullMQ retry
+    }
+  }
+
+  async process(job: Job<any>) {
+    if (job.name === 'publishing.delete') return this.processDelete(job);
+
     const { workspaceId, publicationId, dispatchVersion } = job.data;
     const repo = new PublishingRepository(this.prisma, workspaceId);
 

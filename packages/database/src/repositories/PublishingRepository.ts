@@ -73,6 +73,15 @@ export class PublishingRepository {
    * Command Idempotency: Safely triggers publication (QUEUED) only if currently DRAFT, SCHEDULED, or FAILED.
    * If two requests attempt this concurrently, only one will succeed.
    */
+  async queueForDeletion(variantId: string): Promise<boolean> {
+    return this.transitionVariantState(
+      variantId, 
+      [PostStatus.PUBLISHED, PostStatus.FAILED, PostStatus.UNKNOWN], 
+      PostStatus.DELETING,
+      { queuedAt: new Date() }
+    );
+  }
+
   async queueForPublishing(variantId: string): Promise<boolean> {
     return this.transitionVariantState(
       variantId, 

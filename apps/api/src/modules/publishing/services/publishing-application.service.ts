@@ -344,6 +344,18 @@ export class PublishingApplicationService {
     });
   }
 
+  async requestRemoteDelete(workspaceId: string, authorId: string, variantId: string) {
+    const repo = this.getRepo(workspaceId);
+    const variant = (await repo.variants.findById(variantId)) as any;
+    if (!variant) throw new NotFoundException('Publication not found');
+    if (variant.status === 'DELETED') return variant;
+    if (!variant.externalPostId) throw new UnprocessableEntityException('Cannot delete publication without an external ID');
+    const success = await repo.queueForDeletion(variantId);
+    if (!success) throw new ConflictException('Cannot delete variant in this state');
+    this.audit.logAction({ workspaceId, actorId: authorId, action: 'PUBLICATION_DELETE_REQUESTED' as any, targetType: 'Publication', targetId: variantId, metadata: { publicationId: variantId } });
+    return repo.variants.findById(variantId, { include: { socialAccount: true } });
+  }
+
   async requestRetry(workspaceId: string, authorId: string, variantId: string) {
     const repo = this.getRepo(workspaceId);
 
