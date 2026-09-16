@@ -7,7 +7,7 @@ import { restrictedPrismaImports, restrictedCryptoImports } from '../../packages
 
 export default tseslint.config(
   {
-    ignores: ['eslint.config.mjs'],
+    ignores: ['eslint.config.mjs', 'dist/**'],
   },
   eslint.configs.recommended,
   ...tseslint.configs.recommendedTypeChecked,
