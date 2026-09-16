@@ -25,7 +25,11 @@ class TestPublishingProvider implements IPublishingProvider {
         MULTI_IMAGE_POST: { supported: true, maxCount: 4 },
         VIDEO_POST: { supported: false },
         LINK_POST: { supported: true },
-        DOCUMENT_POST: { supported: true, maxCount: 1, mimeTypes: ['application/pdf'] },
+        DOCUMENT_POST: {
+          supported: true,
+          maxCount: 1,
+          mimeTypes: ['application/pdf'],
+        },
       },
       features: ['TAGS'],
     };
@@ -70,10 +74,10 @@ describe('PublishabilityValidator', () => {
                 workspaceId: 'ws-1',
                 mimeType: 'application/pdf',
                 sizeBytes: 1000,
-              }
-            }
-          ]
-        }
+              },
+            },
+          ],
+        },
       });
       mockPrisma.postPlatformVariant.findFirst.mockResolvedValue(docVariant);
       const result = await validator.validateTarget('ws-1', 'var-1');
@@ -89,22 +93,24 @@ describe('PublishabilityValidator', () => {
                 workspaceId: 'ws-1',
                 mimeType: 'application/pdf',
                 sizeBytes: 1000,
-              }
+              },
             },
             {
               media: {
                 workspaceId: 'ws-1',
                 mimeType: 'image/jpeg',
                 sizeBytes: 1000,
-              }
-            }
-          ]
-        }
+              },
+            },
+          ],
+        },
       });
       mockPrisma.postPlatformVariant.findFirst.mockResolvedValue(mixedVariant);
       const result = await validator.validateTarget('ws-1', 'var-1');
       expect(result.valid).toBe(false);
-      expect(result.issues.some((i) => i.code === 'CONTENT_TYPE_UNSUPPORTED')).toBe(true);
+      expect(
+        result.issues.some((i) => i.code === 'CONTENT_TYPE_UNSUPPORTED'),
+      ).toBe(true);
     });
   });
 

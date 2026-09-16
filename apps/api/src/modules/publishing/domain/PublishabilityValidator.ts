@@ -163,8 +163,8 @@ export class PublishabilityValidator {
       const allVideos = variant.post.media.every((m: any) =>
         m.media.mimeType.startsWith('video/'),
       );
-      const allDocuments = variant.post.media.every((m: any) =>
-        m.media.mimeType === 'application/pdf',
+      const allDocuments = variant.post.media.every(
+        (m: any) => m.media.mimeType === 'application/pdf',
       );
 
       if (allImages) {
@@ -174,12 +174,14 @@ export class PublishabilityValidator {
         contentType = 'VIDEO_POST';
       } else if (allDocuments) {
         // MVP_PAGE_COUNT_VALIDATION_DEBT: We do not parse PDF page counts locally yet.
-        // LinkedIn limits documents to 300 pages, but introducing a heavy PDF parser 
+        // LinkedIn limits documents to 300 pages, but introducing a heavy PDF parser
         // to the API layer right now is out of scope. LinkedIn will reject it at upload/processing if > 300.
         contentType = 'DOCUMENT_POST';
       } else {
         // Check if there are any documents mixed with other media
-        const anyDocuments = variant.post.media.some((m: any) => m.media.mimeType === 'application/pdf');
+        const anyDocuments = variant.post.media.some(
+          (m: any) => m.media.mimeType === 'application/pdf',
+        );
         if (anyDocuments) {
           issues.push({
             code: 'CONTENT_TYPE_UNSUPPORTED',
