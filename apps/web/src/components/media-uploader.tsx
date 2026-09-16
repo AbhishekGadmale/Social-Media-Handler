@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { api } from '../lib/api/client';
-import { UploadCloud, FileVideo, ImageIcon, AlertCircle, X, CheckCircle2, Loader2 } from 'lucide-react';
+import { UploadCloud, FileVideo, ImageIcon, FileText, AlertCircle, X, CheckCircle2, Loader2 } from 'lucide-react';
 import { Button } from './ui/button';
 
 interface MediaUploaderProps {
@@ -153,11 +153,23 @@ export function MediaUploader({ workspaceId, onUploadsChange, onUploadingStateCh
     const newDocuments = files.filter(f => f.type === 'application/pdf');
 
     // Validation
-    if (newVideos.length > 0 && currentImages.length > 0) {
+    if (newDocuments.length > 0 && (currentImages.length > 0 || currentVideos.length > 0 || newImages.length > 0 || newVideos.length > 0)) {
+      setGlobalError('Documents cannot be mixed with images or video.');
+      return;
+    }
+    if ((newImages.length > 0 || newVideos.length > 0) && currentDocuments.length > 0) {
+      setGlobalError('Images and video cannot be mixed with a document.');
+      return;
+    }
+    if (currentDocuments.length + newDocuments.length > 1) {
+      setGlobalError('Document posts support one document only.');
+      return;
+    }
+    if (newVideos.length > 0 && (currentImages.length > 0 || newImages.length > 0)) {
       setGlobalError('Images and video cannot be mixed in one post.');
       return;
     }
-    if (newImages.length > 0 && currentVideos.length > 0) {
+    if (newImages.length > 0 && (currentVideos.length > 0 || newVideos.length > 0)) {
       setGlobalError('Images and video cannot be mixed in one post.');
       return;
     }
@@ -170,9 +182,15 @@ export function MediaUploader({ workspaceId, onUploadsChange, onUploadingStateCh
       return;
     }
 
-    const validFiles = [...newImages, ...newVideos];
+    const validFiles = [...newImages, ...newVideos, ...newDocuments];
     if (validFiles.length < files.length) {
       setGlobalError('Some files were ignored due to unsupported format.');
+    }
+
+    // PDF Size validation (LinkedIn limit 100MB)
+    if (newDocuments.some(d => d.size > 100 * 1024 * 1024)) {
+      setGlobalError('Document size exceeds the 100MB limit.');
+      return;
     }
 
     if (validFiles.length === 0) return;
@@ -235,6 +253,8 @@ export function MediaUploader({ workspaceId, onUploadsChange, onUploadingStateCh
                 <div className="flex items-center space-x-3 truncate flex-1">
                   {item.previewUrl ? (
                     <img src={item.previewUrl} alt={item.file.name} className="h-10 w-10 object-cover rounded flex-shrink-0 border bg-white" />
+                  ) : item.file.type === 'application/pdf' ? (
+                    <FileText className="h-10 w-10 text-red-500 flex-shrink-0" />
                   ) : (
                     <FileVideo className="h-10 w-10 text-blue-500 flex-shrink-0" />
                   )}

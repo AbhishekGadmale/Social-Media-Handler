@@ -3,7 +3,7 @@
 import { queryOptions } from '@tanstack/react-query';
 import { api } from '../api/client';
 
-export type PostStatus = 'DRAFT' | 'SCHEDULED' | 'QUEUED' | 'PUBLISHING' | 'PUBLISHED' | 'FAILED' | 'UNKNOWN';
+export type PostStatus = 'DRAFT' | 'SCHEDULED' | 'QUEUED' | 'PUBLISHING' | 'PUBLISHED' | 'FAILED' | 'UNKNOWN' | 'DELETING' | 'DELETED';
 export type Visibility = 'PUBLIC' | 'PRIVATE' | 'UNLISTED';
 
 export interface PostMedia {
@@ -59,7 +59,7 @@ export const publishingQueries = {
       enabled: !!workspaceId,
       refetchInterval: (query: import('@tanstack/react-query').Query<Post[], Error>) => {
         const hasActive = query?.state?.data?.some((p: Post) => 
-          p.variants?.some((v) => v.status === 'QUEUED' || v.status === 'PUBLISHING')
+          p.variants?.some((v) => v.status === 'QUEUED' || v.status === 'PUBLISHING' || v.status === 'DELETING')
         );
         return hasActive ? 3000 : false;
       },
@@ -71,7 +71,7 @@ export const publishingQueries = {
       queryFn: () => api.get<Post>(`workspaces/${workspaceId}/posts/${postId}`),
       enabled: !!workspaceId && !!postId,
       refetchInterval: (query: import('@tanstack/react-query').Query<Post, Error>) => {
-        const hasActive = query?.state?.data?.variants?.some((v: PostPlatformVariant) => v.status === 'QUEUED' || v.status === 'PUBLISHING');
+        const hasActive = query?.state?.data?.variants?.some((v: PostPlatformVariant) => v.status === 'QUEUED' || v.status === 'PUBLISHING' || v.status === 'DELETING');
         return hasActive ? 3000 : false;
       },
     }),

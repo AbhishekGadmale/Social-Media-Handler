@@ -274,6 +274,8 @@ function TargetCard({ variant, workspaceId }: { variant: PostPlatformVariant, wo
           variant.status === 'PUBLISHED' ? 'bg-green-200 text-green-800' :
           variant.status === 'FAILED' ? 'bg-red-200 text-red-800' :
           variant.status === 'QUEUED' || variant.status === 'PUBLISHING' ? 'bg-blue-200 text-blue-800 animate-pulse' :
+          variant.status === 'DELETING' ? 'bg-orange-200 text-orange-800 animate-pulse' :
+          variant.status === 'DELETED' ? 'bg-gray-100 text-gray-500 line-through' :
           variant.status === 'UNKNOWN' ? 'bg-gray-300 text-gray-800' :
           'bg-gray-200 text-gray-700'
         }`}>
@@ -364,24 +366,38 @@ function TargetCard({ variant, workspaceId }: { variant: PostPlatformVariant, wo
           </Button>
         )}
 
-        {variant.status === 'PUBLISHED' && variant.canonicalUrl && (
-          <a href={variant.canonicalUrl} target="_blank" rel="noopener noreferrer" className="text-sm text-blue-600 hover:underline inline-flex items-center">
-            View on YouTube
-          </a>
+        {variant.status === 'PUBLISHED' && (
+          <>
+            {variant.canonicalUrl && (
+              <a href={variant.canonicalUrl} target="_blank" rel="noopener noreferrer" className="text-sm text-blue-600 hover:underline inline-flex items-center">
+                View on {variant.socialAccount?.provider || 'Platform'}
+              </a>
+            )}
+            {variant.externalPostId && (
+              <Button variant="outline" size="sm" onClick={() => setIsDeleting(true)} disabled={isActioning}>
+                <X className="w-3 h-3 mr-1" /> Delete Post
+              </Button>
+            )}
+          </>
         )}
       </div>
 
       
       {isDeleting && (
-        <div className="absolute inset-0 bg-white bg-opacity-95 p-4 flex flex-col justify-center items-center z-10 rounded-md text-center border-2 border-red-500">
-          <p className="font-bold mb-2 text-red-600">Delete from LinkedIn?</p>
-          <div className="text-xs text-gray-700 mb-4 text-left">
-            <p>- LinkedIn post will be removed externally.</p>
+        <div
+          role="alertdialog"
+          aria-labelledby="delete-dialog-title"
+          aria-describedby="delete-dialog-desc"
+          className="absolute inset-0 bg-white bg-opacity-95 p-4 flex flex-col justify-center items-center z-10 rounded-md text-center border-2 border-red-500"
+        >
+          <p id="delete-dialog-title" className="font-bold mb-2 text-red-600">Delete from {variant.socialAccount?.provider || 'Platform'}?</p>
+          <div id="delete-dialog-desc" className="text-xs text-gray-700 mb-4 text-left">
+            <p>- Post will be removed externally.</p>
             <p>- Local publishing history remains.</p>
           </div>
           <div className="flex gap-2">
             <Button size="sm" variant="outline" onClick={() => setIsDeleting(false)}>Cancel</Button>
-            <Button size="sm" variant="destructive" onClick={() => handleAction('remote', undefined, 'DELETE')}>Confirm Delete</Button>
+            <Button size="sm" variant="destructive" onClick={() => { setIsDeleting(false); handleAction('remote', undefined, 'DELETE'); }}>Confirm Delete</Button>
           </div>
         </div>
       )}
