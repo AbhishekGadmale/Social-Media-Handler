@@ -8,8 +8,8 @@ import { publishingQueries, PostPlatformVariant } from '../../../../lib/query/pu
 import { accountQueries } from '../../../../lib/query/accounts';
 import { api } from '../../../../lib/api/client';
 import { Button } from '../../../../components/ui/button';
-import { 
-  ArrowLeft, Loader2, Save, Play, X, AlertCircle, Calendar 
+import {
+  ArrowLeft, Loader2, Save, Play, X, AlertCircle, Calendar
 } from 'lucide-react';
 import Link from 'next/link';
 
@@ -18,7 +18,7 @@ export default function PostDetailPage() {
   const workspaceId = params.workspaceId as string;
   const postId = params.postId as string;
   const queryClient = useQueryClient();
-  
+
 
   const { data: post, isLoading: postLoading } = useQuery(publishingQueries.detail(workspaceId, postId));
   const { data: accountsData } = useQuery(accountQueries.list(workspaceId));
@@ -54,7 +54,7 @@ export default function PostDetailPage() {
 
   const handleAddTarget = async () => {
     if (!selectedAccountId) return;
-    
+
     const account = accounts.find(a => a.id === selectedAccountId);
     if (!account) return;
 
@@ -87,7 +87,7 @@ export default function PostDetailPage() {
 
   const handleConnectUpgrade = async () => {
     try {
-      await handleUpdateDraft(); 
+      await handleUpdateDraft();
       const res = await api.post<{ url: string }>(`workspaces/${workspaceId}/oauth/youtube/connect?scopes=youtube.upload`);
       if (res.url) {
         window.location.href = res.url;
@@ -147,7 +147,7 @@ export default function PostDetailPage() {
               const isVideo = m.media.mimeType.startsWith('video/');
               const isImage = m.media.mimeType.startsWith('image/');
               const mediaUrl = m.media.storageKey ? `http://localhost:9000/agency-os-media/${m.media.storageKey}` : '';
-              
+
               return (
                 <div key={m.id} className="flex flex-col space-y-2 p-3 bg-white rounded border">
                   <div className="text-sm">
@@ -170,7 +170,7 @@ export default function PostDetailPage() {
       <div className="w-full md:w-96 space-y-6">
         <div className="bg-white shadow sm:rounded-lg p-6 border border-gray-200">
           <h2 className="text-lg font-bold text-gray-900 mb-4">Destinations</h2>
-          
+
           <div className="space-y-4 mb-6">
             {post.variants.map(variant => (
               <TargetCard key={variant.id} variant={variant} workspaceId={workspaceId} />
@@ -196,7 +196,7 @@ export default function PostDetailPage() {
                   {isAddingTarget ? <Loader2 className="w-4 h-4 animate-spin" /> : <PlusIcon />}
                 </Button>
               </div>
-              
+
               {targetError === 'MISSING_SCOPE' ? (
                 <div className="mt-3 p-3 bg-yellow-50 text-yellow-800 text-sm rounded-md">
                   <p className="mb-2">Publishing requires additional permission.</p>
@@ -221,11 +221,24 @@ function TargetCard({ variant, workspaceId }: { variant: PostPlatformVariant, wo
   const queryClient = useQueryClient();
   const [isPublishing, setIsPublishing] = useState(false);
   const [isActioning, setIsActioning] = useState(false);
+
+  const [title, setTitle] = useState(variant.providerOptions?.title as string || '');
+  const [privacyStatus, setPrivacyStatus] = useState(variant.providerOptions?.privacyStatus as string || 'PRIVATE');
+  const [categoryId, setCategoryId] = useState((variant.providerOptions?.categoryId as string) || '');
+  const [tags, setTags] = useState<string>(Array.isArray(variant.providerOptions?.tags) ? variant.providerOptions.tags.join(', ') : '');
+
+  const [prevOptions, setPrevOptions] = useState(variant.providerOptions);
+  if (variant.providerOptions !== prevOptions) {
+    setPrevOptions(variant.providerOptions);
+    setTitle(variant.providerOptions?.title as string || '');
+    setPrivacyStatus(variant.providerOptions?.privacyStatus as string || 'PRIVATE');
+    setCategoryId((variant.providerOptions?.categoryId as string) || '');
+    setTags(Array.isArray(variant.providerOptions?.tags) ? variant.providerOptions.tags.join(', ') : '');
+  }
+
+  const [scheduleDate, setScheduleDate] = useState<string>('');
+
   const [isDeleting, setIsDeleting] = useState(false);
-  
-  const [title, setTitle] = useState(variant.providerOptions?.title || '');
-  const [privacyStatus, setPrivacyStatus] = useState(variant.providerOptions?.privacyStatus || 'PRIVATE');
-  const [scheduleDate, setScheduleDate] = useState('');
 
   const [isReconciling, setIsReconciling] = useState(false);
   const [reconcileReason, setReconcileReason] = useState('');
@@ -238,22 +251,45 @@ function TargetCard({ variant, workspaceId }: { variant: PostPlatformVariant, wo
       setIsActioning(true);
       if (method === 'DELETE') { await api.delete(`workspaces/${workspaceId}/publications/${variant.id}/${action}`); } else { await api.post(`workspaces/${workspaceId}/publications/${variant.id}/${action}`, payload); }
       queryClient.invalidateQueries({ queryKey: ['workspaces', workspaceId, 'posts', variant.postId] });
-    } catch (err: unknown) {
-      const errorObj = err instanceof Error ? err : new Error('Unknown error');
-      alert(errorObj.message || `Failed to ${action}`);
-    } finally {
-      setIsActioning(false);
       setIsPublishing(false);
       setIsReconciling(false);
-      setReconcileOutcome(null);
+    } catch (err: unknown) {
+      const errorObj = err instanceof Error ? err : new Error('Unknown error');
+      alert(errorObj.message);
+    } finally {
+      setIsActioning(false);
     }
   };
 
-  const handleUpdate = async () => {
+  const handleUpdate = async (overrides?: Record<string, unknown>) => {
     try {
       setIsActioning(true);
+      const updatedOptions: Record<string, unknown> = {
+        ...(variant.providerOptions || {}),
+        title,
+        privacyStatus,
+        ...overrides
+      };
+
+      if (variant.socialAccount?.provider === 'YOUTUBE') {
+        const cat = overrides && 'categoryId' in overrides ? overrides.categoryId as string : categoryId;
+        if (cat) {
+          updatedOptions.categoryId = cat;
+        } else {
+          delete updatedOptions.categoryId;
+        }
+
+        const tagsStr = overrides && 'tags' in overrides ? overrides.tags as string : tags;
+        const tagsArray = tagsStr.split(',').map(t => t.trim()).filter(Boolean);
+        if (tagsArray.length > 0) {
+          updatedOptions.tags = tagsArray;
+        } else {
+          delete updatedOptions.tags;
+        }
+      }
+
       await api.patch(`workspaces/${workspaceId}/publications/${variant.id}`, {
-        providerOptions: { ...variant.providerOptions, title, privacyStatus }
+        providerOptions: updatedOptions
       });
       queryClient.invalidateQueries({ queryKey: ['workspaces', workspaceId, 'posts', variant.postId] });
     } catch (err: unknown) {
@@ -294,7 +330,7 @@ function TargetCard({ variant, workspaceId }: { variant: PostPlatformVariant, wo
           </Button>
         </div>
       )}
-      
+
       {variant.status === 'FAILED' && (
         <div className="mb-3 p-2 bg-red-50 text-red-700 text-xs rounded">
           <p className="font-semibold">Publishing failed</p>
@@ -306,8 +342,8 @@ function TargetCard({ variant, workspaceId }: { variant: PostPlatformVariant, wo
         <div className="space-y-3 mb-4">
           <div>
             <label className="block text-xs font-medium text-gray-700">Title</label>
-            <input 
-              type="text" 
+            <input
+              type="text"
               className="mt-1 block w-full border-gray-300 rounded-md shadow-sm sm:text-sm border p-1"
               value={title as string}
               onChange={e => setTitle(e.target.value)}
@@ -316,19 +352,47 @@ function TargetCard({ variant, workspaceId }: { variant: PostPlatformVariant, wo
           </div>
           <div>
             <label className="block text-xs font-medium text-gray-700">Privacy Status</label>
-            <select 
-              className="mt-1 block w-full border-gray-300 rounded-md shadow-sm sm:text-sm border p-1"
-              value={privacyStatus as string}
-              onChange={e => {
-                setPrivacyStatus(e.target.value);
-                setTimeout(handleUpdate, 0); 
-              }}
-            >
+              <select
+                className="mt-1 block w-full border-gray-300 rounded-md shadow-sm sm:text-sm border p-1"
+                value={privacyStatus as string}
+                onChange={e => {
+                  setPrivacyStatus(e.target.value);
+                  handleUpdate({ privacyStatus: e.target.value });
+                }}
+              >
               <option value="PRIVATE">Private</option>
               <option value="UNLISTED">Unlisted</option>
               <option value="PUBLIC">Public</option>
             </select>
           </div>
+
+          {variant.socialAccount?.provider === 'YOUTUBE' && (
+            <>
+              <div>
+                <label className="block text-xs font-medium text-gray-700">Category ID</label>
+                <input
+                  type="text"
+                  className="mt-1 block w-full border-gray-300 rounded-md shadow-sm sm:text-sm border p-1"
+                  value={categoryId}
+                  onChange={e => setCategoryId(e.target.value)}
+                  onBlur={handleUpdate}
+                  placeholder="e.g. 22"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-700">Tags</label>
+                <input
+                  type="text"
+                  className="mt-1 block w-full border-gray-300 rounded-md shadow-sm sm:text-sm border p-1"
+                  value={tags}
+                  onChange={e => setTags(e.target.value)}
+                  onBlur={handleUpdate}
+                  placeholder="e.g. tag1, tag2, tag3"
+                />
+                <p className="text-[10px] text-gray-500 mt-1">Separate multiple tags with commas.</p>
+              </div>
+            </>
+          )}
         </div>
       )}
 
@@ -338,7 +402,7 @@ function TargetCard({ variant, workspaceId }: { variant: PostPlatformVariant, wo
             <Play className="w-3 h-3 mr-1" /> {variant.status === 'FAILED' ? 'Retry' : (variant.status === 'SCHEDULED' ? 'Publish Now' : 'Publish')}
           </Button>
         ) : null}
-            
+
         {(variant.status === 'DRAFT' || variant.status === 'FAILED') ? (
           <div className="flex items-center gap-1">
             <input type="datetime-local" className="text-xs border p-1 rounded" value={scheduleDate} onChange={e => setScheduleDate(e.target.value)} />
@@ -382,7 +446,7 @@ function TargetCard({ variant, workspaceId }: { variant: PostPlatformVariant, wo
         )}
       </div>
 
-      
+
       {isDeleting && (
         <div
           role="alertdialog"
@@ -431,8 +495,8 @@ function TargetCard({ variant, workspaceId }: { variant: PostPlatformVariant, wo
               </p>
               <div>
                 <label className="block text-xs font-medium text-gray-700">Reason / Note *</label>
-                <input 
-                  type="text" 
+                <input
+                  type="text"
                   className="mt-1 block w-full border-gray-300 rounded-md shadow-sm sm:text-sm border p-1"
                   value={reconcileReason as string}
                   onChange={e => setReconcileReason(e.target.value)}
@@ -443,8 +507,8 @@ function TargetCard({ variant, workspaceId }: { variant: PostPlatformVariant, wo
                 <>
                   <div>
                     <label className="block text-xs font-medium text-gray-700">External Post ID (Optional)</label>
-                    <input 
-                      type="text" 
+                    <input
+                      type="text"
                       className="mt-1 block w-full border-gray-300 rounded-md shadow-sm sm:text-sm border p-1"
                       value={reconcileExternalId as string}
                       onChange={e => setReconcileExternalId(e.target.value)}
@@ -452,8 +516,8 @@ function TargetCard({ variant, workspaceId }: { variant: PostPlatformVariant, wo
                   </div>
                   <div>
                     <label className="block text-xs font-medium text-gray-700">Canonical URL (Optional)</label>
-                    <input 
-                      type="text" 
+                    <input
+                      type="text"
                       className="mt-1 block w-full border-gray-300 rounded-md shadow-sm sm:text-sm border p-1"
                       value={reconcileUrl as string}
                       onChange={e => setReconcileUrl(e.target.value)}
@@ -463,8 +527,8 @@ function TargetCard({ variant, workspaceId }: { variant: PostPlatformVariant, wo
               )}
               <div className="flex justify-between pt-2">
                 <Button size="sm" variant="ghost" onClick={() => setReconcileOutcome(null)}>Back</Button>
-                <Button 
-                  size="sm" 
+                <Button
+                  size="sm"
                   disabled={isActioning || !reconcileReason.trim()}
                   onClick={() => handleAction('reconcile', {
                     decision: reconcileOutcome,
