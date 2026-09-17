@@ -4,7 +4,8 @@
 import { useState } from 'react';
 import { useParams } from 'next/navigation';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { publishingQueries, PostPlatformVariant } from '../../../../lib/query/publishing';
+import { publishingQueries, PostPlatformVariant, Post } from '../../../../lib/query/publishing';
+import { getTargetMediaValidationError } from '../../../../lib/publishing/validation';
 import { accountQueries } from '../../../../lib/query/accounts';
 import { api } from '../../../../lib/api/client';
 import { Button } from '../../../../components/ui/button';
@@ -65,6 +66,14 @@ export default function PostDetailPage() {
       return;
     }
 
+      if (post && post.media) {
+        const mediaObjects = post.media.map(m => m.media).filter(Boolean);
+        const validationError = getTargetMediaValidationError(mediaObjects, account.provider);
+        if (validationError) {
+          setTargetError(validationError);
+          return;
+        }
+      }
     try {
       setIsAddingTarget(true);
       setTargetError(null);
@@ -173,7 +182,7 @@ export default function PostDetailPage() {
 
           <div className="space-y-4 mb-6">
             {post.variants.map(variant => (
-              <TargetCard key={variant.id} variant={variant} workspaceId={workspaceId} />
+              <TargetCard key={variant.id} variant={variant} workspaceId={workspaceId} post={post} />
             ))}
             {post.variants.length === 0 && <p className="text-sm text-gray-500 text-center py-4">No destinations added yet.</p>}
           </div>
@@ -217,7 +226,9 @@ function PlusIcon() {
   return <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>;
 }
 
-function TargetCard({ variant, workspaceId }: { variant: PostPlatformVariant, workspaceId: string }) {
+function TargetCard({ variant, workspaceId, post }: { variant: PostPlatformVariant, workspaceId: string, post: Post }) {
+  const mediaObjects = post.media.map(m => m.media).filter(Boolean);
+  const validationError = variant.socialAccount?.provider ? getTargetMediaValidationError(mediaObjects, variant.socialAccount.provider) : null;
   const queryClient = useQueryClient();
   const [isPublishing, setIsPublishing] = useState(false);
   const [isActioning, setIsActioning] = useState(false);
@@ -331,6 +342,15 @@ function TargetCard({ variant, workspaceId }: { variant: PostPlatformVariant, wo
         </div>
       )}
 
+      {validationError && isEditable && (
+        <div className="mb-3 p-2 bg-red-50 text-red-700 text-xs rounded flex flex-col items-start gap-2">
+          <div className="flex items-start">
+            <AlertCircle className="w-4 h-4 mr-1 flex-shrink-0" />
+            <span>{validationError}</span>
+          </div>
+        </div>
+      )}
+
       {variant.status === 'FAILED' && (
         <div className="mb-3 p-2 bg-red-50 text-red-700 text-xs rounded">
           <p className="font-semibold">Publishing failed</p>
@@ -398,7 +418,7 @@ function TargetCard({ variant, workspaceId }: { variant: PostPlatformVariant, wo
 
       <div className="flex flex-wrap gap-2 mt-4 pt-3 border-t border-gray-200">
         {(variant.status === 'DRAFT' || variant.status === 'FAILED' || variant.status === 'SCHEDULED') ? (
-          <Button size="sm" onClick={() => setIsPublishing(true)} disabled={isActioning}>
+          <Button size="sm" onClick={() => setIsPublishing(true)} disabled={isActioning || !!validationError}>
             <Play className="w-3 h-3 mr-1" /> {variant.status === 'FAILED' ? 'Retry' : (variant.status === 'SCHEDULED' ? 'Publish Now' : 'Publish')}
           </Button>
         ) : null}
@@ -406,7 +426,7 @@ function TargetCard({ variant, workspaceId }: { variant: PostPlatformVariant, wo
         {(variant.status === 'DRAFT' || variant.status === 'FAILED') ? (
           <div className="flex items-center gap-1">
             <input type="datetime-local" className="text-xs border p-1 rounded" value={scheduleDate} onChange={e => setScheduleDate(e.target.value)} />
-            <Button variant="outline" size="sm" onClick={() => handleAction('schedule', { scheduledAt: new Date(scheduleDate).toISOString() })} disabled={!scheduleDate || isActioning}>
+            <Button variant="outline" size="sm" onClick={() => handleAction('schedule', { scheduledAt: new Date(scheduleDate).toISOString() })} disabled={!scheduleDate || isActioning || !!validationError}>
               <Calendar className="w-3 h-3 mr-1" /> Schedule
             </Button>
           </div>
