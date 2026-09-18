@@ -22,6 +22,11 @@ export interface SocialProfile {
   provider?: string;
 }
 
+export interface ProviderProfileResult {
+  profile: SocialProfile;
+  credentials?: OAuthCredentials;
+}
+
 export interface RawAccountMetrics {
   followersCount: number;
   followingCount?: number;

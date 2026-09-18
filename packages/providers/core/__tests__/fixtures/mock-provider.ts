@@ -3,6 +3,7 @@ import {
   AuthUrlInput,
   OAuthCredentials,
   SocialProfile,
+  ProviderProfileResult,
   RawAccountMetrics,
 } from '../../types/index';
 
@@ -25,12 +26,15 @@ export class MockLimitedProvider implements ISocialProvider {
     };
   }
 
-  async getProfiles(credentials: OAuthCredentials): Promise<SocialProfile[]> {
+  async getProfiles(credentials: OAuthCredentials): Promise<ProviderProfileResult[]> {
     return [
       {
-        id: 'mock_user_1',
-        name: 'Mock User',
-        username: 'mockuser',
+        profile: {
+          id: 'mock-id',
+          name: 'Mock User',
+          username: 'mockuser',
+          provider: 'mock-provider',
+        }
       },
     ];
   }
@@ -56,8 +60,8 @@ export class MockFullProvider implements ISocialProvider {
     return { accessToken: 'mock_access_token' };
   }
 
-  async getProfiles(credentials: OAuthCredentials): Promise<SocialProfile[]> {
-    return [{ id: 'mock_user_1', name: 'Mock User' }];
+  async getProfiles(credentials: OAuthCredentials): Promise<ProviderProfileResult[]> {
+    return [{ profile: { id: 'mock_user_1', name: 'Mock User' } }];
   }
 
   async getAccountMetrics(credentials: OAuthCredentials, account: SocialProfile): Promise<RawAccountMetrics> {

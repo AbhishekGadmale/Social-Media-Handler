@@ -181,9 +181,13 @@ export class OAuthService {
       const p = entry.profile;
       const creds = entry.credentials || session.sharedCredentials;
 
+      const profileProvider = p.provider
+        ? (p.provider.toUpperCase() as SocialProvider)
+        : session.provider;
+
       const capabilities =
         (await provider.getCapabilities?.({
-          provider: session.provider,
+          provider: profileProvider,
           grantedScopes: creds.scopes || [],
           externalId: p.id,
         })) || [];
@@ -197,7 +201,7 @@ export class OAuthService {
       accountsToUpsert.push({
         accountData: {
           id: generateId(),
-          provider: session.provider,
+          provider: profileProvider,
           externalId: p.id,
           name: p.name,
           capabilities,
@@ -326,14 +330,14 @@ export class OAuthService {
         userId,
         provider: validProviderEnum,
         sharedCredentials: credentials,
-        profiles: profiles.map((p) => ({ profile: p })),
+        profiles,
         createdAt: Date.now(),
       };
       await this.storeDiscovery(session);
       return { requiresSelection: true, workspaceId, discoveryId };
     }
 
-    const profile = profiles[0];
+    const profile = profiles[0].profile;
 
     // Capabilities
     const capabilities =

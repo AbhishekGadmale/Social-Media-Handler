@@ -2,6 +2,7 @@ import {
   AuthUrlInput,
   OAuthCredentials,
   SocialProfile,
+  ProviderProfileResult,
   CapabilityContext,
   ProviderCapabilities,
 } from '../core/types/index';
@@ -121,7 +122,7 @@ export class LinkedInProvider implements ISocialProvider, IPublishingProvider {
     };
   }
 
-  async getProfiles(credentials: OAuthCredentials): Promise<SocialProfile[]> {
+  async getProfiles(credentials: OAuthCredentials): Promise<ProviderProfileResult[]> {
     const response = await fetch(this.userInfoUrl, {
       headers: {
         Authorization: `Bearer ${credentials.accessToken}`,
@@ -145,10 +146,13 @@ export class LinkedInProvider implements ISocialProvider, IPublishingProvider {
 
     return [
       {
-        id: data.sub,
-        name: data.name,
-        username: data.email, // LinkedIn OpenID userinfo returns email
-        avatarUrl: data.picture,
+        profile: {
+          id: data.sub,
+          name: data.name,
+          username: data.email, // LinkedIn OpenID userinfo returns email
+          avatarUrl: data.picture,
+          provider: 'linkedin',
+        }
       },
     ];
   }

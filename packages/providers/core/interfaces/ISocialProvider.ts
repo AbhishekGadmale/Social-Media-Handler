@@ -2,6 +2,7 @@ import {
   AuthUrlInput,
   OAuthCredentials,
   SocialProfile,
+  ProviderProfileResult,
   RawAccountMetrics,
   PostRef,
   RawPostMetrics,
@@ -16,7 +17,7 @@ import {
 export interface ISocialProvider {
   getAuthorizationUrl(input: AuthUrlInput): string;
   exchangeAuthorizationCode(input: { code: string; redirectUri: string; codeVerifier?: string }): Promise<OAuthCredentials>;
-  getProfiles(credentials: OAuthCredentials): Promise<SocialProfile[]>;
+  getProfiles(credentials: OAuthCredentials): Promise<ProviderProfileResult[]>;
   getAccountMetrics?(credentials: OAuthCredentials, account: SocialProfile): Promise<RawAccountMetrics>;
   getPostMetrics?(credentials: OAuthCredentials, post: PostRef): Promise<RawPostMetrics>;
   publishPost?(credentials: OAuthCredentials, payload: PublishPayload): Promise<PublishResult>;

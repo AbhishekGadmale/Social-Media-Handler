@@ -24,7 +24,7 @@ describe('Mock Provider via invokeCapability', () => {
     it('succeeds calling required methods via invokeCapability', async () => {
       const provider = new MockFullProvider();
       const profiles = await invokeCapability(provider, 'getProfiles', credentials);
-      expect(profiles[0].id).toBe('mock_user_1');
+      expect(profiles[0].profile.id).toBe('mock_user_1');
     });
   });
 
@@ -55,7 +55,7 @@ describe('Mock Provider via invokeCapability', () => {
       
       const profiles = await invokeCapability(provider, 'getProfiles', credentials);
       expect(profiles.length).toBe(1);
-      expect(profiles[0].username).toBe('mockuser');
+      expect(profiles[0].profile.username).toBe('mockuser');
     });
   });
 });

@@ -2,6 +2,7 @@ import {
   AuthUrlInput,
   OAuthCredentials,
   SocialProfile,
+  ProviderProfileResult,
   RawAccountMetrics,
   CapabilityContext,
   ProviderCapabilities,
@@ -116,7 +117,7 @@ export class YouTubeProvider implements ISocialProvider, IPublishingProvider {
     };
   }
 
-  async getProfiles(credentials: OAuthCredentials): Promise<SocialProfile[]> {
+  async getProfiles(credentials: OAuthCredentials): Promise<ProviderProfileResult[]> {
     const url = new URL(this.channelsUrl);
     url.searchParams.append('part', 'snippet');
     url.searchParams.append('mine', 'true');
@@ -139,9 +140,12 @@ export class YouTubeProvider implements ISocialProvider, IPublishingProvider {
     }
 
     return data.items.map((item: any) => ({
-      id: item.id,
-      name: item.snippet?.title || 'Unknown Channel',
-      avatarUrl: item.snippet?.thumbnails?.default?.url,
+      profile: {
+        id: item.id,
+        name: item.snippet?.title || 'Unknown Channel',
+        avatarUrl: item.snippet?.thumbnails?.default?.url,
+        provider: 'youtube',
+      }
     }));
   }
 
