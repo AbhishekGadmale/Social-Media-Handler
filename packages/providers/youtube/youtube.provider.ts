@@ -144,8 +144,8 @@ export class YouTubeProvider implements ISocialProvider, IPublishingProvider {
         id: item.id,
         name: item.snippet?.title || 'Unknown Channel',
         avatarUrl: item.snippet?.thumbnails?.default?.url,
-        provider: 'youtube',
-      }
+      },
+      provider: 'youtube',
     }));
   }
 

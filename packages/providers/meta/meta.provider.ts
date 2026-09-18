@@ -11,7 +11,20 @@ import { ProviderApiError } from '../core/errors/index';
 export class MetaProvider implements ISocialProvider {
   private readonly version = 'v20.0';
   private readonly baseUrl = 'https://graph.facebook.com';
-  
+
+  private sanitizeErrorMessage(msg: string, literalToken?: string): string {
+    let safe = (msg || '')
+      .replace(/access_token=[^&\s'"]+/g, 'access_token=***')
+      .replace(/client_secret=[^&\s'"]+/g, 'client_secret=***')
+      .replace(/appsecret_proof=[^&\s'"]+/g, 'appsecret_proof=***')
+      .replace(/code=[^&\s'"]+/g, 'code=***');
+    if (literalToken) {
+      // safely replace literal token
+      safe = safe.split(literalToken).join('***');
+    }
+    return safe;
+  }
+
   private async fetchWithTimeout(url: string, options: RequestInit, timeoutMs: number = 10000): Promise<Response> {
     const controller = new AbortController();
     const id = setTimeout(() => controller.abort(), timeoutMs);
@@ -21,7 +34,7 @@ export class MetaProvider implements ISocialProvider {
       return response;
     } catch (err: any) {
       clearTimeout(id);
-      throw new ProviderApiError('Network error during Meta API request: ' + err.message, 0);
+      throw new ProviderApiError('Network error during Meta API request: ' + this.sanitizeErrorMessage(err.message), 0);
     }
   }
 
@@ -113,57 +126,106 @@ export class MetaProvider implements ISocialProvider {
     }
 
     const fields = 'id,name,access_token,picture.type(large),instagram_business_account{id,name,username,profile_picture_url}';
-    const accountsUrl = new URL(`${this.baseUrl}/${this.version}/me/accounts`);
-    accountsUrl.searchParams.append('fields', fields);
-    accountsUrl.searchParams.append('access_token', credentials.accessToken);
-
-    const res = await this.fetchWithTimeout(accountsUrl.toString(), { method: 'GET' });
-    const data = await res.json();
-
-    if (!res.ok) {
-      let safeMessage = data.error?.message || 'Unknown error';
-      safeMessage = safeMessage.replace(credentials.accessToken, '***');
-      throw new ProviderApiError('Failed to fetch user accounts: ' + safeMessage, res.status);
-    }
+    let nextUrl: string | undefined = `${this.baseUrl}/${this.version}/me/accounts?fields=${fields}&access_token=${credentials.accessToken}`;
 
     const profiles: ProviderProfileResult[] = [];
+    const seenFacebookIds = new Set<string>();
+    const seenInstagramIds = new Set<string>();
+    const visitedUrls = new Set<string>();
 
-    if (!data.data || !Array.isArray(data.data)) {
-      return profiles;
-    }
+    let pageCount = 0;
+    const MAX_PAGES = 10;
 
-    for (const page of data.data) {
-      if (page.id && page.name && page.access_token) {
-        profiles.push({
-          profile: {
-            id: page.id,
-            name: page.name,
-            avatarUrl: page.picture?.data?.url,
-            provider: 'FACEBOOK',
-          },
-          credentials: {
-            accessToken: page.access_token,
-            scopes: credentials.scopes,
-          }
-        });
-
-        if (page.instagram_business_account && page.instagram_business_account.id) {
-          const ig = page.instagram_business_account;
-          profiles.push({
-            profile: {
-              id: ig.id,
-              name: ig.name || ig.username || 'Instagram Account',
-              username: ig.username,
-              avatarUrl: ig.profile_picture_url,
-              provider: 'INSTAGRAM',
-            },
-            credentials: {
-              accessToken: page.access_token,
-              scopes: credentials.scopes,
-            }
-          });
-        }
+    while (nextUrl) {
+      if (pageCount >= MAX_PAGES) {
+        throw new ProviderApiError('Maximum pagination limit reached', 400);
       }
+
+      // Domain validation to prevent SSRF
+      let urlObj: URL;
+      try {
+        urlObj = new URL(nextUrl);
+      } catch (err) {
+        throw new ProviderApiError('Invalid pagination URL format', 400);
+      }
+
+      if (urlObj.origin !== this.baseUrl) {
+        throw new ProviderApiError('Invalid pagination URL', 400);
+      }
+
+      // Detect loops safely without token leakage
+      const urlWithoutToken = new URL(nextUrl);
+      urlWithoutToken.searchParams.delete('access_token');
+      const safeUrlStr = urlWithoutToken.toString();
+
+      if (visitedUrls.has(safeUrlStr)) {
+        throw new ProviderApiError('Pagination loop detected', 400);
+      }
+      visitedUrls.add(safeUrlStr);
+      pageCount++;
+
+      const res = await this.fetchWithTimeout(nextUrl, { method: 'GET', redirect: 'error' });
+      const data = await res.json();
+
+      if (!res.ok) {
+        let rawMsg = data.error?.message || 'Unknown error';
+        throw new ProviderApiError('Failed to fetch user accounts: ' + this.sanitizeErrorMessage(rawMsg, credentials.accessToken), res.status);
+      }
+
+      if (!data || typeof data !== 'object') {
+        throw new ProviderApiError('Malformed Meta response: not an object', 500);
+      }
+      if (!data.data || !Array.isArray(data.data)) {
+        throw new ProviderApiError('Malformed Meta response: data is missing or not an array', 500);
+      }
+      if (data.paging && typeof data.paging !== 'object') {
+        throw new ProviderApiError('Malformed Meta response: paging is not an object', 500);
+      }
+      if (data.paging?.next !== undefined && typeof data.paging.next !== 'string') {
+        throw new ProviderApiError('Malformed Meta response: paging.next is not a string', 500);
+      }
+
+      for (const page of data.data) {
+          if (page.id && page.name && page.access_token) {
+            if (!seenFacebookIds.has(page.id)) {
+              seenFacebookIds.add(page.id);
+              profiles.push({
+                profile: {
+                  id: page.id,
+                  name: page.name,
+                  avatarUrl: page.picture?.data?.url,
+                  provider: 'FACEBOOK',
+                },
+                credentials: {
+                  accessToken: page.access_token,
+                  scopes: credentials.scopes,
+                }
+              });
+            }
+
+            if (page.instagram_business_account && page.instagram_business_account.id) {
+              const ig = page.instagram_business_account;
+              if (!seenInstagramIds.has(ig.id)) {
+                seenInstagramIds.add(ig.id);
+                profiles.push({
+                  profile: {
+                    id: ig.id,
+                    name: ig.name || ig.username || 'Instagram Account',
+                    username: ig.username,
+                    avatarUrl: ig.profile_picture_url,
+                    provider: 'INSTAGRAM',
+                  },
+                  credentials: {
+                    accessToken: page.access_token,
+                    scopes: credentials.scopes,
+                  }
+                });
+              }
+            }
+          }
+        }
+
+      nextUrl = data.paging?.next;
     }
 
     return profiles;
@@ -172,11 +234,11 @@ export class MetaProvider implements ISocialProvider {
   async getCapabilities(context: CapabilityContext): Promise<ProviderCapabilities> {
     const capabilities: ProviderCapabilities = ['ACCOUNT_READ'];
     const scopes = context.grantedScopes || [];
-    
+
     if (context.provider === 'FACEBOOK' && scopes.includes('pages_manage_posts')) {
       capabilities.push('POST_PUBLISH');
     }
-    
+
     if (context.provider === 'INSTAGRAM' && scopes.includes('instagram_content_publish')) {
       capabilities.push('POST_PUBLISH');
     }

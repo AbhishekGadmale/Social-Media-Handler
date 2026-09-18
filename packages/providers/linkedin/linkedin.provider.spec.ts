@@ -97,11 +97,12 @@ describe('LinkedInProvider', () => {
 
     const profiles = await provider.getProfiles({ accessToken: 'access-123' });
     expect(profiles).toHaveLength(1);
-    expect(profiles[0]).toEqual({
+    expect(profiles[0].profile).toEqual({
       id: 'urn:li:person:123',
       name: 'John Doe',
       username: 'john@example.com',
       avatarUrl: 'http://example.com/pic.jpg',
+      provider: 'linkedin',
     });
   });
 

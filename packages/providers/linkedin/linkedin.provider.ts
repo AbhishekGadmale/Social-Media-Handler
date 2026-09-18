@@ -2,9 +2,9 @@ import {
   AuthUrlInput,
   OAuthCredentials,
   SocialProfile,
-  ProviderProfileResult,
   CapabilityContext,
   ProviderCapabilities,
+  ProviderProfileResult,
 } from '../core/types/index';
 import { ISocialProvider } from '../core/interfaces/ISocialProvider';
 import { 

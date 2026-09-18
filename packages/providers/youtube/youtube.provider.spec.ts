@@ -113,9 +113,9 @@ describe('YouTubeProvider', () => {
     });
 
     expect(profiles).toHaveLength(1);
-    expect(profiles[0].id).toBe('channel-123');
-    expect(profiles[0].name).toBe('My YouTube Channel');
-    expect(profiles[0].avatarUrl).toBe('http://youtube.com/thumb.jpg');
+    expect(profiles[0].profile.id).toBe('channel-123');
+    expect(profiles[0].profile.name).toBe('My YouTube Channel');
+    expect(profiles[0].profile.avatarUrl).toBe('http://youtube.com/thumb.jpg');
     
     const fetchCall = (global.fetch as any).mock.calls[0];
     expect(fetchCall[0]).toContain('mine=true');
