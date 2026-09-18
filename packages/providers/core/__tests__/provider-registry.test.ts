@@ -46,5 +46,22 @@ describe('ProviderRegistry', () => {
       expect(providerRegistry.get('linkedin')).toBeInstanceOf(LinkedInProvider);
       expect(providerRegistry.get('youtube')).toBeInstanceOf(YouTubeProvider);
     });
+
+    it('should resolve facebook and instagram as isolated MetaProviders with correct capabilities', () => {
+      const facebook = providerRegistry.getPublishingAdapter('facebook');
+      const instagram = providerRegistry.getPublishingAdapter('instagram');
+      const meta = providerRegistry.getPublishingAdapter('meta');
+
+      expect(facebook).toBeDefined();
+      expect(instagram).toBeDefined();
+      expect(meta).toBeDefined();
+
+      expect(facebook).not.toBe(instagram);
+      expect(facebook).not.toBe(meta);
+
+      expect(facebook.getPublishingCapabilities().contentTypes.TEXT_POST.supported).toBe(true);
+      expect(instagram.getPublishingCapabilities().contentTypes.TEXT_POST.supported).toBe(false);
+      expect(meta.getPublishingCapabilities().contentTypes.TEXT_POST.supported).toBe(false);
+    });
   });
 });

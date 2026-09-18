@@ -448,7 +448,6 @@ describe('PublishabilityValidator', () => {
 
   describe('Security Boundaries', () => {
     it('never leaks credential data in validation output', async () => {
-      // Even if provider options contain sensitive stuff (shouldn't happen, but defensive check)
       const variant = makeMockVariant({
         providerOptions: { secretToken: '12345-SECRET', fail: true },
       });
@@ -460,6 +459,76 @@ describe('PublishabilityValidator', () => {
       expect(result.valid).toBe(false);
       expect(jsonStr).not.toContain('12345-SECRET');
       expect(jsonStr).not.toContain('secretToken');
+    });
+  });
+
+  describe('Facebook 8MB Boundary Validation', () => {
+    it('allows exactly 8MB and rejects 8MB + 1 byte using real MetaProvider capabilities', async () => {
+      const facebookAdapter = providerRegistry.getPublishingAdapter('facebook');
+      expect(
+        facebookAdapter.getPublishingCapabilities().contentTypes.IMAGE_POST
+          .maxBytes,
+      ).toBe(8 * 1024 * 1024);
+
+      const exact8MB = 8 * 1024 * 1024;
+      const over8MB = exact8MB + 1;
+
+      const exactVariant = makeMockVariant({
+        socialAccount: {
+          provider: 'facebook',
+          status: SocialAccountStatus.ACTIVE,
+          capabilities: ['POST_PUBLISH'],
+        },
+        post: {
+          media: [
+            {
+              media: {
+                workspaceId: 'ws-1',
+                mimeType: 'image/jpeg',
+                byteSize: exact8MB,
+                status: 'READY',
+              },
+            },
+          ],
+        },
+      });
+
+      const overVariant = makeMockVariant({
+        socialAccount: {
+          provider: 'facebook',
+          status: SocialAccountStatus.ACTIVE,
+          capabilities: ['POST_PUBLISH'],
+        },
+        post: {
+          media: [
+            {
+              media: {
+                workspaceId: 'ws-1',
+                mimeType: 'image/jpeg',
+                byteSize: over8MB,
+                status: 'READY',
+              },
+            },
+          ],
+        },
+      });
+
+      mockPrisma.postPlatformVariant.findFirst.mockResolvedValueOnce(
+        exactVariant,
+      );
+      const resultExact = await validator.validateTarget('ws-1', 'v1');
+      if (!resultExact.valid)
+        console.log('Exact 8MB Validation Failed:', resultExact.issues);
+      expect(resultExact.valid).toBe(true);
+
+      mockPrisma.postPlatformVariant.findFirst.mockResolvedValueOnce(
+        overVariant,
+      );
+      const resultOver = await validator.validateTarget('ws-1', 'v2');
+      expect(resultOver.valid).toBe(false);
+      expect(
+        resultOver.issues.find((i) => i.code === 'MEDIA_TOO_LARGE'),
+      ).toBeDefined();
     });
   });
 });

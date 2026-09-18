@@ -58,6 +58,6 @@ export class ProviderRegistry {
 export const providerRegistry = new ProviderRegistry();
 providerRegistry.register('linkedin', () => new LinkedInProvider());
 providerRegistry.register('youtube', () => new YouTubeProvider());
-providerRegistry.register('facebook', () => new MetaProvider());
-providerRegistry.register('instagram', () => new MetaProvider());
-providerRegistry.register('meta', () => new MetaProvider());
+providerRegistry.register('facebook', () => new MetaProvider('facebook'));
+providerRegistry.register('instagram', () => new MetaProvider('instagram'));
+providerRegistry.register('meta', () => new MetaProvider('meta'));
