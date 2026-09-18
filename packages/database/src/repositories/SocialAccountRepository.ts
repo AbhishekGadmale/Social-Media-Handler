@@ -24,10 +24,11 @@ export class SocialAccountRepository {
       keyVersion: number;
       expiresAt?: Date | null;
       grantedScopes?: string[];
-    }
+    },
+    tx?: Omit<PrismaClient, "$connect" | "$disconnect" | "$on" | "$transaction" | "$use" | "$extends">
   ): Promise<{ account: SocialAccount; isNew: boolean }> {
-    return this.prisma.$transaction(async (tx) => {
-      const existing = await tx.socialAccount.findUnique({
+    const execute = async (client: Omit<PrismaClient, "$connect" | "$disconnect" | "$on" | "$transaction" | "$use" | "$extends">) => {
+      const existing = await client.socialAccount.findUnique({
         where: {
           provider_externalId: {
             provider: accountData.provider,
@@ -38,7 +39,7 @@ export class SocialAccountRepository {
 
       const isNew = !existing;
 
-      const account = await tx.socialAccount.upsert({
+      const account = await client.socialAccount.upsert({
         where: {
           provider_externalId: {
             provider: accountData.provider,
@@ -61,7 +62,7 @@ export class SocialAccountRepository {
         },
       });
 
-        const existingConnection = await tx.socialConnection.findUnique({
+        const existingConnection = await client.socialConnection.findUnique({
           where: { socialAccountId: account.id }
         });
 
@@ -83,7 +84,7 @@ export class SocialAccountRepository {
           updateData.grantedScopes = Array.from(mergedScopes);
         }
 
-        await tx.socialConnection.upsert({
+        await client.socialConnection.upsert({
           where: {
             socialAccountId: account.id,
           },
@@ -104,6 +105,48 @@ export class SocialAccountRepository {
         });
 
       return { account, isNew };
+    };
+
+    return tx ? execute(tx) : this.prisma.$transaction(execute);
+  }
+
+  async upsertManyWithConnection(
+    workspaceId: string,
+    accounts: Array<{
+      accountData: {
+        provider: SocialProvider;
+        externalId: string;
+        name?: string | null;
+        capabilities: string[];
+        status: SocialAccountStatus;
+        id: string;
+      };
+      connectionData: {
+        id: string;
+        encryptedAccessToken: string;
+        accessTokenIv: string;
+        accessTokenAuthTag: string;
+        encryptedRefreshToken?: string | null;
+        refreshTokenIv?: string | null;
+        refreshTokenAuthTag?: string | null;
+        keyVersion: number;
+        expiresAt?: Date | null;
+        grantedScopes?: string[];
+      };
+    }>
+  ): Promise<Array<{ account: SocialAccount; isNew: boolean }>> {
+    return this.prisma.$transaction(async (tx) => {
+      const results: Array<{ account: SocialAccount; isNew: boolean }> = [];
+      for (const item of accounts) {
+        const result = await this.upsertWithConnection(
+          workspaceId,
+          item.accountData,
+          item.connectionData,
+          tx
+        );
+        results.push(result);
+      }
+      return results;
     });
   }
 }

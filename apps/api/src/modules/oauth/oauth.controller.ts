@@ -8,8 +8,10 @@ import {
   Req,
   Res,
   ForbiddenException,
+  NotFoundException,
   ParseUUIDPipe,
   Logger,
+  Body,
 } from '@nestjs/common';
 import { ParseSocialProviderPipe } from './pipes/parse-social-provider.pipe';
 import { OAuthService } from './oauth.service';
@@ -21,6 +23,7 @@ import type { Request, Response } from 'express';
 import { SocialProvider } from '@agency-os/database';
 
 import { OAuthCallbackQueryDto } from './dto/oauth-callback-query.dto';
+import { OAuthDiscoverySelectDto } from './dto/oauth-discovery-select.dto';
 
 import { Throttle } from '@nestjs/throttler';
 import { RateLimitPolicies } from '../core/rate-limit.policies';
@@ -110,14 +113,22 @@ export class OAuthController {
     const redirectUri = `${req.protocol}://${req.get('host')}/api/v1/oauth/${provider.toLowerCase()}/callback`;
 
     try {
-      const { workspaceId, socialAccountId, isNew } =
-        await this.oauthService.handleOAuthCallback(
-          provider,
-          userId,
-          state,
-          code,
-          redirectUri,
+      const result = await this.oauthService.handleOAuthCallback(
+        provider,
+        userId,
+        state,
+        code,
+        redirectUri,
+      );
+
+      if (result.requiresSelection) {
+        const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+        return res.redirect(
+          `${frontendUrl}/${result.workspaceId}/accounts/discovery?id=${result.discoveryId}`,
         );
+      }
+
+      const { workspaceId, socialAccountId, isNew } = result;
 
       this.auditService.logAction({
         action: isNew
@@ -156,5 +167,74 @@ export class OAuthController {
       const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
       return res.redirect(`${frontendUrl}/dashboard?error=oauth_failed`);
     }
+  }
+
+  @Get('v1/workspaces/:workspaceId/oauth/discoveries/:discoveryId')
+  @UseGuards(AuthGuard, WorkspaceGuard, PermissionGuard)
+  @RequirePermission('accounts.connect')
+  async getDiscoverySession(
+    @Param('workspaceId', ParseUUIDPipe) workspaceId: string,
+    @Param('discoveryId', ParseUUIDPipe) discoveryId: string,
+    @Req() req: Request,
+  ) {
+    const userId = req.user!.id;
+    const session = await this.oauthService.readDiscovery(discoveryId);
+    if (
+      !session ||
+      session.userId !== userId ||
+      session.workspaceId !== workspaceId
+    ) {
+      throw new NotFoundException('Discovery session not found or expired');
+    }
+
+    return {
+      id: session.discoveryId,
+      provider: session.provider,
+      profiles: session.profiles.map((p) => ({
+        id: p.profile.id,
+        name: p.profile.name,
+        avatarUrl: p.profile.avatarUrl,
+        provider: p.profile.provider,
+      })),
+    };
+  }
+
+  @Post('v1/workspaces/:workspaceId/oauth/discoveries/:discoveryId/select')
+  @UseGuards(AuthGuard, WorkspaceGuard, PermissionGuard)
+  @RequirePermission('accounts.connect')
+  async selectDiscoveryProfiles(
+    @Param('workspaceId', ParseUUIDPipe) workspaceId: string,
+    @Param('discoveryId', ParseUUIDPipe) discoveryId: string,
+    @Body() dto: OAuthDiscoverySelectDto,
+    @Req() req: Request,
+  ) {
+    const userId = req.user!.id;
+    const { profileIds } = dto;
+
+    const results = await this.oauthService.processDiscoverySelection(
+      discoveryId,
+      workspaceId,
+      userId,
+      profileIds,
+    );
+
+    for (const res of results) {
+      this.auditService.logAction({
+        action: res.isNew
+          ? AuditAction.OAUTH_CONNECTION_SUCCEEDED
+          : AuditAction.OAUTH_RECONNECTED,
+        workspaceId,
+        actorId: userId,
+        targetType: 'SocialAccount',
+        targetId: res.accountId,
+        requestId: (req as any).id || '',
+        metadata: {
+          provider: res.provider,
+          discoveryId,
+        },
+      });
+    }
+
+    return { success: true };
   }
 }

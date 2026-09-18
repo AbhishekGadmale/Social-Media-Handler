@@ -9,14 +9,17 @@ import Redis from 'ioredis';
 import {
   SocialAccountRepository,
   encrypt,
+  decrypt,
   generateId,
   SocialProvider,
+  SocialAccountStatus,
 } from '@agency-os/database';
 import { providerRegistry } from '@agency-os/providers';
 import { OAuthStateSchema } from '@agency-os/shared';
 import crypto from 'node:crypto';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
+import { OAuthCallbackResult, DiscoverySession } from './oauth-discovery.types';
 
 @Injectable()
 export class OAuthService {
@@ -87,13 +90,185 @@ export class OAuthService {
     });
   }
 
+  async storeDiscovery(session: DiscoverySession): Promise<void> {
+    const serialized = JSON.stringify(session);
+    const encrypted = encrypt(serialized);
+    const key = `oauth:discovery:${session.discoveryId}`;
+    await this.redis.set(key, JSON.stringify(encrypted), 'EX', 900);
+  }
+
+  async readDiscovery(discoveryId: string): Promise<DiscoverySession | null> {
+    const key = `oauth:discovery:${discoveryId}`;
+    const dataStr = await this.redis.get(key);
+    if (!dataStr) return null;
+    try {
+      const encrypted = JSON.parse(dataStr);
+      const decrypted = decrypt(encrypted);
+      return JSON.parse(decrypted) as DiscoverySession;
+    } catch {
+      return null;
+    }
+  }
+
+  async claimDiscovery(
+    discoveryId: string,
+    expectedDataStr: string,
+  ): Promise<boolean> {
+    const key = `oauth:discovery:${discoveryId}`;
+    const script = `
+      if redis.call('get', KEYS[1]) == ARGV[1] then
+        return redis.call('del', KEYS[1])
+      else
+        return 0
+      end
+    `;
+    const result = await this.redis.eval(script, 1, key, expectedDataStr);
+    return result === 1;
+  }
+
+  async processDiscoverySelection(
+    discoveryId: string,
+    workspaceId: string,
+    userId: string,
+    profileIds: string[],
+  ): Promise<Array<{ accountId: string; isNew: boolean; provider: string }>> {
+    const key = `oauth:discovery:${discoveryId}`;
+    const dataStr = await this.redis.get(key);
+
+    if (!dataStr) {
+      throw new ForbiddenException(
+        'Discovery session not found or already consumed',
+      );
+    }
+
+    let session: DiscoverySession;
+    try {
+      const encrypted = JSON.parse(dataStr);
+      const decrypted = decrypt(encrypted);
+      session = JSON.parse(decrypted);
+    } catch {
+      throw new ForbiddenException('Invalid discovery session');
+    }
+
+    if (session.userId !== userId || session.workspaceId !== workspaceId) {
+      throw new ForbiddenException('Discovery session ownership mismatch');
+    }
+
+    const claimed = await this.claimDiscovery(discoveryId, dataStr);
+    if (!claimed) {
+      throw new ForbiddenException(
+        'Discovery session was modified or consumed concurrently',
+      );
+    }
+
+    // Now we own it. Verify selected IDs.
+    const selectedProfiles = session.profiles.filter((p) =>
+      profileIds.includes(p.profile.id),
+    );
+    if (selectedProfiles.length === 0) {
+      throw new BadRequestException('No valid profiles selected');
+    }
+
+    const provider = providerRegistry.get(session.provider.toLowerCase());
+    if (!provider) {
+      throw new BadRequestException('Provider not supported');
+    }
+
+    // Prepare batch upsert
+    const accountsToUpsert = [];
+
+    for (const entry of selectedProfiles) {
+      const p = entry.profile;
+      const creds = entry.credentials || session.sharedCredentials;
+
+      const capabilities =
+        (await provider.getCapabilities?.({
+          provider: session.provider,
+          grantedScopes: creds.scopes || [],
+          externalId: p.id,
+        })) || [];
+
+      const encAccess = encrypt(creds.accessToken);
+      let encRefresh = null;
+      if (creds.refreshToken) {
+        encRefresh = encrypt(creds.refreshToken);
+      }
+
+      accountsToUpsert.push({
+        accountData: {
+          id: generateId(),
+          provider: session.provider,
+          externalId: p.id,
+          name: p.name,
+          capabilities,
+          status: SocialAccountStatus.ACTIVE,
+        },
+        connectionData: {
+          id: generateId(),
+          encryptedAccessToken: encAccess.encrypted,
+          accessTokenIv: encAccess.iv,
+          accessTokenAuthTag: encAccess.authTag,
+          encryptedRefreshToken: encRefresh ? encRefresh.encrypted : null,
+          refreshTokenIv: encRefresh ? encRefresh.iv : null,
+          refreshTokenAuthTag: encRefresh ? encRefresh.authTag : null,
+          keyVersion: encAccess.keyVersion,
+          expiresAt: creds.expiresAt,
+          grantedScopes: creds.scopes,
+        },
+      });
+    }
+
+    try {
+      const results = await this.socialAccountRepo.upsertManyWithConnection(
+        workspaceId,
+        accountsToUpsert,
+      );
+
+      // Enqueue sync jobs AFTER successful transaction
+      for (const res of results) {
+        try {
+          await this.syncQueue.add(
+            'sync-account',
+            {
+              socialAccountId: res.account.id,
+              workspaceId,
+            },
+            {
+              attempts: 3,
+              backoff: { type: 'exponential', delay: 1000 },
+              jobId: `initial-sync-${res.account.id}-${Date.now()}`,
+            },
+          );
+        } catch (err) {
+          this.logger.error(
+            `Failed to enqueue initial sync for account ${res.account.id}`,
+            err,
+          );
+        }
+      }
+      return results.map((r) => ({
+        accountId: r.account.id,
+        isNew: r.isNew,
+        provider: session.provider,
+      }));
+    } catch (err) {
+      // Restore on DB failure so user can retry, calculate remaining TTL
+      const remainingTtl =
+        900 - Math.floor((Date.now() - session.createdAt) / 1000);
+      if (remainingTtl > 0) {
+        await this.redis.set(key, dataStr, 'EX', remainingTtl, 'NX');
+      }
+      throw err;
+    }
+  }
+
   async handleOAuthCallback(
     providerName: SocialProvider,
     userId: string,
     state: string,
     code: string,
     redirectUri: string,
-  ): Promise<{ workspaceId: string; socialAccountId: string; isNew: boolean }> {
+  ): Promise<OAuthCallbackResult> {
     const provider = providerRegistry.get(providerName.toLowerCase());
     if (!provider) {
       throw new BadRequestException(
@@ -142,6 +317,22 @@ export class OAuthService {
         `No profiles returned from ${providerName}`,
       );
     }
+
+    if (profiles.length > 1) {
+      const discoveryId = crypto.randomUUID();
+      const session: DiscoverySession = {
+        discoveryId,
+        workspaceId,
+        userId,
+        provider: validProviderEnum,
+        sharedCredentials: credentials,
+        profiles: profiles.map((p) => ({ profile: p })),
+        createdAt: Date.now(),
+      };
+      await this.storeDiscovery(session);
+      return { requiresSelection: true, workspaceId, discoveryId };
+    }
+
     const profile = profiles[0];
 
     // Capabilities
@@ -169,7 +360,7 @@ export class OAuthService {
           externalId: profile.id,
           name: profile.name,
           capabilities,
-          status: 'ACTIVE',
+          status: SocialAccountStatus.ACTIVE,
         },
         {
           id: generateId(),
@@ -207,7 +398,11 @@ export class OAuthService {
       );
     }
 
-    // ... then the service proceeds ...
-    return { workspaceId, socialAccountId: account.id, isNew };
+    return {
+      requiresSelection: false,
+      workspaceId,
+      socialAccountId: account.id,
+      isNew,
+    };
   }
 }
