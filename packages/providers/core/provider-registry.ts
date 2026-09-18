@@ -2,6 +2,7 @@ import { ISocialProvider } from './interfaces/ISocialProvider';
 import { IPublishingProvider } from './interfaces/IPublishingProvider';
 import { LinkedInProvider } from '../linkedin/linkedin.provider';
 import { YouTubeProvider } from '../youtube/youtube.provider';
+import { MetaProvider } from '../meta/meta.provider';
 import { ProviderCapabilityError } from './errors/index';
 
 type ProviderFactory = () => ISocialProvider;
@@ -57,3 +58,6 @@ export class ProviderRegistry {
 export const providerRegistry = new ProviderRegistry();
 providerRegistry.register('linkedin', () => new LinkedInProvider());
 providerRegistry.register('youtube', () => new YouTubeProvider());
+providerRegistry.register('facebook', () => new MetaProvider());
+providerRegistry.register('instagram', () => new MetaProvider());
+providerRegistry.register('meta', () => new MetaProvider());

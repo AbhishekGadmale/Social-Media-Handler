@@ -19,6 +19,7 @@ export interface SocialProfile {
   name: string;
   username?: string;
   avatarUrl?: string;
+  provider?: string;
 }
 
 export interface RawAccountMetrics {
