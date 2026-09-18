@@ -531,4 +531,112 @@ describe('PublishabilityValidator', () => {
       ).toBeDefined();
     });
   });
+
+  describe('Instagram Capability Validation', () => {
+    it('accepts exactly one valid image', async () => {
+      const variant = makeMockVariant({
+        socialAccount: {
+          provider: 'instagram',
+          status: SocialAccountStatus.ACTIVE,
+          capabilities: ['POST_PUBLISH'],
+        },
+        post: {
+          media: [
+            {
+              media: {
+                workspaceId: 'ws-1',
+                mimeType: 'image/jpeg',
+                byteSize: 1000,
+                status: 'READY',
+              },
+            },
+          ],
+        },
+      });
+      mockPrisma.postPlatformVariant.findFirst.mockResolvedValueOnce(variant);
+      const result = await validator.validateTarget('ws-1', 'v1');
+      expect(result.valid).toBe(true);
+    });
+
+    it('rejects multiple images', async () => {
+      const variant = makeMockVariant({
+        socialAccount: {
+          provider: 'instagram',
+          status: SocialAccountStatus.ACTIVE,
+          capabilities: ['POST_PUBLISH'],
+        },
+        post: {
+          media: [
+            {
+              media: {
+                workspaceId: 'ws-1',
+                mimeType: 'image/jpeg',
+                byteSize: 1000,
+                status: 'READY',
+              },
+            },
+            {
+              media: {
+                workspaceId: 'ws-1',
+                mimeType: 'image/jpeg',
+                byteSize: 1000,
+                status: 'READY',
+              },
+            },
+          ],
+        },
+      });
+      mockPrisma.postPlatformVariant.findFirst.mockResolvedValueOnce(variant);
+      const result = await validator.validateTarget('ws-1', 'v1');
+      expect(result.valid).toBe(false);
+      expect(
+        result.issues.find((i) => i.code === 'CONTENT_TYPE_UNSUPPORTED'),
+      ).toBeDefined();
+    });
+
+    it('rejects text-only', async () => {
+      const variant = makeMockVariant({
+        socialAccount: {
+          provider: 'instagram',
+          status: SocialAccountStatus.ACTIVE,
+          capabilities: ['POST_PUBLISH'],
+        },
+        post: { media: [] }, // text-only
+      });
+      mockPrisma.postPlatformVariant.findFirst.mockResolvedValueOnce(variant);
+      const result = await validator.validateTarget('ws-1', 'v1');
+      expect(result.valid).toBe(false);
+      expect(
+        result.issues.find((i) => i.code === 'CONTENT_TYPE_UNSUPPORTED'),
+      ).toBeDefined();
+    });
+
+    it('rejects video', async () => {
+      const variant = makeMockVariant({
+        socialAccount: {
+          provider: 'instagram',
+          status: SocialAccountStatus.ACTIVE,
+          capabilities: ['POST_PUBLISH'],
+        },
+        post: {
+          media: [
+            {
+              media: {
+                workspaceId: 'ws-1',
+                mimeType: 'video/mp4',
+                byteSize: 1000,
+                status: 'READY',
+              },
+            },
+          ],
+        },
+      });
+      mockPrisma.postPlatformVariant.findFirst.mockResolvedValueOnce(variant);
+      const result = await validator.validateTarget('ws-1', 'v1');
+      expect(result.valid).toBe(false);
+      expect(
+        result.issues.find((i) => i.code === 'CONTENT_TYPE_UNSUPPORTED'),
+      ).toBeDefined();
+    });
+  });
 });

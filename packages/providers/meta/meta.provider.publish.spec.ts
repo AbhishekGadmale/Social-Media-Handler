@@ -91,22 +91,74 @@ describe("MetaProvider Publishing", () => {
       expect(options.body).toContain("access_token=page_token_1");
     });
 
-    it("encoded Page ID", async () => {
-      (global.fetch as any).mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ id: "123" }),
+    describe("Facebook Endpoint Construction Regression", () => {
+      it("ordinary Page ID produces /<page-id>/feed", async () => {
+        (global.fetch as any).mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({ id: "123" }),
+        });
+        await provider.publish(
+          { accessToken: "t" },
+          {
+            attemptId: "1",
+            targetId: "2",
+            workspaceId: "3",
+            externalAccountId: "page_456",
+            content: "C",
+            providerOptions: {},
+          },
+        );
+        expect((global.fetch as any).mock.calls[0][0]).toContain(
+          "/v20.0/page_456/feed",
+        );
       });
-      const input = {
-        attemptId: "1",
-        targetId: "2",
-        workspaceId: "3",
-        externalAccountId: "../../malicious",
-        content: "C",
-        providerOptions: {},
-      };
-      await provider.publish({ accessToken: "t" }, input);
-      const url = (global.fetch as any).mock.calls[0][0];
-      expect(url).toContain("..%2F..%2Fmalicious/feed");
+
+      it("malicious/special Page ID is encoded exactly ONCE for text /feed", async () => {
+        (global.fetch as any).mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({ id: "123" }),
+        });
+        await provider.publish(
+          { accessToken: "t" },
+          {
+            attemptId: "1",
+            targetId: "2",
+            workspaceId: "3",
+            externalAccountId: "../../malicious",
+            content: "C",
+            providerOptions: {},
+          },
+        );
+        expect((global.fetch as any).mock.calls[0][0]).toContain(
+          "/v20.0/..%2F..%2Fmalicious/feed",
+        );
+      });
+
+      it("malicious/special Page ID is encoded exactly ONCE for image /photos", async () => {
+        (global.fetch as any).mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({ id: "123" }),
+        });
+        await provider.publish(
+          { accessToken: "t" },
+          {
+            attemptId: "1",
+            targetId: "2",
+            workspaceId: "3",
+            externalAccountId: "../../malicious",
+            content: "C",
+            providerOptions: {},
+            media: [{ key: "img", mimeType: "image/jpeg", sizeBytes: 100 }],
+          },
+          {
+            getStream: async () =>
+              import("stream").then((s) => s.Readable.from([""])) as any,
+          },
+        );
+        expect((global.fetch as any).mock.calls[0][0]).toContain(
+          "/v20.0/..%2F..%2Fmalicious/photos",
+        );
+      });
     });
 
     it("text redirect: error test", async () => {
@@ -310,9 +362,7 @@ describe("MetaProvider Publishing", () => {
       };
       const result = await igProvider.publish({ accessToken: "t" }, input);
       expect(result.success).toBe(false);
-      if (!result.success) {
-        expect(result.failureCode).toBe("UNSUPPORTED_PROVIDER");
-      }
+      expect((result as any).failureCode).toBe("MEDIA_REQUIRED");
     });
 
     it("Meta alias cannot execute Facebook publish", async () => {
@@ -321,15 +371,34 @@ describe("MetaProvider Publishing", () => {
         attemptId: "1",
         targetId: "2",
         workspaceId: "3",
-        externalAccountId: "pageId",
-        content: "C",
+        externalAccountId: "page123",
+        content: "test",
         providerOptions: {},
       };
-      const result = await metaProvider.publish({ accessToken: "t" }, input);
+      const result = await metaProvider.publish(
+        { accessToken: "token" },
+        input,
+      );
       expect(result.success).toBe(false);
-      if (!result.success) {
-        expect(result.failureCode).toBe("UNSUPPORTED_PROVIDER");
-      }
+      expect((result as any).failureCode).toBe("UNSUPPORTED_PROVIDER");
+    });
+
+    it("Instagram alias cannot execute Facebook text publish", async () => {
+      const metaProvider = new MetaProvider("instagram");
+      const input = {
+        attemptId: "1",
+        targetId: "2",
+        workspaceId: "3",
+        externalAccountId: "page123",
+        content: "test", // text only, handled by FB branch but rejected by IG branch
+        providerOptions: {},
+      };
+      const result = await metaProvider.publish(
+        { accessToken: "token" },
+        input,
+      );
+      expect(result.success).toBe(false);
+      expect((result as any).failureCode).toBe("MEDIA_REQUIRED"); // Fails IG logic, never reaches FB
     });
   });
 
@@ -513,6 +582,187 @@ describe("MetaProvider Publishing", () => {
       );
       expect((result as any).message).not.toContain("real_secret_here");
       expect((result as any).message).toContain("client_secret=***");
+    });
+  });
+});
+
+describe("Instagram Provider Publishing", () => {
+  let provider: MetaProvider;
+
+  beforeEach(() => {
+    provider = new MetaProvider("instagram");
+    vi.clearAllMocks();
+  });
+
+  describe("Capabilities", () => {
+    it("supports IMAGE_POST only", () => {
+      const caps = provider.getPublishingCapabilities();
+      expect(caps.contentTypes.IMAGE_POST.supported).toBe(true);
+      expect(caps.contentTypes.IMAGE_POST.maxBytes).toBe(8 * 1024 * 1024);
+      expect(caps.contentTypes.TEXT_POST.supported).toBe(false);
+      expect(caps.contentTypes.VIDEO_POST.supported).toBe(false);
+      expect(caps.contentTypes.MULTI_IMAGE_POST.supported).toBe(false);
+      expect(caps.contentTypes.DOCUMENT_POST.supported).toBe(false);
+    });
+  });
+
+  describe("Publish Flow", () => {
+    it("should throw VALIDATION if not exactly one media item", async () => {
+      const result = await provider.publish(
+        { accessToken: "token" },
+        {
+          attemptId: "1",
+          targetId: "t",
+          workspaceId: "w",
+          externalAccountId: "ig123",
+          content: "hello",
+          providerOptions: {},
+        },
+      );
+      expect(result.success).toBe(false);
+      expect((result as any).failureCode).toBe("MEDIA_REQUIRED");
+    });
+
+    it("should throw TRANSIENT if storage lacks getSignedReadUrl", async () => {
+      const mediaSource = {
+        getStream: async () => ({}) as any,
+      };
+      const result = await provider.publish(
+        { accessToken: "token" },
+        {
+          attemptId: "1",
+          targetId: "t",
+          workspaceId: "w",
+          externalAccountId: "ig123",
+          content: "hello",
+          media: [{ mimeType: "image/jpeg", sizeBytes: 1000, key: "img" }],
+          providerOptions: {},
+        },
+        mediaSource,
+      );
+      expect(result.success).toBe(false);
+      expect((result as any).failureCode).toBe("NO_SIGNED_URL_SUPPORT");
+    });
+
+    it("should execute 2-step container flow successfully", async () => {
+      const mediaSource = {
+        getStream: async () => ({}) as any,
+        getSignedReadUrl: async () =>
+          "https://signed-url.example.com/img?sig=123",
+      };
+
+      let callCount = 0;
+      (global.fetch as any).mockImplementation(async (url: string) => {
+        callCount++;
+        if (callCount === 1) {
+          expect(url).toContain("https://graph.facebook.com/v20.0/ig123/media");
+          expect(url).toContain(
+            "image_url=https%3A%2F%2Fsigned-url.example.com%2Fimg%3Fsig%3D123",
+          );
+          expect(url).toContain("caption=hello");
+          expect(url).toContain("access_token=intended_account_token");
+          return { ok: true, json: async () => ({ id: "container-999" }) };
+        } else if (callCount === 2) {
+          expect(url).toContain(
+            "https://graph.facebook.com/v20.0/ig123/media_publish",
+          );
+          expect(url).toContain("creation_id=container-999");
+          expect(url).toContain("access_token=intended_account_token");
+          return { ok: true, json: async () => ({ id: "final-post-123" }) };
+        }
+      });
+
+      const result = await provider.publish(
+        { accessToken: "intended_account_token" },
+        {
+          attemptId: "1",
+          targetId: "t",
+          workspaceId: "w",
+          externalAccountId: "ig123",
+          content: "hello",
+          media: [{ mimeType: "image/jpeg", sizeBytes: 1000, key: "img" }],
+          providerOptions: {},
+        },
+        mediaSource,
+      );
+
+      expect(callCount).toBe(2);
+      expect(result.success).toBe(true);
+      expect((result as any).externalPostId).toBe("final-post-123");
+      expect((result as any).processingState).toBe("PUBLISHED");
+    });
+
+    it("encodes Instagram ID exactly once", async () => {
+      const mediaSource = {
+        getStream: async () => ({}) as any,
+        getSignedReadUrl: async () => "http://url",
+      };
+      (global.fetch as any).mockImplementation(async (url: string) => {
+        if (url.includes("/media?"))
+          return { ok: true, json: async () => ({ id: "c999" }) };
+        if (url.includes("/media_publish?"))
+          return { ok: true, json: async () => ({ id: "f123" }) };
+      });
+      await provider.publish(
+        { accessToken: "token" },
+        {
+          attemptId: "1",
+          targetId: "t",
+          workspaceId: "w",
+          externalAccountId: "../../ig_malicious",
+          content: "hello",
+          media: [{ mimeType: "image/jpeg", sizeBytes: 1000, key: "img" }],
+          providerOptions: {},
+        },
+        mediaSource,
+      );
+      const url1 = (global.fetch as any).mock.calls[0][0];
+      const url2 = (global.fetch as any).mock.calls[1][0];
+      expect(url1).toContain("/v20.0/..%2F..%2Fig_malicious/media");
+      expect(url2).toContain("/v20.0/..%2F..%2Fig_malicious/media_publish");
+    });
+  });
+
+  describe("Security and Error Leakage", () => {
+    it("should never leak signed URL or credentials in errors", async () => {
+      const mediaSource = {
+        getStream: async () => ({}) as any,
+        getSignedReadUrl: async () =>
+          "https://signed.com/img?sig=super_secret_signature",
+      };
+
+      (global.fetch as any).mockResolvedValueOnce({
+        ok: false,
+        status: 400,
+        json: async () => ({
+          error: {
+            message:
+              "Failed with token access_token=fake_access_token and url https://signed.com/img?sig=super_secret_signature and secret client_secret=secret_app_key",
+            code: 190,
+          },
+        }),
+      });
+
+      const result = await provider.publish(
+        { accessToken: "fake_access_token" },
+        {
+          attemptId: "1",
+          targetId: "t",
+          workspaceId: "w",
+          externalAccountId: "ig123",
+          content: "hello",
+          media: [{ mimeType: "image/jpeg", sizeBytes: 1000, key: "img" }],
+          providerOptions: {},
+        },
+        mediaSource,
+      );
+
+      expect(result.success).toBe(false);
+      const msg = (result as any).message || "";
+      expect(msg).not.toContain("fake_access_token");
+      expect(msg).not.toContain("super_secret_signature");
+      expect(msg).not.toContain("secret_app_key");
+      expect(msg).toContain("***");
     });
   });
 });

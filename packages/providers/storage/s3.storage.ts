@@ -63,6 +63,14 @@ export class S3ObjectStorage implements IObjectStorage, IMediaContentSource {
     };
   }
 
+  async getSignedReadUrl(storageKey: string, ttlSeconds: number = 300): Promise<string> {
+    const command = new GetObjectCommand({
+      Bucket: this.bucket,
+      Key: storageKey,
+    });
+    return getSignedUrl(this.publicClient, command, { expiresIn: ttlSeconds });
+  }
+
   async headObject(storageKey: string): Promise<ObjectMetadata> {
     try {
       const command = new HeadObjectCommand({

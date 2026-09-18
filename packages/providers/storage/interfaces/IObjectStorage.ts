@@ -18,4 +18,5 @@ export interface IObjectStorage {
   headObject(storageKey: string): Promise<ObjectMetadata>;
   copyObject(sourceKey: string, destinationKey: string): Promise<void>;
   deleteObject(storageKey: string): Promise<void>;
+  getSignedReadUrl?(storageKey: string, ttlSeconds: number): Promise<string>;
 }

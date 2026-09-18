@@ -7,4 +7,5 @@ export interface MediaStreamOptions {
 
 export interface IMediaContentSource {
   getStream(storageKey: string, options?: MediaStreamOptions): Promise<Readable>;
+  getSignedReadUrl?(storageKey: string, ttlSeconds: number): Promise<string>;
 }

@@ -21,6 +21,7 @@ import { IMediaContentSource } from "../core/interfaces/IMediaContentSource";
 export class MetaProvider implements ISocialProvider, IPublishingProvider {
   private readonly version = "v20.0";
   private readonly baseUrl = "https://graph.facebook.com";
+  private readonly INSTAGRAM_SIGNED_URL_TTL_SECONDS = 300;
 
   constructor(private readonly providerAlias: string = "meta") {}
 
@@ -29,7 +30,10 @@ export class MetaProvider implements ISocialProvider, IPublishingProvider {
       .replace(/access_token=[^&\s'"]+/g, "access_token=***")
       .replace(/client_secret=[^&\s'"]+/g, "client_secret=***")
       .replace(/appsecret_proof=[^&\s'"]+/g, "appsecret_proof=***")
-      .replace(/code=[^&\s'"]+/g, "code=***");
+      .replace(/code=[^&\s'"]+/g, "code=***")
+      .replace(/sig=[^&\s'"]+/g, "sig=***")
+      .replace(/X-Amz-Signature=[^&\s'"]+/g, "X-Amz-Signature=***")
+      .replace(/X-Amz-Credential=[^&\s'"]+/g, "X-Amz-Credential=***");
     if (literalToken) {
       // safely replace literal token
       safe = safe.split(literalToken).join("***");
@@ -342,7 +346,26 @@ export class MetaProvider implements ISocialProvider, IPublishingProvider {
       };
     }
 
-    // Default for INSTAGRAM, META, unknown alias
+    if (this.providerAlias === "instagram") {
+      return {
+        contentTypes: {
+          TEXT_POST: { supported: false },
+          IMAGE_POST: {
+            supported: true,
+            maxCount: 1,
+            maxBytes: 8 * 1024 * 1024,
+            mimeTypes: ["image/jpeg"],
+          },
+          MULTI_IMAGE_POST: { supported: false },
+          VIDEO_POST: { supported: false },
+          LINK_POST: { supported: false },
+          DOCUMENT_POST: { supported: false },
+        },
+        features: ["MESSAGE"],
+      };
+    }
+
+    // Default for META, unknown alias
     return {
       contentTypes: {
         TEXT_POST: { supported: false },
@@ -365,7 +388,10 @@ export class MetaProvider implements ISocialProvider, IPublishingProvider {
     input: ProviderPublicationInput,
     mediaSource?: IMediaContentSource,
   ): Promise<ProviderPublishResult> {
-    if (this.providerAlias !== "facebook") {
+    if (
+      this.providerAlias !== "facebook" &&
+      this.providerAlias !== "instagram"
+    ) {
       return {
         success: false,
         failureCategory: "VALIDATION",
@@ -379,10 +405,15 @@ export class MetaProvider implements ISocialProvider, IPublishingProvider {
         success: false,
         failureCategory: "AUTH_REQUIRED",
         failureCode: "NO_ACCESS_TOKEN",
-        message: "No access token available for Facebook Page",
+        message: "No access token available",
       };
     }
 
+    if (this.providerAlias === "instagram") {
+      return this.publishInstagram(credentials, input, mediaSource);
+    }
+
+    // --- Facebook Page Publishing ---
     const pageId = input.externalAccountId;
     if (!pageId) {
       return {
@@ -529,6 +560,144 @@ export class MetaProvider implements ISocialProvider, IPublishingProvider {
       return {
         success: false,
         failureCategory: "UNKNOWN_RESULT",
+        failureCode: "NETWORK_ERROR",
+        message: this.sanitizeErrorMessage(
+          err.message,
+          credentials.accessToken,
+        ),
+      };
+    }
+  }
+
+  private async publishInstagram(
+    credentials: ProviderExecutionCredentials,
+    input: ProviderPublicationInput,
+    mediaSource?: IMediaContentSource,
+  ): Promise<ProviderPublishResult> {
+    const igId = encodeURIComponent(input.externalAccountId);
+    if (!igId) {
+      return {
+        success: false,
+        failureCategory: "VALIDATION",
+        failureCode: "NO_IG_ID",
+        message: "No Instagram ID provided",
+      };
+    }
+    const hasMedia = input.media && input.media.length > 0;
+    if (!hasMedia || !input.media![0]) {
+      return {
+        success: false,
+        failureCategory: "VALIDATION",
+        failureCode: "MEDIA_REQUIRED",
+        message: "Instagram requires exactly one image",
+      };
+    }
+    if (input.media!.length > 1) {
+      return {
+        success: false,
+        failureCategory: "VALIDATION",
+        failureCode: "TOO_MANY_MEDIA",
+        message: "Instagram single-image only",
+      };
+    }
+    if (!mediaSource || !mediaSource.getSignedReadUrl) {
+      return {
+        success: false,
+        failureCategory: "TRANSIENT",
+        failureCode: "NO_SIGNED_URL_SUPPORT",
+        message: "Storage does not support getSignedReadUrl",
+      };
+    }
+
+    const media = input.media![0];
+    let imageUrl: string;
+    try {
+      imageUrl = await mediaSource.getSignedReadUrl(
+        media.key!,
+        this.INSTAGRAM_SIGNED_URL_TTL_SECONDS,
+      );
+    } catch (e: any) {
+      return {
+        success: false,
+        failureCategory: "TRANSIENT",
+        failureCode: "SIGNED_URL_FAILED",
+        message: `Failed to generate signed URL: ${e.message}`,
+      };
+    }
+
+    // Step 1: Create Container
+    let creationId: string;
+    try {
+      const createParams = new URLSearchParams();
+      createParams.append("access_token", credentials.accessToken);
+      createParams.append("image_url", imageUrl);
+      if (input.content) {
+        createParams.append("caption", input.content);
+      }
+      const createUrl = `${this.baseUrl}/${this.version}/${igId}/media?${createParams.toString()}`;
+
+      const res = await this.fetchWithTimeout(createUrl, {
+        method: "POST",
+        redirect: "error",
+      });
+      const data = await res.json();
+      if (!res.ok || !data.id) {
+        return this.handleGraphError(res.status, data, credentials.accessToken);
+      }
+      creationId = data.id;
+    } catch (err: any) {
+      if (err.message === "redirect") {
+        return {
+          success: false,
+          failureCategory: "VALIDATION",
+          failureCode: "UNEXPECTED_REDIRECT",
+          message: "Meta returned unexpected redirect",
+        };
+      }
+      return {
+        success: false,
+        failureCategory: "TRANSIENT",
+        failureCode: "NETWORK_ERROR",
+        message: this.sanitizeErrorMessage(
+          err.message,
+          credentials.accessToken,
+        ),
+      };
+    }
+
+    // Step 2: Publish Container
+    try {
+      const publishParams = new URLSearchParams();
+      publishParams.append("access_token", credentials.accessToken);
+      publishParams.append("creation_id", creationId);
+      const publishUrl = `${this.baseUrl}/${this.version}/${igId}/media_publish?${publishParams.toString()}`;
+
+      const res = await this.fetchWithTimeout(publishUrl, {
+        method: "POST",
+        redirect: "error",
+      });
+      const data = await res.json();
+      if (!res.ok || !data.id) {
+        return this.handleGraphError(res.status, data, credentials.accessToken);
+      }
+
+      return {
+        success: true,
+        externalPostId: data.id,
+        processingState: "PUBLISHED",
+      };
+    } catch (err: any) {
+      if (err.message === "redirect") {
+        return {
+          success: false,
+          failureCategory: "VALIDATION",
+          failureCode: "UNEXPECTED_REDIRECT",
+          message: "Meta returned unexpected redirect",
+        };
+      }
+      return {
+        success: false,
+        failureCategory: "TRANSIENT",
         failureCode: "NETWORK_ERROR",
         message: this.sanitizeErrorMessage(
           err.message,
