@@ -13,7 +13,7 @@ import { HealthModule } from './modules/health/health.module';
 import { PublishingModule } from './modules/publishing/publishing.module';
 import { MediaModule } from './modules/media/media.module';
 
-import { APP_GUARD } from '@nestjs/core';
+import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { ThrottlerGuard } from '@nestjs/throttler';
 import { RedisThrottlerStorage } from './modules/core/redis-throttler.storage';
 import { RateLimitPolicies } from './modules/core/rate-limit.policies';
@@ -22,6 +22,7 @@ import type Redis from 'ioredis';
 import { LoggerModule } from 'nestjs-pino';
 import { loggerConfig } from './modules/core/logger.config';
 import { TerminusModule } from '@nestjs/terminus';
+import { ExecutionMetadataInterceptor } from './modules/core/interceptors/execution-metadata.interceptor';
 
 @Module({
   imports: [
@@ -59,6 +60,10 @@ import { TerminusModule } from '@nestjs/terminus';
     {
       provide: APP_GUARD,
       useClass: ThrottlerGuard,
+    },
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: ExecutionMetadataInterceptor,
     },
   ],
 })

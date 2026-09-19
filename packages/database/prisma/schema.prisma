@@ -184,6 +184,7 @@ model PostPlatformVariant {
 
   dispatchVersion         Int       @default(0)
   providerProcessingState String?
+  executionMetadata       Json?
 
   scheduledAt         DateTime?
   queuedAt            DateTime?
