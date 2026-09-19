@@ -1,11 +1,16 @@
-import { CallHandler, ExecutionContext, Injectable, NestInterceptor } from '@nestjs/common';
+import {
+  CallHandler,
+  ExecutionContext,
+  Injectable,
+  NestInterceptor,
+} from '@nestjs/common';
 import { Observable } from 'rxjs';
 import { map } from 'rxjs/operators';
 
 @Injectable()
 export class ExecutionMetadataInterceptor implements NestInterceptor {
   intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
-    return next.handle().pipe(map(data => this.stripMetadata(data)));
+    return next.handle().pipe(map((data) => this.stripMetadata(data)));
   }
 
   private isPlainObject(value: any): boolean {
@@ -20,7 +25,7 @@ export class ExecutionMetadataInterceptor implements NestInterceptor {
     }
 
     if (Array.isArray(data)) {
-      return data.map(item => this.stripMetadata(item));
+      return data.map((item) => this.stripMetadata(item));
     }
 
     if (this.isPlainObject(data)) {

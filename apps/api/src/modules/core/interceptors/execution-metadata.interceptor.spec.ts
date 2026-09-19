@@ -17,7 +17,7 @@ describe('ExecutionMetadataInterceptor', () => {
       const callHandler: any = { handle: () => of(data) };
       interceptor.intercept({} as any, callHandler).subscribe({
         next: resolve,
-        error: reject
+        error: reject,
       });
     });
   };
@@ -43,7 +43,7 @@ describe('ExecutionMetadataInterceptor', () => {
   it('strips executionMetadata recursively', async () => {
     const data = {
       variants: [{ executionMetadata: { version: 1 } }],
-      nested: { executionMetadata: { version: 1 } }
+      nested: { executionMetadata: { version: 1 } },
     };
     const result = await runInterceptor(data);
     expect(result.variants[0].executionMetadata).toBeUndefined();
@@ -60,7 +60,7 @@ describe('ExecutionMetadataInterceptor', () => {
     const buffer = Buffer.from('test');
     const data = { date, buffer, executionMetadata: {} };
     const result = await runInterceptor(data);
-    
+
     expect(result.date).toBeInstanceOf(Date);
     expect(result.date.getTime()).toBe(date.getTime());
     expect(Buffer.isBuffer(result.buffer)).toBe(true);

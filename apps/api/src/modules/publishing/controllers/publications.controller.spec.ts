@@ -1,3 +1,4 @@
+import { vi } from 'vitest';
 import { PublicationsController } from './publications.controller';
 import { ExecutionMetadataInterceptor } from '../../core/interceptors/execution-metadata.interceptor';
 import { ValidationPipe } from '@nestjs/common';
@@ -11,12 +12,12 @@ describe('PublicationsController Security & Interceptor', () => {
     addTarget: vi.fn().mockResolvedValue({
       id: 'variant-1',
       status: 'QUEUED',
-      executionMetadata: { version: 1, operationId: 'internal' }
+      executionMetadata: { version: 1, operationId: 'internal' },
     }),
     updateTarget: vi.fn().mockResolvedValue({
       id: 'variant-1',
       status: 'QUEUED',
-      executionMetadata: { version: 1, operationId: 'internal' }
+      executionMetadata: { version: 1, operationId: 'internal' },
     }),
   } as any;
 
@@ -26,32 +27,49 @@ describe('PublicationsController Security & Interceptor', () => {
   });
 
   it('rejects executionMetadata from AddPublicationTargetDto injection', async () => {
-    const pipe = new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true });
-    
+    const pipe = new ValidationPipe({
+      whitelist: true,
+      forbidNonWhitelisted: true,
+    });
+
     const maliciousPayload = {
       socialAccountId: '33333333-3333-3333-3333-333333333333',
       content: 'Hello',
-      executionMetadata: { version: 1, operationId: 'attacker-uuid' }
+      executionMetadata: { version: 1, operationId: 'attacker-uuid' },
     };
 
     let error: any;
     try {
-      await pipe.transform(maliciousPayload, { type: 'body', metatype: AddPublicationTargetDto });
+      await pipe.transform(maliciousPayload, {
+        type: 'body',
+        metatype: AddPublicationTargetDto,
+      });
     } catch (e) {
       error = e;
     }
-    
+
     expect(error).toBeDefined();
-    expect(error.response.message).toContain('property executionMetadata should not exist');
+    expect(error.response.message).toContain(
+      'property executionMetadata should not exist',
+    );
   });
 
   it('does not leak executionMetadata in controller response via interceptor', async () => {
-    const res = await controller.addTarget('workspace-1', { id: 'user-1' } as any, 'post-1', { socialAccountId: '33333333-3333-3333-3333-333333333333' } as AddPublicationTargetDto);
-    
+    const res = await controller.addTarget(
+      'workspace-1',
+      { id: 'user-1' } as any,
+      'post-1',
+      {
+        socialAccountId: '33333333-3333-3333-3333-333333333333',
+      },
+    );
+
     const { of } = await import('rxjs');
     const callHandler: any = { handle: () => of(res) };
-    const intercepted: any = await new Promise((resolve) => interceptor.intercept({} as any, callHandler).subscribe(resolve));
-    
+    const intercepted: any = await new Promise((resolve) =>
+      interceptor.intercept({} as any, callHandler).subscribe(resolve),
+    );
+
     expect(intercepted.id).toBe('variant-1');
     expect(intercepted.status).toBe('QUEUED');
     expect(intercepted.executionMetadata).toBeUndefined(); // Stripped!

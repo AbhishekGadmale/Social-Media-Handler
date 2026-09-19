@@ -386,6 +386,9 @@ importers:
 
   packages/database:
     dependencies:
+      '@agency-os/shared':
+        specifier: workspace:*
+        version: link:../shared
       '@prisma/client':
         specifier: ^5.0.0
         version: 5.22.0(prisma@5.22.0)
@@ -426,6 +429,9 @@ importers:
 
   packages/providers:
     dependencies:
+      '@agency-os/shared':
+        specifier: workspace:*
+        version: link:../shared
       '@aws-sdk/client-s3':
         specifier: ^3.1123.0
         version: 3.1123.0
