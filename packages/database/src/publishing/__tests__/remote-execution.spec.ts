@@ -126,7 +126,7 @@ describe('ExecutionMetadataRepository Transitions', () => {
       const meta = parseMeta(getVariant(start));
       const t1 = await repo.transitionOperation(testVariantId, meta.operationId, 'INITIATED', 'CONTAINER_CREATED', getVariant(start).dispatchVersion, { containerId: 'c' });
       
-      const res = await repo.transitionOperation(testVariantId, meta.operationId, 'CONTAINER_CREATED', 'PROCESSING_REMOTE', getVariant(t1).dispatchVersion);
+      const res = await repo.transitionOperation(testVariantId, meta.operationId, 'CONTAINER_CREATED', 'PROCESSING_REMOTE', getVariant(t1, { nextCheckAt: new Date().toISOString(), lastCheckedAt: new Date().toISOString() }).dispatchVersion, { nextCheckAt: new Date().toISOString(), lastCheckedAt: new Date().toISOString() });
       expect(res.type).toBe(ExecutionTransitionResultType.SUCCESS);
     });
 
@@ -139,21 +139,21 @@ describe('ExecutionMetadataRepository Transitions', () => {
       expect(res.type).toBe(ExecutionTransitionResultType.SUCCESS);
     });
 
-    it('12. PROCESSING_REMOTE -> PROCESSING_REMOTE is rejected', async () => {
+    it('12. PROCESSING_REMOTE -> PROCESSING_REMOTE succeeds', async () => {
       const start = await repo.startOperation(testVariantId, 'INSTAGRAM');
       const meta = parseMeta(getVariant(start));
       const t1 = await repo.transitionOperation(testVariantId, meta.operationId, 'INITIATED', 'CONTAINER_CREATED', getVariant(start).dispatchVersion, { containerId: 'c' });
-      const t2 = await repo.transitionOperation(testVariantId, meta.operationId, 'CONTAINER_CREATED', 'PROCESSING_REMOTE', getVariant(t1).dispatchVersion);
+      const t2 = await repo.transitionOperation(testVariantId, meta.operationId, 'CONTAINER_CREATED', 'PROCESSING_REMOTE', getVariant(t1, { nextCheckAt: new Date().toISOString(), lastCheckedAt: new Date().toISOString() }).dispatchVersion, { nextCheckAt: new Date().toISOString(), lastCheckedAt: new Date().toISOString() });
       
-      const res = await repo.transitionOperation(testVariantId, meta.operationId, 'PROCESSING_REMOTE', 'PROCESSING_REMOTE', getVariant(t2).dispatchVersion);
-      expect(res.type).toBe(ExecutionTransitionResultType.ILLEGAL_TRANSITION);
+      const res = await repo.transitionOperation(testVariantId, meta.operationId, 'PROCESSING_REMOTE', 'PROCESSING_REMOTE', getVariant(t2, { nextCheckAt: new Date().toISOString(), lastCheckedAt: new Date().toISOString() }).dispatchVersion, { nextCheckAt: new Date().toISOString(), lastCheckedAt: new Date().toISOString() });
+      expect(res.type).toBe(ExecutionTransitionResultType.SUCCESS);
     });
 
     it('13. PROCESSING_REMOTE -> PUBLISH_REQUESTED succeeds & 14. publishRequestedAt generated', async () => {
       const start = await repo.startOperation(testVariantId, 'INSTAGRAM');
       const meta = parseMeta(getVariant(start));
       const t1 = await repo.transitionOperation(testVariantId, meta.operationId, 'INITIATED', 'CONTAINER_CREATED', getVariant(start).dispatchVersion, { containerId: 'c' });
-      const t2 = await repo.transitionOperation(testVariantId, meta.operationId, 'CONTAINER_CREATED', 'PROCESSING_REMOTE', getVariant(t1).dispatchVersion);
+      const t2 = await repo.transitionOperation(testVariantId, meta.operationId, 'CONTAINER_CREATED', 'PROCESSING_REMOTE', getVariant(t1, { nextCheckAt: new Date().toISOString(), lastCheckedAt: new Date().toISOString() }).dispatchVersion, { nextCheckAt: new Date().toISOString(), lastCheckedAt: new Date().toISOString() });
       
       const res = await repo.transitionOperation(testVariantId, meta.operationId, 'PROCESSING_REMOTE', 'PUBLISH_REQUESTED', getVariant(t2).dispatchVersion);
       expect(res.type).toBe(ExecutionTransitionResultType.SUCCESS);
@@ -241,7 +241,7 @@ describe('ExecutionMetadataRepository Transitions', () => {
       const start = await repo.startOperation(testVariantId, 'INSTAGRAM');
       const meta = parseMeta(getVariant(start));
       const t1 = await repo.transitionOperation(testVariantId, meta.operationId, 'INITIATED', 'CONTAINER_CREATED', getVariant(start).dispatchVersion, { containerId: 'retain_c' });
-      const t2 = await repo.transitionOperation(testVariantId, meta.operationId, 'CONTAINER_CREATED', 'PROCESSING_REMOTE', getVariant(t1).dispatchVersion);
+      const t2 = await repo.transitionOperation(testVariantId, meta.operationId, 'CONTAINER_CREATED', 'PROCESSING_REMOTE', getVariant(t1, { nextCheckAt: new Date().toISOString(), lastCheckedAt: new Date().toISOString() }).dispatchVersion, { nextCheckAt: new Date().toISOString(), lastCheckedAt: new Date().toISOString() });
       const newMeta = parseMeta(getVariant(t2));
       expect(newMeta.containerId).toBe('retain_c');
     });

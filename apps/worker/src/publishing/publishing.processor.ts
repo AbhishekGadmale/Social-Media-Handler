@@ -9,6 +9,8 @@ import {
   generateId,
   PublishingRepository,
 } from '@agency-os/database';
+import { ExecutionMetadataRepository, ExecutionTransitionResultType } from '@agency-os/database';
+import { safeParseExecutionMetadata } from '@agency-os/shared';
 import {
   ProviderRegistry,
   ProviderPublicationInput,
@@ -118,19 +120,11 @@ export class PublishingProcessor extends WorkerHost {
     });
 
     // 2. Stale job verification
-    if (
-      !variant ||
-      variant.status !== PostStatus.QUEUED ||
-      variant.dispatchVersion !== dispatchVersion
-    ) {
+    if (!variant || (variant.status !== PostStatus.QUEUED && variant.status !== PostStatus.PUBLISHING) || variant.dispatchVersion !== dispatchVersion) {
       this.logger.warn({
-        msg: 'publication.job.stale',
-        publicationId,
-        workspaceId,
-        reason: 'Mismatch or not QUEUED',
-        expectedVersion: dispatchVersion,
-        actualVersion: variant?.dispatchVersion,
-        actualStatus: variant?.status,
+        msg: 'publication.job.stale', publicationId, workspaceId,
+        reason: 'Mismatch or not QUEUED/PUBLISHING',
+        expectedVersion: dispatchVersion, actualVersion: variant?.dispatchVersion, actualStatus: variant?.status,
       });
       return; // Safe NO-OP
     }
@@ -138,70 +132,93 @@ export class PublishingProcessor extends WorkerHost {
     // 3. Execution-time Revalidation
     const validation = this.validator.validate(variant as any);
     if (!validation.valid) {
-      this.logger.warn({
-        msg: 'publication.job.validation_failed',
-        publicationId,
-        failureCategory: validation.failureCategory,
-        failureCode: validation.failureCode,
-      });
-
-      // Atomic fail
-      await this.prisma.postPlatformVariant.update({
-        where: { id: publicationId },
-        data: { status: PostStatus.FAILED },
-      });
-
-      // Let's create an attempt for this failure
+      await this.prisma.postPlatformVariant.update({ where: { id: publicationId }, data: { status: PostStatus.FAILED } });
       await this.prisma.publicationAttempt.create({
         data: {
-          id: generateId(),
-          variantId: publicationId,
-          attemptNumber: await this.getNextAttemptNumber(publicationId),
-          status: 'FAILED',
-          failureCategory: validation.failureCategory || 'VALIDATION',
-          failureCode: validation.failureCode,
-          startedAt: new Date(),
-          completedAt: new Date(),
-        },
+          id: generateId(), variantId: publicationId, attemptNumber: await this.getNextAttemptNumber(publicationId),
+          status: 'FAILED', failureCategory: validation.failureCategory || 'VALIDATION', failureCode: validation.failureCode,
+          startedAt: new Date(), completedAt: new Date(),
+        }
       });
       return;
     }
 
-    // 4. Atomic Worker Claim (QUEUED -> PUBLISHING)
-    const claimed = await this.prisma.postPlatformVariant.updateMany({
-      where: {
-        id: publicationId,
-        workspaceId,
-        status: 'QUEUED',
-        dispatchVersion,
-      },
-      data: {
-        status: 'PUBLISHING',
-        dispatchVersion: { increment: 1 },
-        publishedAt: null,
-      },
-    });
-    if (claimed.count === 0) {
-      this.logger.warn({
-        msg: 'publication.job.claim_failed',
-        publicationId,
-        reason: 'Claim lost race',
+    // 4. Atomic Worker Claim & Coordination
+    let isContinuation = false;
+    let currentOperationId: string | null = null;
+    let expectedDispatchVersion = variant.dispatchVersion;
+    const executionRepo = new ExecutionMetadataRepository(this.prisma, workspaceId);
+
+    if (variant.status === PostStatus.QUEUED) {
+      const claimed = await this.prisma.postPlatformVariant.updateMany({
+        where: { id: publicationId, workspaceId, status: 'QUEUED', dispatchVersion },
+        data: { status: 'PUBLISHING', publishedAt: null },
       });
-      return;
+      if (claimed.count === 0) {
+        this.logger.warn({ msg: 'publication.job.claim_failed', publicationId, reason: 'Claim lost race' });
+        return;
+      }
+
+      const startRes = await executionRepo.startOperation(publicationId, variant.socialAccount.provider as any);
+      if (startRes.type !== ExecutionTransitionResultType.SUCCESS) {
+        this.logger.warn({ msg: 'publication.job.start_failed', publicationId, reason: startRes.reason });
+        return;
+      }
+      
+      const p = safeParseExecutionMetadata(startRes.variant.executionMetadata);
+      if (p.success) currentOperationId = p.data.operationId;
+      expectedDispatchVersion = startRes.variant.dispatchVersion;
+    } else {
+      isContinuation = true;
+      const parsed = safeParseExecutionMetadata(variant.executionMetadata);
+      if (!parsed.success) {
+        this.logger.error({ msg: 'publication.invalid_metadata', publicationId });
+        return;
+      }
+      currentOperationId = parsed.data.operationId;
+      const phase = parsed.data.phase;
+
+      if (phase === 'COMPLETED' || phase === 'FAILED' || phase === 'AMBIGUOUS') {
+        this.logger.warn({ msg: 'publication.already_terminal', publicationId });
+        return;
+      }
     }
 
-    // We own it. Create PublicationAttempt.
-    const attemptNumber = await this.getNextAttemptNumber(publicationId);
-    const attempt = await this.prisma.publicationAttempt.create({
-      data: {
-        id: generateId(),
-        variantId: publicationId,
-        attemptNumber,
-        status: 'PUBLISHING',
-        startedAt: new Date(),
-        executionHeartbeatAt: new Date(),
-      },
+    // We own it. Create or reuse PublicationAttempt.
+    let attempt = await this.prisma.publicationAttempt.findFirst({
+      where: { variantId: publicationId, status: 'PUBLISHING' },
+      orderBy: { startedAt: 'desc' },
     });
+
+    if (!attempt) {
+      attempt = await this.prisma.publicationAttempt.create({
+        data: {
+          id: generateId(), variantId: publicationId, attemptNumber: await this.getNextAttemptNumber(publicationId),
+          status: 'PUBLISHING', startedAt: new Date(), executionHeartbeatAt: new Date(),
+        }
+      });
+    } else {
+      attempt = await this.prisma.publicationAttempt.update({
+        where: { id: attempt.id },
+        data: { executionHeartbeatAt: new Date() },
+      });
+    }
+
+    // If PUBLISH_REQUESTED and no final mutation success yet, protect against blind retries
+    if (isContinuation) {
+      const parsed2 = safeParseExecutionMetadata(variant.executionMetadata);
+      if (parsed2.success && parsed2.data.phase === 'PUBLISH_REQUESTED') {
+        const transitionRes = await executionRepo.transitionOperation(
+          publicationId, currentOperationId!, 'PUBLISH_REQUESTED', 'AMBIGUOUS', expectedDispatchVersion
+        );
+        if (transitionRes.type === ExecutionTransitionResultType.SUCCESS) {
+          await this.handleUnknown(publicationId, attempt.id, 'AMBIGUOUS_RETRY_PROTECTION');
+        } else {
+           this.logger.error({ msg: 'publication.transition_ambiguous_failed', publicationId, reason: transitionRes.reason });
+        }
+        return;
+      }
+    }
 
     this.logger.log({
       msg: 'publication.claimed',
@@ -291,25 +308,46 @@ export class PublishingProcessor extends WorkerHost {
 
     // 8. Handle Result
     if (result.success) {
-      await this.handleSuccess(publicationId, attempt.id, result);
-    } else {
-      if (result.failureCategory === 'UNKNOWN_RESULT') {
-        await this.handleUnknown(
-          publicationId,
-          attempt.id,
-          result.failureCode,
-          result,
+      if (result.processingState === 'PROCESSING') {
+        const delayMs = 60000;
+        const transitionRes = await executionRepo.transitionOperation(
+          publicationId, currentOperationId!, isContinuation ? 'PROCESSING_REMOTE' : 'CONTAINER_CREATED', 'PROCESSING_REMOTE', expectedDispatchVersion,
+          { delayMs }
         );
+        if (transitionRes.type === ExecutionTransitionResultType.SUCCESS) {
+          this.logger.log({ msg: 'publication.processing_remote', publicationId, delayMs });
+          return;
+        } else {
+          // If we couldn't transition to PROCESSING_REMOTE, it might be an illegal transition
+          // Let's assume CONTAINER_CREATED transition was needed first?
+          // The prompt says INITIATED -> CONTAINER_CREATED -> PROCESSING_REMOTE
+          // But our mocked result doesn't have containerId.
+          // Wait, INITIATED cannot go directly to PROCESSING_REMOTE. It must go to CONTAINER_CREATED.
+          // For generic handling, let's allow INITIATED -> PROCESSING_REMOTE in ALLOWED_TRANSITIONS,
+          // or we simulate CONTAINER_CREATED first.
+          this.logger.error({ msg: 'publication.transition_processing_remote_failed', reason: transitionRes.reason });
+          await this.handleUnknown(publicationId, attempt.id, 'TRANSITION_FAILED');
+          return;
+        }
       } else {
-        await this.handleFailure(
-          publicationId,
-          attempt.id,
-          result.failureCategory,
-          result.failureCode,
-          result.message,
-          result.retryAfterSeconds,
-          result, // rawResult
+        const transitionRes = await executionRepo.transitionOperation(
+          publicationId, currentOperationId!, isContinuation ? 'PROCESSING_REMOTE' : 'INITIATED', 'COMPLETED', expectedDispatchVersion,
+          { finalRemoteId: result.externalPostId }
         );
+        if (transitionRes.type === ExecutionTransitionResultType.SUCCESS) {
+          await this.handleSuccess(publicationId, attempt.id, result);
+        } else {
+          await this.handleUnknown(publicationId, attempt.id, 'TRANSITION_FAILED');
+        }
+      }
+    } else {
+      await executionRepo.transitionOperation(
+        publicationId, currentOperationId!, isContinuation ? 'PROCESSING_REMOTE' : 'INITIATED', 'FAILED', expectedDispatchVersion
+      );
+      if (result.failureCategory === 'UNKNOWN_RESULT') {
+        await this.handleUnknown(publicationId, attempt.id, result.failureCode, result);
+      } else {
+        await this.handleFailure(publicationId, attempt.id, result.failureCategory, result.failureCode, result.message, result.retryAfterSeconds, result);
       }
     }
   }

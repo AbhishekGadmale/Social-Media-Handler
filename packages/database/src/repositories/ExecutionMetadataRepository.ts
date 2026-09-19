@@ -33,7 +33,7 @@ const TERMINAL_PHASES: ExecutionPhase[] = ["COMPLETED", "FAILED", "AMBIGUOUS"];
 const ALLOWED_TRANSITIONS: Record<ExecutionPhase, ExecutionPhase[]> = {
   INITIATED: ["CONTAINER_CREATED", "PUBLISH_REQUESTED", "FAILED"],
   CONTAINER_CREATED: ["PROCESSING_REMOTE", "PUBLISH_REQUESTED", "FAILED"],
-  PROCESSING_REMOTE: ["PUBLISH_REQUESTED", "FAILED"],
+  PROCESSING_REMOTE: ["PROCESSING_REMOTE", "PUBLISH_REQUESTED", "FAILED"],
   PUBLISH_REQUESTED: ["COMPLETED", "AMBIGUOUS"],
   COMPLETED: [],
   FAILED: [],
@@ -113,9 +113,11 @@ export class ExecutionMetadataRepository {
     data?: {
       containerId?: string;
       finalRemoteId?: string;
-    }
+      delayMs?: number;
+    },
+    clientTx?: Prisma.TransactionClient
   ): Promise<ExecutionTransitionResult> {
-    return this.prisma.$transaction(async (tx) => {
+    const runTx = async (tx: Prisma.TransactionClient): Promise<ExecutionTransitionResult> => {
       const variant = await tx.postPlatformVariant.findFirst({
         where: { id: variantId, workspaceId: this.workspaceId },
       });
@@ -183,6 +185,19 @@ export class ExecutionMetadataRepository {
         nextMetadata.containerCreatedAt = new Date().toISOString();
       }
 
+      if (nextPhase === "PROCESSING_REMOTE") {
+        const MIN_REMOTE_CONTINUATION_DELAY_MS = 15000;
+        const MAX_REMOTE_CONTINUATION_DELAY_MS = 86400000;
+        if (typeof data?.delayMs !== 'number' || isNaN(data.delayMs) || !isFinite(data.delayMs) || data.delayMs < MIN_REMOTE_CONTINUATION_DELAY_MS || data.delayMs > MAX_REMOTE_CONTINUATION_DELAY_MS)
+          return {
+            type: ExecutionTransitionResultType.ILLEGAL_TRANSITION,
+            reason: "Valid delayMs (15s to 24h) required for PROCESSING_REMOTE",
+          };
+        const now = Date.now();
+        nextMetadata.lastCheckedAt = new Date(now).toISOString();
+        nextMetadata.nextCheckAt = new Date(now + data.delayMs).toISOString();
+      }
+
       if (nextPhase === "PUBLISH_REQUESTED") {
         nextMetadata.publishRequestedAt = new Date().toISOString();
       }
@@ -218,6 +233,12 @@ export class ExecutionMetadataRepository {
         type: ExecutionTransitionResultType.SUCCESS,
         variant: finalVariant,
       };
-    });
+    };
+    
+    if (clientTx) {
+      return runTx(clientTx);
+    } else {
+      return this.prisma.$transaction(runTx);
+    }
   }
 }

@@ -23,18 +23,37 @@ export const ExecutionPhaseSchema = z.enum([
 
 export type ExecutionPhase = z.infer<typeof ExecutionPhaseSchema>;
 
-export const ExecutionMetadataSchema = z.object({
+const BaseExecutionMetadataSchema = z.object({
   version: z.literal(1),
   operationId: z.string().uuid(),
   provider: SupportedProviderSchema,
-  phase: ExecutionPhaseSchema,
   containerId: z.string().optional(),
   containerCreatedAt: z.string().datetime().optional(),
-  publishRequestedAt: z.string().datetime().optional(),
-  finalRemoteId: z.string().optional(),
-  lastCheckedAt: z.string().datetime().optional(),
-  nextCheckAt: z.string().datetime().optional(),
-}).strict();
+});
+
+export const ExecutionMetadataSchema = z.discriminatedUnion('phase', [
+  BaseExecutionMetadataSchema.extend({ phase: z.literal('INITIATED') }),
+  BaseExecutionMetadataSchema.extend({ phase: z.literal('FAILED') }),
+  BaseExecutionMetadataSchema.extend({ phase: z.literal('AMBIGUOUS') }),
+  BaseExecutionMetadataSchema.extend({
+    phase: z.literal('CONTAINER_CREATED'),
+    containerId: z.string(),
+    containerCreatedAt: z.string().datetime(),
+  }),
+  BaseExecutionMetadataSchema.extend({
+    phase: z.literal('PROCESSING_REMOTE'),
+    lastCheckedAt: z.string().datetime(),
+    nextCheckAt: z.string().datetime(),
+  }),
+  BaseExecutionMetadataSchema.extend({
+    phase: z.literal('PUBLISH_REQUESTED'),
+    publishRequestedAt: z.string().datetime(),
+  }),
+  BaseExecutionMetadataSchema.extend({
+    phase: z.literal('COMPLETED'),
+    finalRemoteId: z.string(),
+  }),
+]);
 
 export type ExecutionMetadata = z.infer<typeof ExecutionMetadataSchema>;
 

@@ -15,6 +15,7 @@ const generateId = () => crypto.randomUUID();
 const mockPrisma: any = {
   postPlatformVariant: {
     findUnique: jest.fn(),
+      findUniqueOrThrow: jest.fn().mockResolvedValue({ id: 'dummy', dispatchVersion: 1 }),
     findFirst: jest.fn(),
     updateMany: jest.fn(),
     update: jest.fn(),
@@ -169,5 +170,117 @@ describe('Worker Storage Integration', () => {
       `workspaces/${wsId}/media/test/source`,
       { start: 100, end: 500 },
     );
+  });
+
+  describe('Continuation and Architecture Proofs', () => {
+    it('AMBIGUOUS + UNKNOWN transaction rollback proof', async () => {
+      const publicationId = generateId();
+      mockPrisma.postPlatformVariant.findFirst.mockResolvedValue({
+        id: publicationId,
+        status: 'PUBLISHING',
+        dispatchVersion: 1,
+        executionMetadata: {
+          version: 1,
+          operationId: '123e4567-e89b-12d3-a456-426614174000',
+          provider: 'FACEBOOK',
+          phase: 'PUBLISH_REQUESTED',
+          publishRequestedAt: new Date().toISOString()
+        },
+        socialAccount: { externalId: 'acc', provider: 'FACEBOOK' },
+        post: { content: 'test', media: [] }
+      });
+      mockPrisma.postPlatformVariant.update.mockRejectedValueOnce(new Error('Rollback proof'));
+      
+      const jobData = {
+        data: {
+          workspaceId: generateId(),
+          publicationId,
+          dispatchVersion: 1,
+          operationId: '123e4567-e89b-12d3-a456-426614174000',
+        },
+      } as any;
+      
+      await expect(processor.process(jobData)).rejects.toThrow('Rollback proof');
+      expect(mockPrisma.$transaction).toHaveBeenCalled();
+    });
+
+    it('CONTINUATION PAYLOAD STALE-OP TEST', async () => {
+      const publicationId = generateId();
+      mockPrisma.postPlatformVariant.findFirst.mockResolvedValue({
+        id: publicationId,
+        status: 'PUBLISHING',
+        dispatchVersion: 2,
+        executionMetadata: {
+          version: 1,
+          operationId: 'operation-B', // DB is operation-B
+          provider: 'FACEBOOK',
+          phase: 'PROCESSING_REMOTE',
+          lastCheckedAt: new Date().toISOString(),
+          nextCheckAt: new Date().toISOString()
+        },
+        socialAccount: { externalId: 'acc', provider: 'FACEBOOK' },
+        post: { content: 'test', media: [] }
+      });
+      
+      const jobData = {
+        data: {
+          workspaceId: generateId(),
+          publicationId,
+          dispatchVersion: 2,
+          operationId: 'operation-A', // Payload is operation-A
+        },
+      } as any;
+      
+      await processor.process(jobData);
+      expect(mockProviderAdapter.publish).not.toHaveBeenCalled();
+      expect(mockPrisma.postPlatformVariant.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('SERVER-OWNED TIMESTAMP TESTS', async () => {
+      jest.useFakeTimers();
+      jest.setSystemTime(new Date('2026-09-19T10:00:00Z'));
+      
+      const publicationId = generateId();
+      mockPrisma.postPlatformVariant.findFirst.mockResolvedValue({
+        id: publicationId,
+        status: 'PUBLISHING',
+        dispatchVersion: 1,
+        executionMetadata: {
+          version: 1,
+          operationId: '123e4567-e89b-12d3-a456-426614174000',
+          provider: 'FACEBOOK',
+          phase: 'PROCESSING_REMOTE',
+          lastCheckedAt: new Date().toISOString(),
+          nextCheckAt: new Date().toISOString()
+        },
+        socialAccount: { externalId: 'acc', provider: 'FACEBOOK' },
+        post: { content: 'test', media: [] }
+      });
+      mockPrisma.postPlatformVariant.updateMany.mockResolvedValue({ count: 1 });
+      
+      mockProviderAdapter.publish.mockResolvedValue({
+        success: true,
+        processingState: 'PROCESSING'
+      });
+      
+      const jobData = {
+        data: {
+          workspaceId: generateId(),
+          publicationId,
+          dispatchVersion: 1,
+          operationId: '123e4567-e89b-12d3-a456-426614174000',
+        },
+      } as any;
+      
+      await processor.process(jobData);
+      
+      const updateCall = mockPrisma.postPlatformVariant.updateMany.mock.calls[0][0];
+      const nextMetadata = updateCall.data.executionMetadata;
+      
+      expect(nextMetadata.lastCheckedAt).toBe('2026-09-19T10:00:00.000Z');
+      expect(nextMetadata.nextCheckAt).toBe('2026-09-19T10:01:00.000Z');
+      
+      jest.useRealTimers();
+    });
   });
 });

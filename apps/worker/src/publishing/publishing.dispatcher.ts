@@ -1,5 +1,6 @@
 /* eslint-disable */
 import { generateId } from '@agency-os/database';
+import { safeParseExecutionMetadata } from '@agency-os/shared';
 import {
   Injectable,
   OnModuleInit,
@@ -42,6 +43,7 @@ export class PublishingDispatcher implements OnModuleInit, OnModuleDestroy {
       await this.promoteScheduled();
       await this.dispatchQueued();
       await this.dispatchDeleting();
+      await this.dispatchContinuations();
       await this.recoverStalePublishing();
     } catch (error) {
       this.logger.error('Error in publishing dispatcher scan loop', error);
@@ -153,6 +155,44 @@ export class PublishingDispatcher implements OnModuleInit, OnModuleDestroy {
   /**
    * Recovers stuck PUBLISHING targets to UNKNOWN if older than a threshold.
    */
+  
+  private async dispatchContinuations() {
+    const activeVariants = await this.prisma.postPlatformVariant.findMany({
+      where: { status: PostStatus.PUBLISHING },
+      select: { id: true, workspaceId: true, dispatchVersion: true, executionMetadata: true },
+    });
+
+    const now = new Date();
+    for (const variant of activeVariants) {
+      if (!variant.executionMetadata) continue;
+      const meta = variant.executionMetadata as any;
+      if (meta.phase === 'PROCESSING_REMOTE' && meta.nextCheckAt) {
+        if (new Date(meta.nextCheckAt) <= now) {
+          const jobId = `publication-${variant.id}-v${variant.dispatchVersion}`;
+          const payload = {
+            workspaceId: variant.workspaceId,
+            publicationId: variant.id,
+            dispatchVersion: variant.dispatchVersion,
+            operationId: meta.operationId,
+          };
+          
+          try {
+            await this.publishQueue.add('publish-job', payload, {
+              jobId,
+              attempts: 3,
+              backoff: { type: 'exponential', delay: 2000 },
+              removeOnComplete: true,
+              removeOnFail: false,
+            });
+            this.logger.log(`Dispatched continuation for ${variant.id}, jobId: ${jobId}`);
+          } catch (error) {
+            this.logger.error(`Failed to dispatch continuation for ${variant.id}`, error);
+          }
+        }
+      }
+    }
+  }
+
   private async recoverStalePublishing() {
     const PUBLISH_STALE_TIMEOUT_MS = 5 * 60 * 1000; // 5 mins
     const thresholdDate = new Date(Date.now() - PUBLISH_STALE_TIMEOUT_MS);
@@ -168,22 +208,36 @@ export class PublishingDispatcher implements OnModuleInit, OnModuleDestroy {
         id: true,
         variantId: true,
         variant: {
-          select: { workspaceId: true },
+          select: { workspaceId: true, executionMetadata: true },
         },
       },
       take: this.BATCH_SIZE,
     });
 
     for (const attempt of staleAttempts) {
+      
+      const variantMeta = attempt.variant.executionMetadata;
+      if (variantMeta) {
+        const parsed = safeParseExecutionMetadata(variantMeta);
+        // If parsed is valid AND it's a PROCESSING_REMOTE state (thus strictly has nextCheckAt), we skip generic recovery.
+        // If it's malformed (e.g. missing nextCheckAt), safeParse fails, and we fall through to UNKNOWN recovery, avoiding immortal states.
+        if (parsed.success && parsed.data.phase === 'PROCESSING_REMOTE') {
+          continue; // Dispatcher owns this, due or future, prevent race with queue backlog
+        }
+      }
+
       await this.prisma.$transaction(async (tx) => {
+        const updateData: any = { status: PostStatus.UNKNOWN };
+        if (variantMeta) {
+          updateData.executionMetadata = { ...variantMeta, phase: 'AMBIGUOUS' };
+          updateData.dispatchVersion = { increment: 1 };
+        }
         const updated = await tx.postPlatformVariant.updateMany({
           where: {
             id: attempt.variantId,
             status: PostStatus.PUBLISHING,
           },
-          data: {
-            status: PostStatus.UNKNOWN,
-          },
+          data: updateData,
         });
 
         if (updated.count > 0) {
