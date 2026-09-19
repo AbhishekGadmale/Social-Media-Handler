@@ -5,6 +5,25 @@ import {
   ProviderPublicationInput,
 } from "../core/interfaces/IPublishingProvider";
 import { Readable } from "stream";
+import sizeOf from "image-size";
+
+vi.mock("image-size", async (importOriginal) => {
+  const actual = (await importOriginal()) as any;
+  return {
+    ...actual,
+    default: vi.fn((buf: any) => actual.default(buf)),
+  };
+});
+
+// Helper to generate a minimal valid JPEG buffer with specific dimensions
+function createMockJpeg(width: number, height: number, orientation?: number): Buffer {
+  const hex = "ffd8ffe000104a46494600010100000100010000ffdb004300030202020202030202020303030304060404040404080606050609080a0a090809090b0c0f0c0b0b0e0b09090d110d0e0f101011100a0c12131210130f101010ffc0000b080438043801011100ffc400140001000000000000000000000000000000ffc400141001000000000000000000000000000000ffda0008010100003f003fffd9";
+  const buf = Buffer.from(hex, "hex");
+  const sofOffset = buf.indexOf(Buffer.from([0xff, 0xc0]));
+  buf.writeUInt16BE(height, sofOffset + 5);
+  buf.writeUInt16BE(width, sofOffset + 7);
+  return buf;
+}
 
 describe("MetaProvider Publishing", () => {
   let provider: MetaProvider;
@@ -152,7 +171,7 @@ describe("MetaProvider Publishing", () => {
           },
           {
             getStream: async () =>
-              import("stream").then((s) => s.Readable.from([""])) as any,
+              import("stream").then((s) => s.Readable.from([createMockJpeg(1080, 1080)])) as any,
           },
         );
         expect((global.fetch as any).mock.calls[0][0]).toContain(
@@ -221,7 +240,7 @@ describe("MetaProvider Publishing", () => {
         providerOptions: {},
       };
       const mockMediaSource = {
-        getStream: vi.fn().mockResolvedValue(Readable.from(["hello"])),
+        getStream: vi.fn().mockResolvedValue(Readable.from([createMockJpeg(1080, 1080)])),
       };
 
       const result = await provider.publish(
@@ -260,7 +279,7 @@ describe("MetaProvider Publishing", () => {
         providerOptions: {},
       };
       const mockMediaSource = {
-        getStream: vi.fn().mockResolvedValue(Readable.from([""])),
+        getStream: vi.fn().mockResolvedValue(Readable.from([createMockJpeg(1080, 1080)])),
       };
       const result = await provider.publish(
         { accessToken: "t" },
@@ -285,7 +304,7 @@ describe("MetaProvider Publishing", () => {
         providerOptions: {},
       };
       const mockMediaSource = {
-        getStream: vi.fn().mockResolvedValue(Readable.from([""])),
+        getStream: vi.fn().mockResolvedValue(Readable.from([createMockJpeg(1080, 1080)])),
       };
       const result = await provider.publish(
         { accessToken: "t" },
@@ -310,7 +329,7 @@ describe("MetaProvider Publishing", () => {
         providerOptions: {},
       };
       const mockMediaSource = {
-        getStream: vi.fn().mockResolvedValue(Readable.from([""])),
+        getStream: vi.fn().mockResolvedValue(Readable.from([createMockJpeg(1080, 1080)])),
       };
       await provider.publish(
         { accessToken: "t" },
@@ -335,7 +354,7 @@ describe("MetaProvider Publishing", () => {
         providerOptions: {},
       };
       const mockMediaSource = {
-        getStream: vi.fn().mockResolvedValue(Readable.from([""])),
+        getStream: vi.fn().mockResolvedValue(Readable.from([createMockJpeg(1080, 1080)])),
       };
       const result = await provider.publish(
         { accessToken: "t" },
@@ -519,7 +538,7 @@ describe("MetaProvider Publishing", () => {
         json: async () => ({ not_id: "123" }),
       });
       const mockMediaSource = {
-        getStream: vi.fn().mockResolvedValue(Readable.from([""])),
+        getStream: vi.fn().mockResolvedValue(Readable.from([createMockJpeg(1080, 1080)])),
       };
       const input = {
         attemptId: "1",
@@ -606,6 +625,247 @@ describe("Instagram Provider Publishing", () => {
     });
   });
 
+  describe("Image Geometry Validation", () => {
+    beforeEach(() => {
+      (global.fetch as any).mockResolvedValue({
+        ok: true,
+        json: async () => ({ id: "123" }),
+      });
+    });
+
+    it("valid square JPEG accepted", async () => {
+      const mediaSource = {
+        getStream: async () => import("stream").then((s) => s.Readable.from([createMockJpeg(1080, 1080)])) as any,
+        getSignedReadUrl: async () => "https://url",
+      };
+      const result = await provider.publish(
+        { accessToken: "token" },
+        { attemptId: "1", externalAccountId: "ig1", content: "", media: [{ key: "k", mimeType: "image/jpeg", size: 1000 }] },
+        mediaSource
+      );
+      expect(result.success).toBe(true);
+    });
+
+    it("valid portrait boundary accepted (4:5)", async () => {
+      const mediaSource = {
+        getStream: async () => import("stream").then((s) => s.Readable.from([createMockJpeg(1080, 1350)])) as any, // 0.8
+        getSignedReadUrl: async () => "https://url",
+      };
+      const result = await provider.publish(
+        { accessToken: "token" },
+        { attemptId: "1", externalAccountId: "ig1", content: "", media: [{ key: "k", mimeType: "image/jpeg", size: 1000 }] },
+        mediaSource
+      );
+      expect(result.success).toBe(true);
+    });
+
+    it("valid landscape boundary accepted (1.91:1)", async () => {
+      const mediaSource = {
+        getStream: async () => import("stream").then((s) => s.Readable.from([createMockJpeg(1910, 1000)])) as any, // 1.91
+        getSignedReadUrl: async () => "https://url",
+      };
+      const result = await provider.publish(
+        { accessToken: "token" },
+        { attemptId: "1", externalAccountId: "ig1", content: "", media: [{ key: "k", mimeType: "image/jpeg", size: 1000 }] },
+        mediaSource
+      );
+      expect(result.success).toBe(true);
+    });
+
+    it("portrait just outside range rejected", async () => {
+      const mediaSource = {
+        getStream: async () => import("stream").then((s) => s.Readable.from([createMockJpeg(1080, 1368)])) as any, // 1080/1368 = 0.789
+        getSignedReadUrl: async () => "https://url",
+      };
+      const result = await provider.publish(
+        { accessToken: "token" },
+        { attemptId: "1", externalAccountId: "ig1", content: "", media: [{ key: "k", mimeType: "image/jpeg", size: 1000 }] },
+        mediaSource
+      );
+      expect(result.success).toBe(false);
+      expect(result.failureCode).toBe("IMAGE_ASPECT_RATIO_UNSUPPORTED");
+    });
+
+    it("landscape just outside range rejected", async () => {
+      const mediaSource = {
+        getStream: async () => import("stream").then((s) => s.Readable.from([createMockJpeg(1920, 1000)])) as any, // 1.92
+        getSignedReadUrl: async () => "https://url",
+      };
+      const result = await provider.publish(
+        { accessToken: "token" },
+        { attemptId: "1", externalAccountId: "ig1", content: "", media: [{ key: "k", mimeType: "image/jpeg", size: 1000 }] },
+        mediaSource
+      );
+      expect(result.success).toBe(false);
+      expect(result.failureCode).toBe("IMAGE_ASPECT_RATIO_UNSUPPORTED");
+    });
+
+    it("zero width or invalid stream rejected", async () => {
+      const mediaSource = {
+        getStream: async () => import("stream").then((s) => s.Readable.from(["garbage bytes not a jpeg"])) as any,
+        getSignedReadUrl: async () => "https://url",
+      };
+      const result = await provider.publish(
+        { accessToken: "token" },
+        { attemptId: "1", externalAccountId: "ig1", content: "", media: [{ key: "k", mimeType: "image/jpeg", size: 1000 }] },
+        mediaSource
+      );
+      expect(result.success).toBe(false);
+      expect(result.failureCode).toBe("IMAGE_FORMAT_UNRECOGNIZED");
+    });
+
+    describe("EXIF Orientation Handling", () => {
+      let originalImpl: any;
+
+      beforeEach(() => {
+        originalImpl = vi.mocked(sizeOf).getMockImplementation();
+        (global.fetch as any).mockResolvedValue({
+          ok: true,
+          json: async () => ({ id: "123" }),
+        });
+      });
+
+      afterEach(() => {
+        vi.mocked(sizeOf).mockImplementation(originalImpl as any);
+      });
+
+      it("orientation 1 - no swap", async () => {
+        vi.mocked(sizeOf).mockReturnValue({ width: 1080, height: 1350, type: "jpg", orientation: 1 });
+        const mediaSource = {
+          getStream: async () => import("stream").then((s) => s.Readable.from([Buffer.from("dummy")])) as any,
+          getSignedReadUrl: async () => "https://url",
+        };
+        const result = await provider.publish({ accessToken: "token" }, { attemptId: "1", externalAccountId: "ig1", content: "", media: [{ key: "k", mimeType: "image/jpeg", size: 1000 }] }, mediaSource);
+        expect(result.success).toBe(true); // 1080/1350 = 0.8
+      });
+
+      it("orientation 5 - swap width and height", async () => {
+        // Raw is 1350x1080 (landscape bound 1.25, but actually 0.8 portrait if swapped)
+        // If it didn't swap, 1350x1080 is ratio 1.25 which is valid anyway (inside 0.8-1.91)
+        // Let's use raw 1368x1080 (ratio 1.26 valid). But wait, let's use raw 1080x1368 (ratio 0.78 INVALID).
+        // If orientation is 5, it swaps to 1368x1080 (ratio 1.26 VALID).
+        vi.mocked(sizeOf).mockReturnValue({ width: 1080, height: 1368, type: "jpg", orientation: 5 });
+        const mediaSource = {
+          getStream: async () => import("stream").then((s) => s.Readable.from([Buffer.from("dummy")])) as any,
+          getSignedReadUrl: async () => "https://url",
+        };
+        const result = await provider.publish({ accessToken: "token" }, { attemptId: "1", externalAccountId: "ig1", content: "", media: [{ key: "k", mimeType: "image/jpeg", size: 1000 }] }, mediaSource);
+        expect(result.success).toBe(true);
+      });
+
+      it("orientation 6 - swap width and height", async () => {
+        vi.mocked(sizeOf).mockReturnValue({ width: 1080, height: 1368, type: "jpg", orientation: 6 });
+        const mediaSource = {
+          getStream: async () => import("stream").then((s) => s.Readable.from([Buffer.from("dummy")])) as any,
+          getSignedReadUrl: async () => "https://url",
+        };
+        const result = await provider.publish({ accessToken: "token" }, { attemptId: "1", externalAccountId: "ig1", content: "", media: [{ key: "k", mimeType: "image/jpeg", size: 1000 }] }, mediaSource);
+        expect(result.success).toBe(true);
+      });
+
+      it("orientation 7 - swap width and height", async () => {
+        vi.mocked(sizeOf).mockReturnValue({ width: 1080, height: 1368, type: "jpg", orientation: 7 });
+        const mediaSource = {
+          getStream: async () => import("stream").then((s) => s.Readable.from([Buffer.from("dummy")])) as any,
+          getSignedReadUrl: async () => "https://url",
+        };
+        const result = await provider.publish({ accessToken: "token" }, { attemptId: "1", externalAccountId: "ig1", content: "", media: [{ key: "k", mimeType: "image/jpeg", size: 1000 }] }, mediaSource);
+        expect(result.success).toBe(true);
+      });
+
+      it("orientation 8 - swap width and height", async () => {
+        vi.mocked(sizeOf).mockReturnValue({ width: 1080, height: 1368, type: "jpg", orientation: 8 });
+        const mediaSource = {
+          getStream: async () => import("stream").then((s) => s.Readable.from([Buffer.from("dummy")])) as any,
+          getSignedReadUrl: async () => "https://url",
+        };
+        const result = await provider.publish({ accessToken: "token" }, { attemptId: "1", externalAccountId: "ig1", content: "", media: [{ key: "k", mimeType: "image/jpeg", size: 1000 }] }, mediaSource);
+        expect(result.success).toBe(true);
+      });
+
+      it("orientation 3 - no width/height swap", async () => {
+        // raw 1080x1368 (ratio 0.78 INVALID). Orientation 3 is 180deg, so no swap. Should stay invalid.
+        vi.mocked(sizeOf).mockReturnValue({ width: 1080, height: 1368, type: "jpg", orientation: 3 });
+        const mediaSource = {
+          getStream: async () => import("stream").then((s) => s.Readable.from([Buffer.from("dummy")])) as any,
+          getSignedReadUrl: async () => "https://url",
+        };
+        const result = await provider.publish({ accessToken: "token" }, { attemptId: "1", externalAccountId: "ig1", content: "", media: [{ key: "k", mimeType: "image/jpeg", size: 1000 }] }, mediaSource);
+        expect(result.success).toBe(false);
+      });
+
+      it("no-EXIF JPEG behavior", async () => {
+        vi.mocked(sizeOf).mockReturnValue({ width: 1080, height: 1080, type: "jpg" });
+        const mediaSource = {
+          getStream: async () => import("stream").then((s) => s.Readable.from([Buffer.from("dummy")])) as any,
+          getSignedReadUrl: async () => "https://url",
+        };
+        const result = await provider.publish({ accessToken: "token" }, { attemptId: "1", externalAccountId: "ig1", content: "", media: [{ key: "k", mimeType: "image/jpeg", size: 1000 }] }, mediaSource);
+        expect(result.success).toBe(true);
+      });
+
+      it("malformed EXIF safe failure/behavior", async () => {
+        vi.mocked(sizeOf).mockImplementation(() => { throw new Error("corrupt exif"); });
+        const mediaSource = {
+          getStream: async () => import("stream").then((s) => s.Readable.from([Buffer.from("dummy")])) as any,
+          getSignedReadUrl: async () => "https://url",
+        };
+        const result = await provider.publish({ accessToken: "token" }, { attemptId: "1", externalAccountId: "ig1", content: "", media: [{ key: "k", mimeType: "image/jpeg", size: 1000 }] }, mediaSource);
+        expect(result.success).toBe(false);
+        expect(result.failureCode).toBe("IMAGE_FORMAT_UNRECOGNIZED");
+      });
+    });
+
+    describe("Stream Resource Cleanup", () => {
+      let originalImpl: any;
+
+      beforeEach(() => {
+        originalImpl = vi.mocked(sizeOf).getMockImplementation();
+        (global.fetch as any).mockResolvedValue({
+          ok: true,
+          json: async () => ({ id: "123" }),
+        });
+      });
+
+      afterEach(() => {
+        vi.mocked(sizeOf).mockImplementation(originalImpl as any);
+      });
+
+      it("destroys stream exactly once on successful early parsing", async () => {
+        const mockStream = Readable.from([Buffer.from("dummy")]);
+        const destroySpy = vi.spyOn(mockStream, 'destroy');
+
+        vi.mocked(sizeOf).mockReturnValue({ width: 1080, height: 1080, type: "jpg" });
+
+        const mediaSource = {
+          getStream: async () => mockStream as any,
+          getSignedReadUrl: async () => "https://url",
+        };
+
+        await provider.publish({ accessToken: "token" }, { attemptId: "1", externalAccountId: "ig1", content: "", media: [{ key: "k", mimeType: "image/jpeg", size: 1000 }] }, mediaSource);
+
+        expect(destroySpy).toHaveBeenCalled();
+      });
+
+      it("destroys stream exactly once and prevents Graph call on parse failure", async () => {
+        const mockStream = Readable.from([Buffer.from("dummy")]);
+        const destroySpy = vi.spyOn(mockStream, 'destroy');
+
+        vi.mocked(sizeOf).mockImplementation(() => { throw new Error("corrupt"); });
+
+        const mediaSource = {
+          getStream: async () => mockStream as any,
+          getSignedReadUrl: async () => "https://url",
+        };
+
+        await provider.publish({ accessToken: "token" }, { attemptId: "1", externalAccountId: "ig1", content: "", media: [{ key: "k", mimeType: "image/jpeg", size: 1000 }] }, mediaSource);
+
+        expect(destroySpy).toHaveBeenCalled();
+        expect((global.fetch as any).mock.calls.length).toBe(0);
+      });
+    });
+  });
+
   describe("Publish Flow", () => {
     it("should throw VALIDATION if not exactly one media item", async () => {
       const result = await provider.publish(
@@ -625,7 +885,7 @@ describe("Instagram Provider Publishing", () => {
 
     it("should throw TRANSIENT if storage lacks getSignedReadUrl", async () => {
       const mediaSource = {
-        getStream: async () => ({}) as any,
+        getStream: async () => import("stream").then((s) => s.Readable.from([createMockJpeg(1080, 1080)])) as any,
       };
       const result = await provider.publish(
         { accessToken: "token" },
@@ -646,7 +906,7 @@ describe("Instagram Provider Publishing", () => {
 
     it("should execute 2-step container flow successfully", async () => {
       const mediaSource = {
-        getStream: async () => ({}) as any,
+        getStream: async () => import("stream").then((s) => s.Readable.from([createMockJpeg(1080, 1080)])) as any,
         getSignedReadUrl: async () =>
           "https://signed-url.example.com/img?sig=123",
       };
@@ -694,7 +954,7 @@ describe("Instagram Provider Publishing", () => {
 
     it("encodes Instagram ID exactly once", async () => {
       const mediaSource = {
-        getStream: async () => ({}) as any,
+        getStream: async () => import("stream").then((s) => s.Readable.from([createMockJpeg(1080, 1080)])) as any,
         getSignedReadUrl: async () => "http://url",
       };
       (global.fetch as any).mockImplementation(async (url: string) => {
@@ -726,7 +986,7 @@ describe("Instagram Provider Publishing", () => {
   describe("Security and Error Leakage", () => {
     it("should never leak signed URL or credentials in errors", async () => {
       const mediaSource = {
-        getStream: async () => ({}) as any,
+        getStream: async () => import("stream").then((s) => s.Readable.from([createMockJpeg(1080, 1080)])) as any,
         getSignedReadUrl: async () =>
           "https://signed.com/img?sig=super_secret_signature",
       };

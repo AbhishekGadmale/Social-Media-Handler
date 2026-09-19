@@ -17,6 +17,7 @@ import {
   ProviderPublishFailure,
 } from "../core/interfaces/IPublishingProvider";
 import { IMediaContentSource } from "../core/interfaces/IMediaContentSource";
+import sizeOf from "image-size";
 
 export class MetaProvider implements ISocialProvider, IPublishingProvider {
   private readonly version = "v20.0";
@@ -610,6 +611,69 @@ export class MetaProvider implements ISocialProvider, IPublishingProvider {
     }
 
     const media = input.media![0];
+
+    // Image Geometry Validation
+    let dims: ReturnType<typeof sizeOf> | null = null;
+    try {
+      const stream = await mediaSource.getStream(media.key!);
+      const chunks: Buffer[] = [];
+      try {
+        for await (const chunk of stream) {
+          chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
+          const buffer = Buffer.concat(chunks);
+          try {
+            dims = sizeOf(buffer);
+            if (dims && dims.width && dims.height) {
+              break; // Found dimensions, exit stream early
+            }
+          } catch (e) {
+            // sizeOf throws until enough bytes are buffered
+          }
+        }
+      } finally {
+        if (typeof stream.destroy === "function") {
+          stream.destroy();
+        }
+      }
+      if (!dims || !dims.width || !dims.height) {
+        return {
+          success: false,
+          failureCategory: "VALIDATION",
+          failureCode: "IMAGE_FORMAT_UNRECOGNIZED",
+          message: "Failed to determine image dimensions",
+        };
+      }
+
+      let width = dims.width;
+      let height = dims.height;
+
+      // EXIF orientation (5-8 means 90/270 degree rotation)
+      if (dims.orientation && dims.orientation >= 5 && dims.orientation <= 8) {
+        width = dims.height;
+        height = dims.width;
+      }
+
+      // Ensure we don't have floating point inaccuracies
+      // ratio = width / height
+      // 0.8 <= ratio <= 1.91 => 80 * height <= 100 * width && 100 * width <= 191 * height
+      if (width * 100 < height * 80 || width * 100 > height * 191) {
+        const ratio = width / height;
+        return {
+          success: false,
+          failureCategory: "VALIDATION",
+          failureCode: "IMAGE_ASPECT_RATIO_UNSUPPORTED",
+          message: `Instagram requires aspect ratio between 4:5 (0.8) and 1.91:1. Got ${ratio.toFixed(2)} (${width}x${height}).`,
+        };
+      }
+    } catch (e: any) {
+      return {
+        success: false,
+        failureCategory: "VALIDATION",
+        failureCode: "IMAGE_FORMAT_UNRECOGNIZED",
+        message: "Failed to read image metadata",
+      };
+    }
+
     let imageUrl: string;
     try {
       imageUrl = await mediaSource.getSignedReadUrl(
