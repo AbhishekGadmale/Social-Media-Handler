@@ -12,7 +12,8 @@ import {
   IPublishingProvider, 
   ProviderOptionsValidationResult, 
   ProviderPublicationInput, 
-  ProviderPublishResult, 
+  ProviderPublishResult,
+  ProviderPublishContext, 
   PublishingCapabilities,
   ProviderExecutionCredentials
 } from '../core/interfaces/IPublishingProvider';
@@ -242,7 +243,8 @@ export class YouTubeProvider implements ISocialProvider, IPublishingProvider {
   async publish(
     credentials: ProviderExecutionCredentials,
     input: ProviderPublicationInput,
-    mediaSource?: IMediaContentSource
+    mediaSource?: IMediaContentSource,
+    context?: ProviderPublishContext
   ): Promise<ProviderPublishResult> {
     if (!mediaSource) {
       return {

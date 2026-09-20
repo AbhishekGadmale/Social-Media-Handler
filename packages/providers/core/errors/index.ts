@@ -35,3 +35,12 @@ export class ProviderCapabilityError extends Error {
     Object.setPrototypeOf(this, ProviderCapabilityError.prototype);
   }
 }
+
+
+export class ProviderCoordinationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ProviderCoordinationError';
+    Object.setPrototypeOf(this, ProviderCoordinationError.prototype);
+  }
+}

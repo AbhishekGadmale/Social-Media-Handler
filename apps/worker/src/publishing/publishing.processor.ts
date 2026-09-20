@@ -10,6 +10,8 @@ import {
   PublishingRepository,
 } from '@agency-os/database';
 import { ExecutionMetadataRepository, ExecutionTransitionResultType } from '@agency-os/database';
+import { ProviderCoordinationError } from '@agency-os/providers';
+
 import { safeParseExecutionMetadata } from '@agency-os/shared';
 import {
   ProviderRegistry,

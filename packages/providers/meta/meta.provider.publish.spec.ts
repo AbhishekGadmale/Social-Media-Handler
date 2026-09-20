@@ -25,6 +25,8 @@ function createMockJpeg(width: number, height: number, orientation?: number): Bu
   return buf;
 }
 
+const mockCtx = { onRemotePrepared: async () => {}, beforeFinalMutation: async () => {} };
+
 describe("MetaProvider Publishing", () => {
   let provider: MetaProvider;
 
@@ -379,9 +381,7 @@ describe("MetaProvider Publishing", () => {
         content: "C",
         providerOptions: {},
       };
-      const result = await igProvider.publish({ accessToken: "t" }, input);
-      expect(result.success).toBe(false);
-      expect((result as any).failureCode).toBe("MEDIA_REQUIRED");
+      await expect(igProvider.publish({ accessToken: "t" }, input)).rejects.toThrow("Instagram single-image publishing strictly requires both onRemotePrepared and beforeFinalMutation coordination hooks.");
     });
 
     it("Meta alias cannot execute Facebook publish", async () => {
@@ -412,12 +412,7 @@ describe("MetaProvider Publishing", () => {
         content: "test", // text only, handled by FB branch but rejected by IG branch
         providerOptions: {},
       };
-      const result = await metaProvider.publish(
-        { accessToken: "token" },
-        input,
-      );
-      expect(result.success).toBe(false);
-      expect((result as any).failureCode).toBe("MEDIA_REQUIRED"); // Fails IG logic, never reaches FB
+      await expect(metaProvider.publish({ accessToken: "token" }, input)).rejects.toThrow("Instagram single-image publishing strictly requires both onRemotePrepared and beforeFinalMutation coordination hooks.");
     });
   });
 
@@ -641,7 +636,7 @@ describe("Instagram Provider Publishing", () => {
       const result = await provider.publish(
         { accessToken: "token" },
         { attemptId: "1", externalAccountId: "ig1", content: "", media: [{ key: "k", mimeType: "image/jpeg", size: 1000 }] },
-        mediaSource
+        mediaSource, mockCtx
       );
       expect(result.success).toBe(true);
     });
@@ -654,7 +649,7 @@ describe("Instagram Provider Publishing", () => {
       const result = await provider.publish(
         { accessToken: "token" },
         { attemptId: "1", externalAccountId: "ig1", content: "", media: [{ key: "k", mimeType: "image/jpeg", size: 1000 }] },
-        mediaSource
+        mediaSource, mockCtx
       );
       expect(result.success).toBe(true);
     });
@@ -667,7 +662,7 @@ describe("Instagram Provider Publishing", () => {
       const result = await provider.publish(
         { accessToken: "token" },
         { attemptId: "1", externalAccountId: "ig1", content: "", media: [{ key: "k", mimeType: "image/jpeg", size: 1000 }] },
-        mediaSource
+        mediaSource, mockCtx
       );
       expect(result.success).toBe(true);
     });
@@ -680,7 +675,7 @@ describe("Instagram Provider Publishing", () => {
       const result = await provider.publish(
         { accessToken: "token" },
         { attemptId: "1", externalAccountId: "ig1", content: "", media: [{ key: "k", mimeType: "image/jpeg", size: 1000 }] },
-        mediaSource
+        mediaSource, mockCtx
       );
       expect(result.success).toBe(false);
       expect(result.failureCode).toBe("IMAGE_ASPECT_RATIO_UNSUPPORTED");
@@ -694,7 +689,7 @@ describe("Instagram Provider Publishing", () => {
       const result = await provider.publish(
         { accessToken: "token" },
         { attemptId: "1", externalAccountId: "ig1", content: "", media: [{ key: "k", mimeType: "image/jpeg", size: 1000 }] },
-        mediaSource
+        mediaSource, mockCtx
       );
       expect(result.success).toBe(false);
       expect(result.failureCode).toBe("IMAGE_ASPECT_RATIO_UNSUPPORTED");
@@ -708,7 +703,7 @@ describe("Instagram Provider Publishing", () => {
       const result = await provider.publish(
         { accessToken: "token" },
         { attemptId: "1", externalAccountId: "ig1", content: "", media: [{ key: "k", mimeType: "image/jpeg", size: 1000 }] },
-        mediaSource
+        mediaSource, mockCtx
       );
       expect(result.success).toBe(false);
       expect(result.failureCode).toBe("IMAGE_FORMAT_UNRECOGNIZED");
@@ -735,7 +730,7 @@ describe("Instagram Provider Publishing", () => {
           getStream: async () => import("stream").then((s) => s.Readable.from([Buffer.from("dummy")])) as any,
           getSignedReadUrl: async () => "https://url",
         };
-        const result = await provider.publish({ accessToken: "token" }, { attemptId: "1", externalAccountId: "ig1", content: "", media: [{ key: "k", mimeType: "image/jpeg", size: 1000 }] }, mediaSource);
+        const result = await provider.publish({ accessToken: "token" }, { attemptId: "1", externalAccountId: "ig1", content: "", media: [{ key: "k", mimeType: "image/jpeg", size: 1000 }] }, mediaSource, mockCtx);
         expect(result.success).toBe(true); // 1080/1350 = 0.8
       });
 
@@ -749,7 +744,7 @@ describe("Instagram Provider Publishing", () => {
           getStream: async () => import("stream").then((s) => s.Readable.from([Buffer.from("dummy")])) as any,
           getSignedReadUrl: async () => "https://url",
         };
-        const result = await provider.publish({ accessToken: "token" }, { attemptId: "1", externalAccountId: "ig1", content: "", media: [{ key: "k", mimeType: "image/jpeg", size: 1000 }] }, mediaSource);
+        const result = await provider.publish({ accessToken: "token" }, { attemptId: "1", externalAccountId: "ig1", content: "", media: [{ key: "k", mimeType: "image/jpeg", size: 1000 }] }, mediaSource, mockCtx);
         expect(result.success).toBe(true);
       });
 
@@ -759,7 +754,7 @@ describe("Instagram Provider Publishing", () => {
           getStream: async () => import("stream").then((s) => s.Readable.from([Buffer.from("dummy")])) as any,
           getSignedReadUrl: async () => "https://url",
         };
-        const result = await provider.publish({ accessToken: "token" }, { attemptId: "1", externalAccountId: "ig1", content: "", media: [{ key: "k", mimeType: "image/jpeg", size: 1000 }] }, mediaSource);
+        const result = await provider.publish({ accessToken: "token" }, { attemptId: "1", externalAccountId: "ig1", content: "", media: [{ key: "k", mimeType: "image/jpeg", size: 1000 }] }, mediaSource, mockCtx);
         expect(result.success).toBe(true);
       });
 
@@ -769,7 +764,7 @@ describe("Instagram Provider Publishing", () => {
           getStream: async () => import("stream").then((s) => s.Readable.from([Buffer.from("dummy")])) as any,
           getSignedReadUrl: async () => "https://url",
         };
-        const result = await provider.publish({ accessToken: "token" }, { attemptId: "1", externalAccountId: "ig1", content: "", media: [{ key: "k", mimeType: "image/jpeg", size: 1000 }] }, mediaSource);
+        const result = await provider.publish({ accessToken: "token" }, { attemptId: "1", externalAccountId: "ig1", content: "", media: [{ key: "k", mimeType: "image/jpeg", size: 1000 }] }, mediaSource, mockCtx);
         expect(result.success).toBe(true);
       });
 
@@ -779,7 +774,7 @@ describe("Instagram Provider Publishing", () => {
           getStream: async () => import("stream").then((s) => s.Readable.from([Buffer.from("dummy")])) as any,
           getSignedReadUrl: async () => "https://url",
         };
-        const result = await provider.publish({ accessToken: "token" }, { attemptId: "1", externalAccountId: "ig1", content: "", media: [{ key: "k", mimeType: "image/jpeg", size: 1000 }] }, mediaSource);
+        const result = await provider.publish({ accessToken: "token" }, { attemptId: "1", externalAccountId: "ig1", content: "", media: [{ key: "k", mimeType: "image/jpeg", size: 1000 }] }, mediaSource, mockCtx);
         expect(result.success).toBe(true);
       });
 
@@ -790,7 +785,7 @@ describe("Instagram Provider Publishing", () => {
           getStream: async () => import("stream").then((s) => s.Readable.from([Buffer.from("dummy")])) as any,
           getSignedReadUrl: async () => "https://url",
         };
-        const result = await provider.publish({ accessToken: "token" }, { attemptId: "1", externalAccountId: "ig1", content: "", media: [{ key: "k", mimeType: "image/jpeg", size: 1000 }] }, mediaSource);
+        const result = await provider.publish({ accessToken: "token" }, { attemptId: "1", externalAccountId: "ig1", content: "", media: [{ key: "k", mimeType: "image/jpeg", size: 1000 }] }, mediaSource, mockCtx);
         expect(result.success).toBe(false);
       });
 
@@ -800,7 +795,7 @@ describe("Instagram Provider Publishing", () => {
           getStream: async () => import("stream").then((s) => s.Readable.from([Buffer.from("dummy")])) as any,
           getSignedReadUrl: async () => "https://url",
         };
-        const result = await provider.publish({ accessToken: "token" }, { attemptId: "1", externalAccountId: "ig1", content: "", media: [{ key: "k", mimeType: "image/jpeg", size: 1000 }] }, mediaSource);
+        const result = await provider.publish({ accessToken: "token" }, { attemptId: "1", externalAccountId: "ig1", content: "", media: [{ key: "k", mimeType: "image/jpeg", size: 1000 }] }, mediaSource, mockCtx);
         expect(result.success).toBe(true);
       });
 
@@ -810,7 +805,7 @@ describe("Instagram Provider Publishing", () => {
           getStream: async () => import("stream").then((s) => s.Readable.from([Buffer.from("dummy")])) as any,
           getSignedReadUrl: async () => "https://url",
         };
-        const result = await provider.publish({ accessToken: "token" }, { attemptId: "1", externalAccountId: "ig1", content: "", media: [{ key: "k", mimeType: "image/jpeg", size: 1000 }] }, mediaSource);
+        const result = await provider.publish({ accessToken: "token" }, { attemptId: "1", externalAccountId: "ig1", content: "", media: [{ key: "k", mimeType: "image/jpeg", size: 1000 }] }, mediaSource, mockCtx);
         expect(result.success).toBe(false);
         expect(result.failureCode).toBe("IMAGE_FORMAT_UNRECOGNIZED");
       });
@@ -842,7 +837,7 @@ describe("Instagram Provider Publishing", () => {
           getSignedReadUrl: async () => "https://url",
         };
 
-        await provider.publish({ accessToken: "token" }, { attemptId: "1", externalAccountId: "ig1", content: "", media: [{ key: "k", mimeType: "image/jpeg", size: 1000 }] }, mediaSource);
+        await provider.publish({ accessToken: "token" }, { attemptId: "1", externalAccountId: "ig1", content: "", media: [{ key: "k", mimeType: "image/jpeg", size: 1000 }] }, mediaSource, mockCtx);
 
         expect(destroySpy).toHaveBeenCalled();
       });
@@ -858,7 +853,7 @@ describe("Instagram Provider Publishing", () => {
           getSignedReadUrl: async () => "https://url",
         };
 
-        await provider.publish({ accessToken: "token" }, { attemptId: "1", externalAccountId: "ig1", content: "", media: [{ key: "k", mimeType: "image/jpeg", size: 1000 }] }, mediaSource);
+        await provider.publish({ accessToken: "token" }, { attemptId: "1", externalAccountId: "ig1", content: "", media: [{ key: "k", mimeType: "image/jpeg", size: 1000 }] }, mediaSource, mockCtx);
 
         expect(destroySpy).toHaveBeenCalled();
         expect((global.fetch as any).mock.calls.length).toBe(0);
@@ -878,6 +873,7 @@ describe("Instagram Provider Publishing", () => {
           content: "hello",
           providerOptions: {},
         },
+        undefined, mockCtx
       );
       expect(result.success).toBe(false);
       expect((result as any).failureCode).toBe("MEDIA_REQUIRED");
@@ -898,7 +894,7 @@ describe("Instagram Provider Publishing", () => {
           media: [{ mimeType: "image/jpeg", sizeBytes: 1000, key: "img" }],
           providerOptions: {},
         },
-        mediaSource,
+        mediaSource, mockCtx
       );
       expect(result.success).toBe(false);
       expect((result as any).failureCode).toBe("NO_SIGNED_URL_SUPPORT");
@@ -943,7 +939,7 @@ describe("Instagram Provider Publishing", () => {
           media: [{ mimeType: "image/jpeg", sizeBytes: 1000, key: "img" }],
           providerOptions: {},
         },
-        mediaSource,
+        mediaSource, mockCtx
       );
 
       expect(callCount).toBe(2);
@@ -974,7 +970,7 @@ describe("Instagram Provider Publishing", () => {
           media: [{ mimeType: "image/jpeg", sizeBytes: 1000, key: "img" }],
           providerOptions: {},
         },
-        mediaSource,
+        mediaSource, mockCtx
       );
       const url1 = (global.fetch as any).mock.calls[0][0];
       const url2 = (global.fetch as any).mock.calls[1][0];
@@ -1014,7 +1010,7 @@ describe("Instagram Provider Publishing", () => {
           media: [{ mimeType: "image/jpeg", sizeBytes: 1000, key: "img" }],
           providerOptions: {},
         },
-        mediaSource,
+        mediaSource, mockCtx
       );
 
       expect(result.success).toBe(false);

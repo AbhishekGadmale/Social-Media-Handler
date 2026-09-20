@@ -29,30 +29,31 @@ const BaseExecutionMetadataSchema = z.object({
   provider: SupportedProviderSchema,
   containerId: z.string().optional(),
   containerCreatedAt: z.string().datetime().optional(),
+  publishRequestedAt: z.string().datetime().optional(),
 });
 
 export const ExecutionMetadataSchema = z.discriminatedUnion('phase', [
-  BaseExecutionMetadataSchema.extend({ phase: z.literal('INITIATED') }),
-  BaseExecutionMetadataSchema.extend({ phase: z.literal('FAILED') }),
-  BaseExecutionMetadataSchema.extend({ phase: z.literal('AMBIGUOUS') }),
+  BaseExecutionMetadataSchema.extend({ phase: z.literal('INITIATED') }).strict(),
+  BaseExecutionMetadataSchema.extend({ phase: z.literal('FAILED') }).strict(),
+  BaseExecutionMetadataSchema.extend({ phase: z.literal('AMBIGUOUS') }).strict(),
   BaseExecutionMetadataSchema.extend({
     phase: z.literal('CONTAINER_CREATED'),
     containerId: z.string(),
     containerCreatedAt: z.string().datetime(),
-  }),
+  }).strict(),
   BaseExecutionMetadataSchema.extend({
     phase: z.literal('PROCESSING_REMOTE'),
     lastCheckedAt: z.string().datetime(),
     nextCheckAt: z.string().datetime(),
-  }),
+  }).strict(),
   BaseExecutionMetadataSchema.extend({
     phase: z.literal('PUBLISH_REQUESTED'),
     publishRequestedAt: z.string().datetime(),
-  }),
+  }).strict(),
   BaseExecutionMetadataSchema.extend({
     phase: z.literal('COMPLETED'),
     finalRemoteId: z.string(),
-  }),
+  }).strict(),
 ]);
 
 export type ExecutionMetadata = z.infer<typeof ExecutionMetadataSchema>;

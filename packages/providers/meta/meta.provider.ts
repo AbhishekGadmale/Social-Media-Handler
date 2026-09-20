@@ -6,9 +6,10 @@ import {
   ProviderProfileResult,
 } from "../core/types/index";
 import { ISocialProvider } from "../core/interfaces/ISocialProvider";
-import { ProviderApiError } from "../core/errors/index";
+import { ProviderApiError, ProviderCoordinationError } from "../core/errors/index";
 import {
   IPublishingProvider,
+  ProviderPublishContext,
   PublishingCapabilities,
   ProviderOptionsValidationResult,
   ProviderExecutionCredentials,
@@ -388,6 +389,7 @@ export class MetaProvider implements ISocialProvider, IPublishingProvider {
     credentials: ProviderExecutionCredentials,
     input: ProviderPublicationInput,
     mediaSource?: IMediaContentSource,
+    context?: ProviderPublishContext,
   ): Promise<ProviderPublishResult> {
     if (
       this.providerAlias !== "facebook" &&
@@ -411,7 +413,7 @@ export class MetaProvider implements ISocialProvider, IPublishingProvider {
     }
 
     if (this.providerAlias === "instagram") {
-      return this.publishInstagram(credentials, input, mediaSource);
+      return this.publishInstagram(credentials, input, mediaSource, context);
     }
 
     // --- Facebook Page Publishing ---
@@ -558,6 +560,9 @@ export class MetaProvider implements ISocialProvider, IPublishingProvider {
         };
       }
     } catch (err: any) {
+      if (err.name === "ProviderCoordinationError") {
+        throw err;
+      }
       return {
         success: false,
         failureCategory: "UNKNOWN_RESULT",
@@ -574,7 +579,11 @@ export class MetaProvider implements ISocialProvider, IPublishingProvider {
     credentials: ProviderExecutionCredentials,
     input: ProviderPublicationInput,
     mediaSource?: IMediaContentSource,
+    context?: ProviderPublishContext,
   ): Promise<ProviderPublishResult> {
+    if (!context?.onRemotePrepared || !context?.beforeFinalMutation) {
+      throw new ProviderCoordinationError("Instagram single-image publishing strictly requires both onRemotePrepared and beforeFinalMutation coordination hooks.");
+    }
     const igId = encodeURIComponent(input.externalAccountId);
     if (!igId) {
       return {
@@ -709,7 +718,14 @@ export class MetaProvider implements ISocialProvider, IPublishingProvider {
         return this.handleGraphError(res.status, data, credentials.accessToken);
       }
       creationId = data.id;
+
+      if (context?.onRemotePrepared) {
+        await context.onRemotePrepared({ containerId: creationId });
+      }
     } catch (err: any) {
+      if (err.name === "ProviderCoordinationError") {
+        throw err;
+      }
       if (err.message === "redirect") {
         return {
           success: false,
@@ -736,6 +752,11 @@ export class MetaProvider implements ISocialProvider, IPublishingProvider {
       publishParams.append("creation_id", creationId);
       const publishUrl = `${this.baseUrl}/${this.version}/${igId}/media_publish?${publishParams.toString()}`;
 
+      // PRE-MUTATION CHECKPOINT: durably transition to PUBLISH_REQUESTED locally before final POST
+      if (context?.beforeFinalMutation) {
+        await context.beforeFinalMutation();
+      }
+
       const res = await this.fetchWithTimeout(publishUrl, {
         method: "POST",
         redirect: "error",
@@ -751,6 +772,9 @@ export class MetaProvider implements ISocialProvider, IPublishingProvider {
         processingState: "PUBLISHED",
       };
     } catch (err: any) {
+      if (err.name === "ProviderCoordinationError") {
+        throw err;
+      }
       if (err.message === "redirect") {
         return {
           success: false,

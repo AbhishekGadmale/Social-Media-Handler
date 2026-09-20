@@ -1,3 +1,4 @@
+import { ProviderPublishContext } from '../core/interfaces/IPublishingProvider';
 import {
   AuthUrlInput,
   OAuthCredentials,
@@ -590,7 +591,8 @@ export class LinkedInProvider implements ISocialProvider, IPublishingProvider {
   async publish(
     credentials: ProviderExecutionCredentials,
     input: ProviderPublicationInput,
-    mediaSource?: IMediaContentSource
+    mediaSource?: IMediaContentSource,
+    context?: ProviderPublishContext
   ): Promise<ProviderPublishResult> {
     if (!input.externalAccountId) {
       return {

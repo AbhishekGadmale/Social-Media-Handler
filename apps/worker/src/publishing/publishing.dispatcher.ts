@@ -229,7 +229,7 @@ export class PublishingDispatcher implements OnModuleInit, OnModuleDestroy {
       await this.prisma.$transaction(async (tx) => {
         const updateData: any = { status: PostStatus.UNKNOWN };
         if (variantMeta) {
-          updateData.executionMetadata = { ...variantMeta, phase: 'AMBIGUOUS' };
+          updateData.executionMetadata = { ...(variantMeta as object), phase: 'AMBIGUOUS' };
           updateData.dispatchVersion = { increment: 1 };
         }
         const updated = await tx.postPlatformVariant.updateMany({

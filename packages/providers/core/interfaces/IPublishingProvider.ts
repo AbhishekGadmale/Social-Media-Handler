@@ -84,6 +84,25 @@ export interface ProviderExecutionCredentials {
   accessToken: string;
 }
 
+export interface ProviderRemotePreparation {
+  containerId?: string;
+  // extensible for other preparation metadata later
+}
+
+export interface ProviderPublishContext {
+  /**
+   * Invoked when the provider has completed preliminary remote steps (e.g. creating a container).
+   * Used to durably persist the container ID locally before proceeding.
+   */
+  onRemotePrepared?: (preparation: ProviderRemotePreparation) => Promise<void>;
+
+  /**
+   * Invoked immediately before the final non-idempotent remote mutation.
+   * If this hook throws, the provider must abort and not perform the remote mutation.
+   */
+  beforeFinalMutation?: () => Promise<void>;
+}
+
 export interface IPublishingProvider {
   /**
    * Statically describes the provider's publishing constraints and capabilities.
@@ -104,6 +123,7 @@ export interface IPublishingProvider {
   publish(
     credentials: ProviderExecutionCredentials, 
     input: ProviderPublicationInput,
-    mediaSource?: IMediaContentSource
+    mediaSource?: IMediaContentSource,
+    context?: ProviderPublishContext
   ): Promise<ProviderPublishResult>;
 }
