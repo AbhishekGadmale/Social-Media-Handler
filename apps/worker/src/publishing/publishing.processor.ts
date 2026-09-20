@@ -291,7 +291,43 @@ export class PublishingProcessor extends WorkerHost {
         publicationId,
         provider: variant.socialAccount.provider,
       });
-      result = await adapter.publish(credentials, providerInput, this.storage);
+
+      const publishContext = {
+        onRemotePrepared: async (remoteIdentity: any) => {
+          const currentVariant = await this.prisma.postPlatformVariant.findUniqueOrThrow({ where: { id: publicationId }});
+          const phase = (currentVariant.executionMetadata as any).phase;
+          const tRes = await executionRepo.transitionOperation(
+            publicationId,
+            currentOperationId!,
+            phase,
+            'CONTAINER_CREATED',
+            expectedDispatchVersion,
+            { containerId: remoteIdentity.containerId }
+          );
+          if (tRes.type !== ExecutionTransitionResultType.SUCCESS) {
+            throw new ProviderCoordinationError(`Failed to persist preparation state: ${(tRes as any).reason}`);
+          }
+          expectedDispatchVersion = (tRes as any).variant.dispatchVersion;
+        },
+        beforeFinalMutation: async () => {
+          const currentVariant = await this.prisma.postPlatformVariant.findUniqueOrThrow({ where: { id: publicationId }});
+          const phase = (currentVariant.executionMetadata as any).phase;
+          const tRes = await executionRepo.transitionOperation(
+            publicationId,
+            currentOperationId!,
+            phase,
+            'PUBLISH_REQUESTED',
+            expectedDispatchVersion
+          );
+          if (tRes.type !== ExecutionTransitionResultType.SUCCESS) {
+            throw new ProviderCoordinationError(`Failed to persist final checkpoint: ${(tRes as any).reason}`);
+          }
+          expectedDispatchVersion = (tRes as any).variant.dispatchVersion;
+        }
+      };
+
+      result = await adapter.publish(credentials, providerInput, this.storage, publishContext);
+
     } catch (error) {
       this.logger.error({
         msg: 'publication.provider_error',

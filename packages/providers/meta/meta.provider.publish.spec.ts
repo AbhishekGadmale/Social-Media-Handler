@@ -97,7 +97,7 @@ describe("MetaProvider Publishing", () => {
         providerOptions: {},
       };
 
-      const result = await provider.publish(creds, input);
+      const result = await provider.publish(creds, input, undefined, mockCtx);
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.externalPostId).toBe("pageId_123");
@@ -127,8 +127,7 @@ describe("MetaProvider Publishing", () => {
             externalAccountId: "page_456",
             content: "C",
             providerOptions: {},
-          },
-        );
+          }, undefined, mockCtx);
         expect((global.fetch as any).mock.calls[0][0]).toContain(
           "/v20.0/page_456/feed",
         );
@@ -148,8 +147,7 @@ describe("MetaProvider Publishing", () => {
             externalAccountId: "../../malicious",
             content: "C",
             providerOptions: {},
-          },
-        );
+          }, undefined, mockCtx);
         expect((global.fetch as any).mock.calls[0][0]).toContain(
           "/v20.0/..%2F..%2Fmalicious/feed",
         );
@@ -174,8 +172,7 @@ describe("MetaProvider Publishing", () => {
           {
             getStream: async () =>
               import("stream").then((s) => s.Readable.from([createMockJpeg(1080, 1080)])) as any,
-          },
-        );
+          }, mockCtx);
         expect((global.fetch as any).mock.calls[0][0]).toContain(
           "/v20.0/..%2F..%2Fmalicious/photos",
         );
@@ -196,8 +193,7 @@ describe("MetaProvider Publishing", () => {
           externalAccountId: "p",
           content: "C",
           providerOptions: {},
-        },
-      );
+        }, undefined, mockCtx);
       const options = (global.fetch as any).mock.calls[0][1];
       expect(options.redirect).toBe("error");
     });
@@ -215,8 +211,7 @@ describe("MetaProvider Publishing", () => {
           externalAccountId: "p",
           content: "C",
           providerOptions: {},
-        },
-      );
+        }, undefined, mockCtx);
       expect(result.success).toBe(false);
       if (!result.success) {
         expect(result.failureCode).toBe("NETWORK_ERROR");
@@ -248,8 +243,7 @@ describe("MetaProvider Publishing", () => {
       const result = await provider.publish(
         creds,
         input,
-        mockMediaSource as any,
-      );
+        mockMediaSource as any, mockCtx);
       expect(result.success).toBe(true);
       const fetchCalls = (global.fetch as any).mock.calls;
       const url = fetchCalls[0][0];
@@ -286,8 +280,7 @@ describe("MetaProvider Publishing", () => {
       const result = await provider.publish(
         { accessToken: "t" },
         input,
-        mockMediaSource as any,
-      );
+        mockMediaSource as any, mockCtx);
       expect((result as any).externalPostId).toBe("pageId_456");
     });
 
@@ -311,8 +304,7 @@ describe("MetaProvider Publishing", () => {
       const result = await provider.publish(
         { accessToken: "t" },
         input,
-        mockMediaSource as any,
-      );
+        mockMediaSource as any, mockCtx);
       expect((result as any).externalPostId).toBe("photo-object-id");
     });
 
@@ -336,8 +328,7 @@ describe("MetaProvider Publishing", () => {
       await provider.publish(
         { accessToken: "t" },
         input,
-        mockMediaSource as any,
-      );
+        mockMediaSource as any, mockCtx);
       const options = (global.fetch as any).mock.calls[0][1];
       expect(options.redirect).toBe("error");
     });
@@ -361,8 +352,7 @@ describe("MetaProvider Publishing", () => {
       const result = await provider.publish(
         { accessToken: "t" },
         input,
-        mockMediaSource as any,
-      );
+        mockMediaSource as any, mockCtx);
       expect(result.success).toBe(false);
       if (!result.success) {
         expect(result.failureCode).toBe("NETWORK_ERROR");
@@ -381,7 +371,9 @@ describe("MetaProvider Publishing", () => {
         content: "C",
         providerOptions: {},
       };
-      await expect(igProvider.publish({ accessToken: "t" }, input)).rejects.toThrow("Instagram single-image publishing strictly requires both onRemotePrepared and beforeFinalMutation coordination hooks.");
+      const result = await igProvider.publish({ accessToken: "t" }, input, undefined, mockCtx);
+      expect(result.success).toBe(false);
+      expect((result as any).failureCode).toBe("MEDIA_REQUIRED");
     });
 
     it("Meta alias cannot execute Facebook publish", async () => {
@@ -396,8 +388,7 @@ describe("MetaProvider Publishing", () => {
       };
       const result = await metaProvider.publish(
         { accessToken: "token" },
-        input,
-      );
+        input, undefined, mockCtx);
       expect(result.success).toBe(false);
       expect((result as any).failureCode).toBe("UNSUPPORTED_PROVIDER");
     });
@@ -412,7 +403,9 @@ describe("MetaProvider Publishing", () => {
         content: "test", // text only, handled by FB branch but rejected by IG branch
         providerOptions: {},
       };
-      await expect(metaProvider.publish({ accessToken: "token" }, input)).rejects.toThrow("Instagram single-image publishing strictly requires both onRemotePrepared and beforeFinalMutation coordination hooks.");
+      const result = await metaProvider.publish({ accessToken: "token" }, input, undefined, mockCtx);
+      expect(result.success).toBe(false);
+      expect((result as any).failureCode).toBe("MEDIA_REQUIRED");
     });
   });
 
@@ -432,8 +425,7 @@ describe("MetaProvider Publishing", () => {
           externalAccountId: "p",
           content: "C",
           providerOptions: {},
-        },
-      );
+        }, undefined, mockCtx);
       expect((result as any).failureCode).toBe("OAUTH_EXCEPTION");
     });
 
@@ -452,8 +444,7 @@ describe("MetaProvider Publishing", () => {
           externalAccountId: "p",
           content: "C",
           providerOptions: {},
-        },
-      );
+        }, undefined, mockCtx);
       expect((result as any).failureCode).toBe("MISSING_PERMISSION");
     });
 
@@ -478,8 +469,7 @@ describe("MetaProvider Publishing", () => {
           externalAccountId: "p",
           content: "C",
           providerOptions: {},
-        },
-      );
+        }, undefined, mockCtx);
       expect((result as any).failureCategory).toBe("RATE_LIMITED");
       expect((result as any).retryAfterSeconds).toBe(3600);
     });
@@ -499,8 +489,7 @@ describe("MetaProvider Publishing", () => {
           externalAccountId: "p",
           content: "C",
           providerOptions: {},
-        },
-      );
+        }, undefined, mockCtx);
       expect(result.success).toBe(false);
       if (!result.success) {
         expect(result.failureCategory).toBe("TRANSIENT");
@@ -522,8 +511,7 @@ describe("MetaProvider Publishing", () => {
           externalAccountId: "p",
           content: "C",
           providerOptions: {},
-        },
-      );
+        }, undefined, mockCtx);
       expect(result.success).toBe(false);
     });
 
@@ -547,8 +535,7 @@ describe("MetaProvider Publishing", () => {
       const result = await provider.publish(
         { accessToken: "t" },
         input,
-        mockMediaSource as any,
-      );
+        mockMediaSource as any, mockCtx);
       expect(result.success).toBe(false);
     });
 
@@ -567,8 +554,7 @@ describe("MetaProvider Publishing", () => {
           externalAccountId: "p",
           content: "C",
           providerOptions: {},
-        },
-      );
+        }, undefined, mockCtx);
       expect((result as any).message).not.toContain("secret_abc");
       expect((result as any).message).toContain("***");
     });
@@ -592,8 +578,7 @@ describe("MetaProvider Publishing", () => {
           externalAccountId: "p",
           content: "C",
           providerOptions: {},
-        },
-      );
+        }, undefined, mockCtx);
       expect((result as any).message).not.toContain("real_secret_here");
       expect((result as any).message).toContain("client_secret=***");
     });

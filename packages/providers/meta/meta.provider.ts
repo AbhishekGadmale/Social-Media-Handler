@@ -417,6 +417,10 @@ export class MetaProvider implements ISocialProvider, IPublishingProvider {
     }
 
     // --- Facebook Page Publishing ---
+    if (!context?.beforeFinalMutation) {
+      throw new ProviderCoordinationError("Facebook publishing strictly requires beforeFinalMutation coordination hook.");
+    }
+
     const pageId = input.externalAccountId;
     if (!pageId) {
       return {
@@ -476,6 +480,8 @@ export class MetaProvider implements ISocialProvider, IPublishingProvider {
           "image.jpg",
         );
 
+        await context.beforeFinalMutation();
+
         const postUrl = `${this.baseUrl}/${this.version}/${encodeURIComponent(pageId)}/photos?access_token=${credentials.accessToken}`;
         const res = await this.fetchWithTimeout(postUrl, {
           method: "POST",
@@ -523,6 +529,8 @@ export class MetaProvider implements ISocialProvider, IPublishingProvider {
         const params = new URLSearchParams();
         params.append("message", input.content);
         params.append("access_token", credentials.accessToken);
+
+        await context.beforeFinalMutation();
 
         const res = await this.fetchWithTimeout(postUrl, {
           method: "POST",

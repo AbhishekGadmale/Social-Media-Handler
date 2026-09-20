@@ -307,9 +307,9 @@ describe('ExecutionMetadataRepository Transitions', () => {
       const meta = parseMeta(getVariant(start));
       const t1 = await repo.transitionOperation(testVariantId, meta.operationId, 'INITIATED', 'CONTAINER_CREATED', getVariant(start).dispatchVersion, { containerId: 'c' });
       const t2 = await repo.transitionOperation(testVariantId, meta.operationId, 'CONTAINER_CREATED', 'PUBLISH_REQUESTED', getVariant(t1).dispatchVersion);
-      
+
       const beforeRollback = await prisma.postPlatformVariant.findUniqueOrThrow({ where: { id: testVariantId } });
-      
+
       // Attempt transaction that will fail
       try {
         await prisma.$transaction(async (tx) => {
@@ -322,7 +322,7 @@ describe('ExecutionMetadataRepository Transitions', () => {
               dispatchVersion: { increment: 1 }
             }
           });
-          
+
           // Force a failure
           throw new Error('Forced rollback');
         });
@@ -404,5 +404,39 @@ describe('ExecutionMetadataRepository Transitions', () => {
       const r3 = await repo.transitionOperation(testVariantId, opId, 'CONTAINER_CREATED', 'PUBLISH_REQUESTED', ver);
       expect(r3.type).toBe(ExecutionTransitionResultType.PHASE_MISMATCH);
     });
+  });
+
+  it('9. INITIATED -> PUBLISH_REQUESTED (Facebook text/single-image)', async () => {
+    await prisma.post.create({ data: { id: postId, workspaceId, content: 'FB test', status: 'DRAFT' } });
+    const fbAccountId = crypto.randomUUID();
+    await prisma.socialAccount.create({
+      data: { id: fbAccountId, workspaceId, provider: 'FACEBOOK', externalId: 'fb-' + crypto.randomUUID(), status: 'ACTIVE' }
+    });
+    const variant = await prisma.postPlatformVariant.create({
+      data: {
+        id: crypto.randomUUID(),
+        workspaceId,
+        postId,
+        socialAccountId: fbAccountId,
+        status: 'DRAFT'
+      }
+    });
+
+    const startRes = await repo.startOperation(variant.id, 'FACEBOOK');
+    expect(startRes.type).toBe(ExecutionTransitionResultType.SUCCESS);
+
+    const v1 = (startRes as any).variant;
+
+    const tRes = await repo.transitionOperation(
+      v1.id,
+      parseMeta(v1).operationId,
+      'INITIATED',
+      'PUBLISH_REQUESTED',
+      v1.dispatchVersion
+    );
+    expect(tRes.type).toBe(ExecutionTransitionResultType.SUCCESS);
+    const meta = parseMeta((tRes as any).variant);
+    expect(meta.phase).toBe('PUBLISH_REQUESTED');
+    expect(meta.publishRequestedAt).toBeDefined();
   });
 });
