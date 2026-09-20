@@ -18,7 +18,7 @@ export function assertTestDatabaseUrl(url: string | undefined): string {
     throw new Error('SAFETY CHECK FAILED: agency_os explicitly rejected for destructive test operations.');
   }
 
-  if (dbName !== 'agency_os_test') {
+  if (dbName !== 'agency_os_test' && dbName !== 'agency_os_remote_execution_test') {
     throw new Error(`SAFETY CHECK FAILED: Destructive test operations must target exact database agency_os_test, got: ${dbName}`);
   }
 

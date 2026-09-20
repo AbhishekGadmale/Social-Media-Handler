@@ -30,6 +30,8 @@ const BaseExecutionMetadataSchema = z.object({
   containerId: z.string().optional(),
   containerCreatedAt: z.string().datetime().optional(),
   publishRequestedAt: z.string().datetime().optional(),
+  lastCheckedAt: z.string().datetime().optional(),
+  nextCheckAt: z.string().datetime().optional(),
 });
 
 export const ExecutionMetadataSchema = z.discriminatedUnion('phase', [
