@@ -33,8 +33,8 @@ const TERMINAL_PHASES: ExecutionPhase[] = ["COMPLETED", "FAILED", "AMBIGUOUS"];
 const ALLOWED_TRANSITIONS: Record<ExecutionPhase, ExecutionPhase[]> = {
   INITIATED: ["CONTAINER_CREATED", "PUBLISH_REQUESTED", "COMPLETED", "FAILED"],
   CONTAINER_CREATED: ["PROCESSING_REMOTE", "PUBLISH_REQUESTED", "FAILED"],
-  PROCESSING_REMOTE: ["PROCESSING_REMOTE", "PUBLISH_REQUESTED", "FAILED"],
-  PUBLISH_REQUESTED: ["COMPLETED", "AMBIGUOUS"],
+  PROCESSING_REMOTE: ["PROCESSING_REMOTE", "PUBLISH_REQUESTED", "COMPLETED", "FAILED"],
+  PUBLISH_REQUESTED: ["COMPLETED", "AMBIGUOUS", "PROCESSING_REMOTE"],
   COMPLETED: [],
   FAILED: [],
   AMBIGUOUS: [],
@@ -114,6 +114,7 @@ export class ExecutionMetadataRepository {
       containerId?: string;
       finalRemoteId?: string;
       delayMs?: number;
+      remoteResourceId?: string;
     },
     clientTx?: Prisma.TransactionClient
   ): Promise<ExecutionTransitionResult> {
@@ -196,6 +197,9 @@ export class ExecutionMetadataRepository {
         const now = Date.now();
         nextMetadata.lastCheckedAt = new Date(now).toISOString();
         nextMetadata.nextCheckAt = new Date(now + data.delayMs).toISOString();
+        if (data.remoteResourceId) {
+          nextMetadata.remoteResourceId = data.remoteResourceId;
+        }
       }
 
       if (nextPhase === "PUBLISH_REQUESTED") {

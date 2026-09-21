@@ -103,6 +103,13 @@ export interface ProviderPublishContext {
   beforeFinalMutation?: () => Promise<void>;
 }
 
+export interface ProviderStatusCheckResult {
+  status: 'PROCESSING' | 'PUBLISHED' | 'FAILED' | 'UNKNOWN';
+  failureCategory?: 'PERMANENT' | 'RETRYABLE' | 'UNKNOWN_RESULT' | 'RATE_LIMIT' | 'AUTH_REQUIRED' | 'MEDIA_ERROR';
+  failureCode?: string;
+  message?: string;
+}
+
 export interface IPublishingProvider {
   /**
    * Statically describes the provider's publishing constraints and capabilities.
@@ -126,4 +133,6 @@ export interface IPublishingProvider {
     mediaSource?: IMediaContentSource,
     context?: ProviderPublishContext
   ): Promise<ProviderPublishResult>;
+
+  checkStatus?(credentials: ProviderExecutionCredentials, remoteResourceId: string): Promise<ProviderStatusCheckResult>;
 }

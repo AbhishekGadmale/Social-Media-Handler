@@ -285,6 +285,7 @@ export class PublishingProcessor extends WorkerHost {
     }, PUBLISH_HEARTBEAT_INTERVAL_MS);
 
     let result;
+    let currentSourcePhase: "FAILED" | "INITIATED" | "CONTAINER_CREATED" | "PROCESSING_REMOTE" | "PUBLISH_REQUESTED" | "COMPLETED" | "AMBIGUOUS" = isContinuation ? 'PROCESSING_REMOTE' : 'INITIATED';
     try {
       this.logger.log({
         msg: 'publication.provider_publish_start',
@@ -308,6 +309,7 @@ export class PublishingProcessor extends WorkerHost {
             throw new ProviderCoordinationError(`Failed to persist preparation state: ${(tRes as any).reason}`);
           }
           expectedDispatchVersion = (tRes as any).variant.dispatchVersion;
+          currentSourcePhase = 'PUBLISH_REQUESTED';
         },
         beforeFinalMutation: async () => {
           const currentVariant = await this.prisma.postPlatformVariant.findUniqueOrThrow({ where: { id: publicationId }});
@@ -323,10 +325,46 @@ export class PublishingProcessor extends WorkerHost {
             throw new ProviderCoordinationError(`Failed to persist final checkpoint: ${(tRes as any).reason}`);
           }
           expectedDispatchVersion = (tRes as any).variant.dispatchVersion;
+          currentSourcePhase = 'PUBLISH_REQUESTED';
         }
       };
 
-      result = await adapter.publish(credentials, providerInput, this.storage, publishContext);
+      // PROCESSING_REMOTE continuation: poll status instead of re-publishing
+      if (isContinuation && variant.executionMetadata) {
+        const parsed = safeParseExecutionMetadata(variant.executionMetadata);
+        if (parsed.success && parsed.data.phase === 'PROCESSING_REMOTE') {
+          const remoteResourceId = (parsed.data as any).remoteResourceId;
+          if (typeof adapter.checkStatus !== 'function') {
+            this.logger.error({ msg: 'publication.unsupported_status_check', publicationId });
+            result = {
+              success: false,
+              failureCategory: 'UNKNOWN_RESULT',
+              failureCode: 'UNKNOWN',
+              message: 'Provider does not support remote status checks.',
+            };
+          } else {
+            const statusRes = await adapter.checkStatus(credentials, remoteResourceId);
+            if (statusRes.status === 'PUBLISHED') {
+              result = { success: true, externalPostId: remoteResourceId };
+            } else if (statusRes.status === 'FAILED') {
+              result = {
+                success: false,
+                failureCategory: statusRes.failureCategory || 'PERMANENT',
+                failureCode: statusRes.failureCode || 'PROVIDER_PROCESSING_FAILED',
+                message: statusRes.message,
+              };
+            } else {
+              // PROCESSING or UNKNOWN (network error, timeout, 5xx)
+              // Stay in PROCESSING_REMOTE - schedule next poll
+              result = { success: true, processingState: 'PROCESSING', externalPostId: remoteResourceId };
+            }
+          }
+        } else {
+          result = await adapter.publish(credentials, providerInput, this.storage, publishContext);
+        }
+      } else {
+        result = await adapter.publish(credentials, providerInput, this.storage, publishContext);
+      }
 
     } catch (error) {
       this.logger.error({
@@ -349,8 +387,8 @@ export class PublishingProcessor extends WorkerHost {
       if (result.processingState === 'PROCESSING') {
         const delayMs = 60000;
         const transitionRes = await executionRepo.transitionOperation(
-          publicationId, currentOperationId!, isContinuation ? 'PROCESSING_REMOTE' : 'CONTAINER_CREATED', 'PROCESSING_REMOTE', expectedDispatchVersion,
-          { delayMs }
+          publicationId, currentOperationId!, currentSourcePhase, 'PROCESSING_REMOTE', expectedDispatchVersion,
+          { delayMs, remoteResourceId: result.externalPostId }
         );
         if (transitionRes.type === ExecutionTransitionResultType.SUCCESS) {
           this.logger.log({ msg: 'publication.processing_remote', publicationId, delayMs });
@@ -369,7 +407,7 @@ export class PublishingProcessor extends WorkerHost {
         }
       } else {
         const transitionRes = await executionRepo.transitionOperation(
-          publicationId, currentOperationId!, isContinuation ? 'PROCESSING_REMOTE' : 'INITIATED', 'COMPLETED', expectedDispatchVersion,
+          publicationId, currentOperationId!, currentSourcePhase, 'COMPLETED', expectedDispatchVersion,
           { finalRemoteId: result.externalPostId }
         );
         if (transitionRes.type === ExecutionTransitionResultType.SUCCESS) {
@@ -380,12 +418,12 @@ export class PublishingProcessor extends WorkerHost {
       }
     } else {
       await executionRepo.transitionOperation(
-        publicationId, currentOperationId!, isContinuation ? 'PROCESSING_REMOTE' : 'INITIATED', 'FAILED', expectedDispatchVersion
+        publicationId, currentOperationId!, currentSourcePhase, 'FAILED', expectedDispatchVersion
       );
       if (result.failureCategory === 'UNKNOWN_RESULT') {
-        await this.handleUnknown(publicationId, attempt.id, result.failureCode, result);
+        await this.handleUnknown(publicationId, attempt.id, result.failureCode || 'UNKNOWN', result);
       } else {
-        await this.handleFailure(publicationId, attempt.id, result.failureCategory, result.failureCode, result.message, result.retryAfterSeconds, result);
+        await this.handleFailure(publicationId, attempt.id, result.failureCategory || 'UNKNOWN', result.failureCode || 'UNKNOWN', result.message || 'Unknown error', result.retryAfterSeconds, result);
       }
     }
   }

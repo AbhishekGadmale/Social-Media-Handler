@@ -61,7 +61,8 @@ describe('YouTubeProvider Publishing', () => {
         media: [{ key: 'video.mp4', mimeType: 'video/mp4', sizeBytes: 100 }],
         providerOptions: {}
       },
-      mediaSource
+      mediaSource,
+      { onRemotePrepared: vi.fn().mockResolvedValue(undefined), beforeFinalMutation: vi.fn().mockResolvedValue(undefined) }
     );
     expect(res.success).toBe(true);
     if (res.success) {
@@ -82,7 +83,8 @@ describe('YouTubeProvider Publishing', () => {
     const res = await provider.publish(
       { accessToken: 'fake-token' },
       { attemptId: '1', targetId: '2', workspaceId: 'ws-1', content: 'hello', media: [{ key: 'video.mp4', mimeType: 'video/mp4', sizeBytes: 100 }], providerOptions: {} },
-      mediaSource
+      mediaSource,
+      { onRemotePrepared: vi.fn().mockResolvedValue(undefined), beforeFinalMutation: vi.fn().mockResolvedValue(undefined) }
     );
     expect(res.success).toBe(false);
     if (!res.success) {
@@ -102,7 +104,8 @@ describe('YouTubeProvider Publishing', () => {
     const res = await provider.publish(
       { accessToken: 'fake-token' },
       { attemptId: '1', targetId: '2', workspaceId: 'ws-1', content: 'hello', media: [{ key: 'video.mp4', mimeType: 'video/mp4', sizeBytes: 100 }], providerOptions: {} },
-      mediaSource
+      mediaSource,
+      { onRemotePrepared: vi.fn().mockResolvedValue(undefined), beforeFinalMutation: vi.fn().mockResolvedValue(undefined) }
     );
     expect(res.success).toBe(false);
     if (!res.success) {
@@ -122,7 +125,8 @@ describe('YouTubeProvider Publishing', () => {
     const res = await provider.publish(
       { accessToken: 'fake-token' },
       { attemptId: '1', targetId: '2', workspaceId: 'ws-1', content: 'hello', media: [{ key: 'video.mp4', mimeType: 'video/mp4', sizeBytes: 100 }], providerOptions: {} },
-      mediaSource
+      mediaSource,
+      { onRemotePrepared: vi.fn().mockResolvedValue(undefined), beforeFinalMutation: vi.fn().mockResolvedValue(undefined) }
     );
     expect(res.success).toBe(false);
     if (!res.success) {
@@ -142,7 +146,8 @@ describe('YouTubeProvider Publishing', () => {
     const res = await provider.publish(
       { accessToken: 'fake-token' },
       { attemptId: '1', targetId: '2', workspaceId: 'ws-1', content: 'hello', media: [{ key: 'video.mp4', mimeType: 'video/mp4', sizeBytes: 100 }], providerOptions: {} },
-      mediaSource
+      mediaSource,
+      { onRemotePrepared: vi.fn().mockResolvedValue(undefined), beforeFinalMutation: vi.fn().mockResolvedValue(undefined) }
     );
     expect(res.success).toBe(false);
     if (!res.success) {
@@ -162,7 +167,8 @@ describe('YouTubeProvider Publishing', () => {
     const res = await provider.publish(
       { accessToken: 'fake-token' },
       { attemptId: '1', targetId: '2', workspaceId: 'ws-1', content: 'hello', media: [{ key: 'video.mp4', mimeType: 'video/mp4', sizeBytes: 100 }], providerOptions: {} },
-      mediaSource
+      mediaSource,
+      { onRemotePrepared: vi.fn().mockResolvedValue(undefined), beforeFinalMutation: vi.fn().mockResolvedValue(undefined) }
     );
     expect(res.success).toBe(false);
     if (!res.success) {
@@ -183,7 +189,8 @@ describe('YouTubeProvider Publishing', () => {
     const res = await provider.publish(
       { accessToken: 'fake-token' },
       { attemptId: '1', targetId: '2', workspaceId: 'ws-1', content: 'hello', media: [{ key: 'video.mp4', mimeType: 'video/mp4', sizeBytes: 100 }], providerOptions: {} },
-      mediaSource
+      mediaSource,
+      { onRemotePrepared: vi.fn().mockResolvedValue(undefined), beforeFinalMutation: vi.fn().mockResolvedValue(undefined) }
     );
     expect(res.success).toBe(false);
     if (!res.success) {
@@ -205,7 +212,8 @@ describe('YouTubeProvider Publishing', () => {
     const res = await provider.publish(
       { accessToken: 'fake-token' },
       { attemptId: '1', targetId: '2', workspaceId: 'ws-1', content: 'hello', media: [{ key: 'video.mp4', mimeType: 'video/mp4', sizeBytes: 100 }], providerOptions: {} },
-      mediaSource
+      mediaSource,
+      { onRemotePrepared: vi.fn().mockResolvedValue(undefined), beforeFinalMutation: vi.fn().mockResolvedValue(undefined) }
     );
     expect(res.success).toBe(false);
     if (!res.success) {
@@ -228,7 +236,8 @@ describe('YouTubeProvider Publishing', () => {
     const res = await provider.publish(
       { accessToken: 'fake-token' },
       { attemptId: '1', targetId: '2', workspaceId: 'ws-1', content: 'hello', media: [{ key: 'video.mp4', mimeType: 'video/mp4', sizeBytes: 100 }], providerOptions: {} },
-      mediaSource
+      mediaSource,
+      { onRemotePrepared: vi.fn().mockResolvedValue(undefined), beforeFinalMutation: vi.fn().mockResolvedValue(undefined) }
     );
     expect(res.success).toBe(false);
     if (!res.success) {
