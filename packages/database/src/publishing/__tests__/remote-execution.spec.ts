@@ -31,7 +31,7 @@ describe('ExecutionMetadataRepository Transitions', () => {
     await prisma.organization.create({ data: { id: orgId, name: 'Test Org' } });
     await prisma.workspace.create({ data: { id: workspaceId, name: 'Test Workspace', organizationId: orgId } });
     accountId = generateId();
-    await prisma.socialAccount.create({ data: { id: accountId, workspaceId, provider: 'INSTAGRAM', externalId: 'ext1', status: 'ACTIVE' } });
+    await prisma.socialAccount.create({ data: { id: accountId, workspaceId, provider: 'INSTAGRAM', externalId: "ext1-" + generateId(), status: 'ACTIVE' } });
     postId = generateId();
     await prisma.post.create({ data: { id: postId, workspaceId, content: 'Test', status: 'DRAFT' } });
   });

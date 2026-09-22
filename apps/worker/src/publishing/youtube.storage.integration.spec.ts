@@ -721,13 +721,14 @@ describe('Worker Storage Integration', () => {
 
       const attemptUpdate =
         mockPrisma.publicationAttempt.update.mock.calls.find(
-          (c: any) => c[0].data && c[0].data.failureCode === 'UNKNOWN',
+          (c: any) =>
+            c[0].data && c[0].data.failureCode === 'MISSING_CAPABILITY',
         );
       expect(attemptUpdate).toBeDefined();
 
       const statusUpdate =
         mockPrisma.postPlatformVariant.update.mock.calls.find(
-          (c: any) => c[0].data && c[0].data.status === 'UNKNOWN',
+          (c: any) => c[0].data && c[0].data.status === 'FAILED',
         );
       expect(statusUpdate).toBeDefined();
     });

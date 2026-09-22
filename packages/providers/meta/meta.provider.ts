@@ -9,6 +9,7 @@ import { ISocialProvider } from "../core/interfaces/ISocialProvider";
 import { ProviderApiError, ProviderCoordinationError } from "../core/errors/index";
 import {
   IPublishingProvider,
+  ProviderStatusCheckResult,
   ProviderPublishContext,
   PublishingCapabilities,
   ProviderOptionsValidationResult,
@@ -359,7 +360,12 @@ export class MetaProvider implements ISocialProvider, IPublishingProvider {
             mimeTypes: ["image/jpeg"],
           },
           MULTI_IMAGE_POST: { supported: false },
-          VIDEO_POST: { supported: false },
+          VIDEO_POST: {
+              supported: true,
+              maxCount: 1,
+              maxBytes: 100 * 1024 * 1024,
+              mimeTypes: ["video/mp4", "video/quicktime"],
+            },
           LINK_POST: { supported: false },
           DOCUMENT_POST: { supported: false },
         },
@@ -373,7 +379,12 @@ export class MetaProvider implements ISocialProvider, IPublishingProvider {
         TEXT_POST: { supported: false },
         IMAGE_POST: { supported: false },
         MULTI_IMAGE_POST: { supported: false },
-        VIDEO_POST: { supported: false },
+        VIDEO_POST: {
+              supported: true,
+              maxCount: 1,
+              maxBytes: 100 * 1024 * 1024,
+              mimeTypes: ["video/mp4", "video/quicktime"],
+            },
         LINK_POST: { supported: false },
         DOCUMENT_POST: { supported: false },
       },
@@ -583,7 +594,87 @@ export class MetaProvider implements ISocialProvider, IPublishingProvider {
     }
   }
 
-  private async publishInstagram(
+    private async publishInstagram(
+    credentials: ProviderExecutionCredentials,
+    input: ProviderPublicationInput,
+    mediaSource?: IMediaContentSource,
+    context?: ProviderPublishContext,
+  ): Promise<ProviderPublishResult> {
+    if (!context?.onRemotePrepared || !context?.beforeFinalMutation) {
+      throw new ProviderCoordinationError("Instagram publishing strictly requires both onRemotePrepared and beforeFinalMutation coordination hooks.");
+    }
+    
+    const media = input.media?.[0];
+    if (media && media.mimeType && media.mimeType.startsWith('video/')) {
+      return this.publishInstagramVideo(credentials, input, mediaSource, context);
+    }
+    
+    return this.publishInstagramImage(credentials, input, mediaSource, context);
+  }
+
+  private async publishInstagramVideo(
+    credentials: ProviderExecutionCredentials,
+    input: ProviderPublicationInput,
+    mediaSource?: IMediaContentSource,
+    context?: ProviderPublishContext,
+  ): Promise<ProviderPublishResult> {
+    const igId = encodeURIComponent(input.externalAccountId);
+    if (!igId) {
+      return { success: false, failureCategory: "VALIDATION", failureCode: "NO_IG_ID", message: "No Instagram ID provided" };
+    }
+
+    if (!input.media || input.media.length === 0 || !input.media[0]) {
+      return { success: false, failureCategory: "VALIDATION", failureCode: "MEDIA_REQUIRED", message: "Instagram video requires exactly one video" };
+    }
+    if (input.media.length > 1) {
+      return { success: false, failureCategory: "VALIDATION", failureCode: "TOO_MANY_MEDIA", message: "Instagram single-video only" };
+    }
+    if (!mediaSource || !mediaSource.getSignedReadUrl) {
+      return { success: false, failureCategory: "TRANSIENT", failureCode: "NO_SIGNED_URL_SUPPORT", message: "Storage does not support getSignedReadUrl" };
+    }
+
+    const media = input.media[0];
+    let videoUrl: string;
+    try {
+      videoUrl = await mediaSource.getSignedReadUrl(media.key!, this.INSTAGRAM_SIGNED_URL_TTL_SECONDS);
+    } catch (e: any) {
+      return { success: false, failureCategory: "TRANSIENT", failureCode: "SIGNED_URL_FAILED", message: `Failed to generate signed URL: ${e.message}` };
+    }
+
+    let creationId: string;
+    try {
+      const createParams = new URLSearchParams();
+      createParams.append("access_token", credentials.accessToken);
+      createParams.append("video_url", videoUrl);
+      createParams.append("media_type", "REELS");
+      if (input.content) {
+        createParams.append("caption", input.content);
+      }
+      const createUrl = `${this.baseUrl}/${this.version}/${igId}/media?${createParams.toString()}`;
+
+      const res = await this.fetchWithTimeout(createUrl, { method: "POST", redirect: "error" });
+      const data = await res.json();
+      if (!res.ok || !data.id) {
+        return this.handleGraphError(res.status, data, credentials.accessToken);
+      }
+      creationId = data.id;
+
+      if (context?.onRemotePrepared) {
+        await context.onRemotePrepared({ containerId: creationId });
+      }
+    } catch (err: any) {
+      if (err.name === "ProviderCoordinationError") throw err;
+      return { success: false, failureCategory: "TRANSIENT", failureCode: "NETWORK_ERROR", message: this.sanitizeErrorMessage(err.message, credentials.accessToken) };
+    }
+
+    return {
+      success: true,
+      externalPostId: creationId,
+      processingState: "PROCESSING",
+    };
+  }
+
+  private async publishInstagramImage(
     credentials: ProviderExecutionCredentials,
     input: ProviderPublicationInput,
     mediaSource?: IMediaContentSource,
@@ -803,7 +894,81 @@ export class MetaProvider implements ISocialProvider, IPublishingProvider {
     }
   }
 
+    async checkStatus(credentials: ProviderExecutionCredentials, remoteResourceId: string): Promise<ProviderStatusCheckResult> {
+    if (this.providerAlias !== 'instagram') {
+      return { status: 'UNKNOWN', failureCategory: 'UNKNOWN_RESULT', message: 'Status checks not supported for this provider' };
+    }
+    try {
+      const params = new URLSearchParams();
+      params.append('access_token', credentials.accessToken);
+      params.append('fields', 'status_code');
+      const url = `${this.baseUrl}/${this.version}/${remoteResourceId}?${params.toString()}`;
+
+      const res = await this.fetchWithTimeout(url, { method: 'GET', redirect: 'error' });
+      const data = await res.json();
+      if (!res.ok) {
+        const errCode = data?.error?.code;
+        if (errCode === 100) {
+           return { status: 'FAILED', failureCategory: 'PERMANENT', failureCode: 'NOT_FOUND', message: 'Container not found' };
+        }
+        return { status: 'UNKNOWN', failureCategory: 'UNKNOWN_RESULT', failureCode: 'GRAPH_ERROR', message: data?.error?.message || 'Error checking status' };
+      }
+
+      const statusCode = data.status_code;
+      if (statusCode === 'IN_PROGRESS') return { status: 'PROCESSING' };
+      if (statusCode === 'FINISHED') return { status: 'READY' };
+      if (statusCode === 'ERROR') return { status: 'FAILED', failureCategory: 'PERMANENT', failureCode: 'PROCESSING_FAILED' };
+      if (statusCode === 'EXPIRED') return { status: 'FAILED', failureCategory: 'PERMANENT', failureCode: 'EXPIRED' };
+      if (statusCode === 'PUBLISHED') return { status: 'PUBLISHED' };
+
+      return { status: 'UNKNOWN', failureCategory: 'UNKNOWN_RESULT', failureCode: 'UNRECOGNIZED_STATUS', message: 'Unrecognized status: ' + statusCode };
+    } catch (err: any) {
+      return { status: 'UNKNOWN', failureCategory: 'UNKNOWN_RESULT', failureCode: 'NETWORK_ERROR', message: this.sanitizeErrorMessage(err.message, credentials.accessToken) };
+    }
+  }
+
+  async finalizePublish(credentials: ProviderExecutionCredentials, input: ProviderPublicationInput, remoteResourceId: string, context?: ProviderPublishContext): Promise<ProviderPublishResult> {
+    if (!context?.beforeFinalMutation) {
+      throw new ProviderCoordinationError("Instagram finalization strictly requires beforeFinalMutation coordination hook.");
+    }
+    
+    try {
+      const igId = encodeURIComponent(input.externalAccountId);
+      if (!igId) {
+        return { success: false, failureCategory: "VALIDATION", failureCode: "NO_IG_ID", message: "No Instagram ID provided" };
+      }
+
+      const publishParams = new URLSearchParams();
+      publishParams.append("access_token", credentials.accessToken);
+      publishParams.append("creation_id", remoteResourceId);
+      const publishUrl = `${this.baseUrl}/${this.version}/${igId}/media_publish?${publishParams.toString()}`;
+
+      if (context?.beforeFinalMutation) {
+        await context.beforeFinalMutation();
+      }
+
+      const res = await this.fetchWithTimeout(publishUrl, { method: "POST", redirect: "error" });
+      const data = await res.json();
+      if (!res.ok || !data.id) {
+        return this.handleGraphError(res.status, data, credentials.accessToken);
+      }
+
+      return {
+        success: true,
+        externalPostId: data.id,
+        processingState: "PUBLISHED",
+      };
+    } catch (err: any) {
+      if (err.name === "ProviderCoordinationError") throw err;
+      if (err.message === "redirect") {
+        return { success: false, failureCategory: "VALIDATION", failureCode: "UNEXPECTED_REDIRECT", message: "Meta returned unexpected redirect" };
+      }
+      return { success: false, failureCategory: "TRANSIENT", failureCode: "NETWORK_ERROR", message: this.sanitizeErrorMessage(err.message, credentials.accessToken) };
+    }
+  }
+
   private handleGraphError(
+
     status: number,
     data: any,
     token: string,

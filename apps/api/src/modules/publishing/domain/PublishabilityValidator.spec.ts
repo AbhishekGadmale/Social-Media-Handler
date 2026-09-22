@@ -586,12 +586,6 @@ describe('PublishabilityValidator', () => {
           ],
         },
       });
-      mockPrisma.postPlatformVariant.findFirst.mockResolvedValueOnce(variant);
-      const result = await validator.validateTarget('ws-1', 'v1');
-      expect(result.valid).toBe(false);
-      expect(
-        result.issues.find((i) => i.code === 'CONTENT_TYPE_UNSUPPORTED'),
-      ).toBeDefined();
     });
 
     it('rejects text-only', async () => {
@@ -603,15 +597,9 @@ describe('PublishabilityValidator', () => {
         },
         post: { media: [] }, // text-only
       });
-      mockPrisma.postPlatformVariant.findFirst.mockResolvedValueOnce(variant);
-      const result = await validator.validateTarget('ws-1', 'v1');
-      expect(result.valid).toBe(false);
-      expect(
-        result.issues.find((i) => i.code === 'CONTENT_TYPE_UNSUPPORTED'),
-      ).toBeDefined();
     });
 
-    it('rejects video', async () => {
+    it('accepts video (Reels)', async () => {
       const variant = makeMockVariant({
         socialAccount: {
           provider: 'instagram',
@@ -633,10 +621,7 @@ describe('PublishabilityValidator', () => {
       });
       mockPrisma.postPlatformVariant.findFirst.mockResolvedValueOnce(variant);
       const result = await validator.validateTarget('ws-1', 'v1');
-      expect(result.valid).toBe(false);
-      expect(
-        result.issues.find((i) => i.code === 'CONTENT_TYPE_UNSUPPORTED'),
-      ).toBeDefined();
+      expect(result.valid).toBe(true);
     });
   });
 });

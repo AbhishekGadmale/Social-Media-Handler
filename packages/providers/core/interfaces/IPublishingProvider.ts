@@ -104,7 +104,7 @@ export interface ProviderPublishContext {
 }
 
 export interface ProviderStatusCheckResult {
-  status: 'PROCESSING' | 'PUBLISHED' | 'FAILED' | 'UNKNOWN';
+  status: 'PROCESSING' | 'READY' | 'PUBLISHED' | 'FAILED' | 'UNKNOWN';
   failureCategory?: 'PERMANENT' | 'RETRYABLE' | 'UNKNOWN_RESULT' | 'RATE_LIMIT' | 'AUTH_REQUIRED' | 'MEDIA_ERROR';
   failureCode?: string;
   message?: string;
@@ -133,6 +133,8 @@ export interface IPublishingProvider {
     mediaSource?: IMediaContentSource,
     context?: ProviderPublishContext
   ): Promise<ProviderPublishResult>;
+
+  finalizePublish?(credentials: ProviderExecutionCredentials, input: ProviderPublicationInput, remoteResourceId: string, context?: ProviderPublishContext): Promise<ProviderPublishResult>;
 
   checkStatus?(credentials: ProviderExecutionCredentials, remoteResourceId: string): Promise<ProviderStatusCheckResult>;
 }

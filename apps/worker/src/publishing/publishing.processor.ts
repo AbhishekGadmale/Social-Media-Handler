@@ -162,7 +162,7 @@ export class PublishingProcessor extends WorkerHost {
       }
 
       const startRes = await executionRepo.startOperation(publicationId, variant.socialAccount.provider as any);
-      if (startRes.type !== ExecutionTransitionResultType.SUCCESS) {
+          if (startRes.type !== ExecutionTransitionResultType.SUCCESS) {
         this.logger.warn({ msg: 'publication.job.start_failed', publicationId, reason: startRes.reason });
         return;
       }
@@ -214,7 +214,7 @@ export class PublishingProcessor extends WorkerHost {
           publicationId, currentOperationId!, 'PUBLISH_REQUESTED', 'AMBIGUOUS', expectedDispatchVersion
         );
         if (transitionRes.type === ExecutionTransitionResultType.SUCCESS) {
-          console.log("CALLING handleUnknown"); await this.handleUnknown(publicationId, attempt.id, 'AMBIGUOUS_RETRY_PROTECTION');
+          await this.handleUnknown(publicationId, attempt.id, 'AMBIGUOUS_RETRY_PROTECTION');
         } else {
            this.logger.error({ msg: 'publication.transition_ambiguous_failed', publicationId, reason: transitionRes.reason });
         }
@@ -309,7 +309,7 @@ export class PublishingProcessor extends WorkerHost {
             throw new ProviderCoordinationError(`Failed to persist preparation state: ${(tRes as any).reason}`);
           }
           expectedDispatchVersion = (tRes as any).variant.dispatchVersion;
-          currentSourcePhase = 'PUBLISH_REQUESTED';
+          currentSourcePhase = 'CONTAINER_CREATED';
         },
         beforeFinalMutation: async () => {
           const currentVariant = await this.prisma.postPlatformVariant.findUniqueOrThrow({ where: { id: publicationId }});
@@ -335,17 +335,38 @@ export class PublishingProcessor extends WorkerHost {
         if (parsed.success && parsed.data.phase === 'PROCESSING_REMOTE') {
           const remoteResourceId = (parsed.data as any).remoteResourceId;
                       if (typeof adapter.checkStatus !== 'function') {
-              this.logger.error({ msg: 'publication.unsupported_status_check', publicationId });
-              await executionRepo.transitionOperation(
-                publicationId, currentOperationId, currentSourcePhase, 'FAILED', expectedDispatchVersion
-              );
-              await this.handleUnknown(publicationId, attempt.id, 'UNKNOWN');
-              return;
-            } else {
+                this.logger.error({ msg: 'publication.unsupported_status_check', publicationId });
+                result = {
+                  success: false,
+                  failureCategory: 'CONFIGURATION_ERROR',
+                  failureCode: 'MISSING_CAPABILITY',
+                  message: 'Provider does not support remote status checks.',
+                }
+              } else {
             const statusRes = await adapter.checkStatus(credentials, remoteResourceId);
-            if (statusRes.status === 'PUBLISHED') {
-              result = { success: true, externalPostId: remoteResourceId };
-            } else if (statusRes.status === 'FAILED') {
+              if (statusRes.status === 'PUBLISHED') {
+                  if (typeof adapter.finalizePublish === 'function') {
+                    // Container published out-of-band or final ID lost.
+                    // We cannot use the container ID as finalRemoteId.
+                    result = {
+                      success: false,
+                      failureCategory: 'UNKNOWN_RESULT',
+                      failureCode: 'AMBIGUOUS_PUBLISHED_CONTAINER',
+                      message: 'Container reported PUBLISHED, but final media ID is unknown.'
+                    };
+                  } else {
+                    // Provider does not use finalizePublish (e.g. YouTube).
+                    // The remoteResourceId IS the final ID.
+                    result = { success: true, externalPostId: remoteResourceId };
+                  }
+                } else if (statusRes.status === 'READY') {
+                if (typeof adapter.finalizePublish !== 'function') {
+                  throw new Error('Provider returned READY but finalizePublish is not implemented');
+                }
+                
+                // 1. Provider is responsible for calling ctx.beforeFinalMutation() inside finalizePublish
+                result = await adapter.finalizePublish(credentials, providerInput, remoteResourceId, publishContext);
+              } else if (statusRes.status === 'FAILED') {
               result = {
                 success: false,
                 failureCategory: statusRes.failureCategory || 'PERMANENT',
@@ -371,10 +392,19 @@ export class PublishingProcessor extends WorkerHost {
         publicationId,
         error: error.message,
       });
-      console.log("CALLING handleUnknown"); await this.handleUnknown(
+      
+      const isPublishRequested = (currentSourcePhase as string) === 'PUBLISH_REQUESTED';
+      await this.handleUnknown(
         publicationId,
         attempt.id,
         'UNHANDLED_EXCEPTION',
+        undefined,
+        executionRepo,
+        isPublishRequested ? {
+          currentOperationId: currentOperationId!,
+          currentSourcePhase: currentSourcePhase as any,
+          expectedDispatchVersion
+        } : undefined
       );
       return;
     } finally {
@@ -401,7 +431,7 @@ export class PublishingProcessor extends WorkerHost {
           // For generic handling, let's allow INITIATED -> PROCESSING_REMOTE in ALLOWED_TRANSITIONS,
           // or we simulate CONTAINER_CREATED first.
           this.logger.error({ msg: 'publication.transition_processing_remote_failed', reason: transitionRes.reason });
-          console.log("CALLING handleUnknown"); await this.handleUnknown(publicationId, attempt.id, 'TRANSITION_FAILED');
+          await this.handleUnknown(publicationId, attempt.id, 'TRANSITION_FAILED');
           return;
         }
       } else {
@@ -412,13 +442,13 @@ export class PublishingProcessor extends WorkerHost {
         if (transitionRes.type === ExecutionTransitionResultType.SUCCESS) {
           await this.handleSuccess(publicationId, attempt.id, result);
         } else {
-          console.log("CALLING handleUnknown"); await this.handleUnknown(publicationId, attempt.id, 'TRANSITION_FAILED');
+          await this.handleUnknown(publicationId, attempt.id, 'TRANSITION_FAILED');
         }
       }
     } else {
-      console.log("UNKNOWN_RESULT HIT. currentSourcePhase:", currentSourcePhase); if (result.failureCategory === 'UNKNOWN_RESULT') {
+      if (result.failureCategory === 'UNKNOWN_RESULT') {
           const isPublishRequested = (currentSourcePhase as string) === 'PUBLISH_REQUESTED';
-          console.log("CALLING handleUnknown"); await this.handleUnknown(
+          await this.handleUnknown(
             publicationId,
             attempt.id,
             result.failureCode || 'UNKNOWN',
