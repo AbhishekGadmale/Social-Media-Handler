@@ -18,95 +18,155 @@ Monorepo architecture (Turborepo + pnpm) separating frontend (Next.js), backend 
 ## 4. Current Database Models
 - **Core**: `User`, `Organization`, `Workspace`, `WorkspaceMember`
 - **Accounts**: `SocialAccount`, `SocialConnection`
-- **Publishing**: `Post`, `PostPlatformVariant`, `PublicationAttempt`
+- **Publishing**: `Post`, `PostPlatformVariant`, `PublicationAttempt`, `ExecutionMetadata`
 - **Media**: `MediaAsset`, `PostMedia`
 - **Analytics/Audit**: `AccountMetricDaily`, `AuditLog`, `WebhookEvent`, `SyncRun`
 
-## 5. Tenancy
-Logical tenancy model. Users are assigned `WorkspaceMember` records within a `Workspace`. `WorkspaceGuard` enforces tenancy boundaries on all scoped routes.
+## 5. Tenancy, Auth, RBAC
+- **Tenancy**: `WorkspaceMember` records within a `Workspace`. `WorkspaceGuard` enforces boundaries.
+- **Auth/Session**: Email/password authentication yielding HTTP-only session cookies backed by Redis.
+- **CSRF**: Enforced via `x-csrf-token` header matching a secure cookie.
+- **RBAC**: Granular roles evaluated via `PermissionMatrix`.
 
-## 6. Auth/session/CSRF
-- **Auth**: Email/password authentication yielding HTTP-only session cookies.
-- **Session**: Redis-backed via `SessionManager`.
-- **CSRF**: Enforced on all mutations via `x-csrf-token` header matching a secure cookie.
+## 6. Provider-Neutral Contract (`IPublishingProvider`)
+Providers implement a stateless contract:
+- `publish(credentials, input, context)`: Initiates publishing.
+- `checkStatus?(credentials, remoteResourceId)`: Polls remote async processing status. Returns `ProviderStatusCheckResult` with status: `PROCESSING`, `READY`, `PUBLISHED`, `FAILED`, `UNKNOWN`.
+- `finalizePublish?(credentials, input, remoteResourceId, context)`: Commits final remote publishing step after preparation.
 
-## 7. RBAC
-Roles (`OWNER`, `MANAGER`, `EDITOR`, `CLIENT_APPROVER`, `VIEWER`) map to granular permissions via a `PermissionMatrix`. `PermissionGuard` intercepts and validates these.
+**ProviderPublishContext Coordination Hooks:**
+- `onRemotePrepared({ containerId })`: Informs the system of intermediate resource creation (e.g., Meta container).
+- `beforeFinalMutation()`: A mandatory checkpoint function yielding a database CAS lock. This MUST be invoked immediately before the dangerous final remote network call.
 
-## 8. Provider Architecture
-Contract-first design (`ISocialProvider`, `IPublishingProvider`). Capabilities are resolved per-provider to gracefully handle missing features across social networks.
+**Semantic Status Map:**
+- `PROCESSING`: Remote asset is still rendering/processing.
+- `READY`: Remote preparation complete; final mutation still required via `finalizePublish`.
+- `PUBLISHED`: Provider reports already-published remote state. (NOTE: If final ID cannot be isolated, this falls back to an AMBIGUOUS safety outcome).
+- `FAILED`: Terminal remote processing error.
+- `UNKNOWN`: Unrecognized state, or temporary HTTP transport timeout/5xx.
 
-## 9. Implemented LinkedIn Capabilities
-OAuth, text publishing, single image publishing, video publishing, document publishing, and remote post deletion.
+## 7. Execution Metadata & State Graph
+Execution checkpoints protect against orphaned assets and dangerous duplicate publications.
 
-## 10. Publishing State Machine
-Valid transitions managed for: `DRAFT, SCHEDULED, QUEUED, PUBLISHING, PARTIAL, PUBLISHED, FAILED, UNKNOWN, DELETING, DELETED`.
+**Execution Phases:**
+- `INITIATED`: Worker has started execution. No remote publication mutations have occurred. Safe to retry.
+- `CONTAINER_CREATED`: Provider created an intermediate remote resource (e.g., Reel container). Safe to query status.
+- `PROCESSING_REMOTE`: System is async polling the provider. Worker is yielded.
+- `PUBLISH_REQUESTED`: **The dangerous final publication mutation is now allowed to be issued and may already have been issued.** Automatic replay of final mutation is STRICTLY FORBIDDEN.
+- `COMPLETED`: Publication successfully completed with a valid final ID.
+- `FAILED`: Execution terminated due to validation or definitive remote failure.
+- `AMBIGUOUS`: A dangerous remote mutation may have succeeded, but the local system cannot authoritatively confirm the final outcome. High-level variant falls back to `UNKNOWN`. Never automatically replay.
 
-## 11. BullMQ/worker flow
-Strictly typed queues execute optimistic locking (`dispatchVersion`), credentials injection, capability checks, and robust backoff handling for API limits/transient errors.
+**Legal State Transitions (`ALLOWED_TRANSITIONS`):**
+- `INITIATED` -> `CONTAINER_CREATED`, `PUBLISH_REQUESTED`, `COMPLETED`, `FAILED`
+- `CONTAINER_CREATED` -> `PROCESSING_REMOTE`, `PUBLISH_REQUESTED`, `FAILED`
+- `PROCESSING_REMOTE` -> `PROCESSING_REMOTE`, `PUBLISH_REQUESTED`, `COMPLETED`, `FAILED`
 
-## 12. Current Frontend State
-Framework scaffolded (Next.js App Router, React Query). Basic authentication and dashboard exist, but frontend lags significantly behind backend capabilities. Frontend being next is NOT an authoritative roadmap decision unless supported by repo evidence.
+*(Explicitly illegal: `INITIATED` -> `PROCESSING_REMOTE`)*
 
-## 13. Test/Local Environment Setup
-- `agency_os` (Dev database), `agency_os_test` (Isolated Test database).
-- **Test Workflow**: `pnpm --filter @agency-os/database run test:migrate` followed by `pnpm turbo run test`.
-- **Root `.env`**: Required to exist for tests due to `test-setup.ts` enforcement.
-- **CI Baseline**: lint, typecheck, and tests are explicitly 100% PASS uncached.
+**DispatchVersion CAS Semantics:**
+`dispatchVersion` acts as a row-level compare-and-swap mechanism. Every state transition verifies the expected version, increments it atomically, and hands it forward. A rejection raises `ProviderCoordinationError` and immediately halts execution (prevents racing duplicate processes). It is NOT a bulletproof exactly-once guarantee.
 
-## 14. Migration Rules
-- **Rule 1**: Do NOT alter enums without verifying provider compatibility.
-- **Rule 2**: Old history is squashed. Never manually edit applied migrations.
+## 8. Identifier Semantics
+- `containerId` / `remoteResourceId`: Intermediate resource tracking ID during remote processing (e.g., Meta IG Container, YouTube upload ID before processing check).
+- `finalRemoteId` / `externalPostId`: The authoritative completed publication identity on the social network. Do NOT use container IDs as finalRemoteIds.
+- `operationId`: Internal idempotent tracking UUID spanning logical checkpoints.
+- `dispatchVersion`: CAS integer for execution metadata mutations.
 
-## 15. Current Clean Migration Baseline
-The previous 13-migration corrupted history was squashed pre-production.
-**Baseline**: `000000000000_squashed_init`.
-Fresh `prisma migrate deploy` verified successfully.
-(Historical recovery pointer: `backup/pre-migration-squash`).
+## 9. Async Continuation Model
+`PROCESSING_REMOTE` does NOT mean a worker thread sleeps.
+1. State and `nextCheckAt` are persisted.
+2. The worker function returns naturally.
+3. A separate dispatcher routinely scans the DB for due operations.
+4. BullMQ schedules a continuation job.
+5. Continuation strictly executes `checkStatus()` read-only polling logic.
 
-## 16. Known Technical Debt
-- API/Worker runtimes currently rely on `tsx` in containers, increasing image size and initialization speed.
-- Frontend implementation is substantially behind backend feature parity.
+## 10. PublicationAttempt Semantics
+`PublicationAttempt` represents a logical user execution history.
+`PROCESSING_REMOTE` continuation polling must NOT create new `PublicationAttempt` rows per poll. One logical publish stays one logical attempt.
 
-## 17. Licensing Restrictions
-Refer to local `LICENSE` file. Private proprietary software.
+## 11. Coordination Errors
+`ProviderCoordinationError` represents LOCAL coordination failures (missing checkpoint hooks, stale `dispatchVersion`, CAS rejections). They are NOT provider HTTP transient errors. Providers remain database-agnostic.
 
-## 18. Agent Operating Rules
-- Verify `package.json` before tool usage.
-- Never assert CI/CD is green from cache; always force validate (`turbo run test --force`).
-- Prioritize technical rigor over performative agreement.
+## 12. Current Provider Flows
 
-## 19. Source-of-Truth Precedence
-1. Application Code / `schema.prisma`
-2. Git History
-3. This Master Context
-4. Old `docs/` (Treat as stale)
+### Instagram Image
+- Canonical final-mutation checkpoint model.
+- Container creation -> `onRemotePrepared` -> container persistence.
+- `beforeFinalMutation` -> `PUBLISH_REQUESTED` -> `/{ig-user-id}/media_publish`.
+- Yields final ID.
 
-## 20. Exact Current Continuation Point
-- **Status**: VERIFIED LOCAL / UNSHIPPED
-- **Confirmed Implementation Point**: Phase 8.8 (LinkedIn Remote Post Deletion)
-- **Latest Relevant Commit**: `a099491`
+### Instagram Reels
+- `INITIATED` -> `CONTAINER_CREATED` -> `PROCESSING_REMOTE` -> `PROCESSING_REMOTE` (0..N) -> `PUBLISH_REQUESTED` -> `COMPLETED`.
+- `checkStatus()` converts `FINISHED` -> `READY`.
+- `READY` calls `finalizePublish()`.
+- `finalizePublish()` calls `beforeFinalMutation()` to transition to `PUBLISH_REQUESTED`.
+- Finally, issues `/media_publish`.
 
----
-# SCOPE CATEGORIES
+### Facebook
+- Direct final-mutation checkpoint model. No intermediate async processing.
 
-## CONFIRMED IMPLEMENTED
-- Turborepo / Docker Compose Scaffold
-- Tenancy, Auth, Session, CSRF, RBAC
-- Provider Core Architecture
-- LinkedIn OAuth & Full Publishing Lifecycle (including Documents and Deletion)
-- BullMQ Worker Queues with backoff and optimistic locking
-- Audit Logging and Security Rate Limiting (Redis)
-- Clean Migration Baseline (`000000000000_squashed_init`)
+### YouTube
+- `INITIATED` -> `PUBLISH_REQUESTED` -> `youtube.videos.insert` -> `PROCESSING_REMOTE` -> `PROCESSING_REMOTE` (polling) -> `COMPLETED`.
+- Publish happens exactly once per normal operation.
+- Continuation uses `checkStatus()` only.
+- `remoteResourceId` is the stable YouTube video ID. Polling does not re-upload.
 
-## DOCUMENTED BUT NOT IMPLEMENTED
-- Other Social Providers (Meta, Twitter, TikTok, YouTube).
-- Advanced Frontend UI (Composer, Unified Analytics Dashboard).
-- Complex Notification System / Unified Inbox.
+### LinkedIn
+- `INITIATED` -> `PUBLISH_REQUESTED` -> `POST /rest/posts` -> `COMPLETED`.
+- Asset preparation occurs before final post creation (preparation idempotency not proven).
+- Unknown final network result defaults to `AMBIGUOUS` execution and `UNKNOWN` variant.
 
-## FUTURE / RESEARCH ONLY
-- Open-Source research on usage metering and SaaS entitlement tracking.
-- Advanced monetization strategies.
+## 13. Current Provider Status Matrix
 
-## OUT OF MVP SCOPE
-- Monetization (Stripe/Plans/Subscriptions) explicitly listed out of scope in Phase-7 publishing design.
+| Provider | Content Type | Preparation | Async Processing | Final Checkpoint | Status Polling | Finalization | Known Risk |
+|---|---|---|---|---|---|---|---|
+| Instagram Image | Image | Yes | No | Yes | No | Yes | Ambiguity |
+| Instagram Reel | Video | Yes | Yes | Yes | Yes | Yes | Ambiguity, Orphan |
+| Facebook | Text/Image/Video | Yes | No | Yes | No | No | Ambiguity |
+| YouTube | Video | No | Yes | Yes | Yes | No | - |
+| LinkedIn | Text/Image/Video/Doc | Yes | No | Yes | No | No | Preparation Idempotency |
+
+## 14. Current Known Risks
+1. **Instagram Reels initial /media unknown-outcome window**: Possible orphan/duplicate preparation containers if network dies precisely during creation.
+2. **Container creation idempotency**: NOT PROVEN across providers.
+3. **LinkedIn preparation idempotency/orphan cleanup**: NOT PROVEN.
+4. **Real Redis/BullMQ race behavior**: NOT EXECUTED / ENVIRONMENT-BLOCKED. Relying on mocks/DB transactions currently.
+5. **Generic DB polling scan scalability**: Current MVP design may require indexed scheduling before significant scale.
+6. **No exactly-once guarantee**: The system does NOT guarantee exactly-once publishing. Checkpointed dangerous final mutations are protected against blind automatic duplicate retry, and uncertain outcomes are represented conservatively as AMBIGUOUS / UNKNOWN.
+7. **Provider reconciliation**: Providers reporting already-published remote resources (but lacking identifiable IDs) will conservatively fallback to `AMBIGUOUS/UNKNOWN`.
+
+## 15. Current Test Evidence
+Verified Baseline: `033c2b52007f1585e57c123b4e039da101b40404`
+
+- **Providers**: 14 files / 202 tests PASS
+- **Worker**: 7 files / 63 tests PASS
+- **Database**: 9 files / 73 tests PASS
+- **API**: 13 files / 82 tests PASS
+- **Web**: 4 files / 44 tests PASS
+- **Turbo Matrix** (test, lint, typecheck): PASS
+- **Real PostgreSQL state-graph tests**: PASS
+- **Real Redis/BullMQ**: NOT EXECUTED / ENVIRONMENT-BLOCKED
+
+*(Note: These reflect the evidence at the above checkpoint, not eternal guarantees).*
+
+## 16. Current Implementation Status
+Publishing capabilities implemented:
+- Instagram image publishing
+- Instagram Reel/video publishing
+- Facebook publishing
+- YouTube publishing
+- LinkedIn publishing
+
+Checkpoint safety adopted for:
+- Instagram image final mutation
+- Facebook final mutation
+- YouTube upload mutation + processing continuation
+- LinkedIn final post mutation
+- Instagram Reels async preparation + final mutation
+
+**Explicitly Unsupported Features (DO NOT CLAIM):**
+- Instagram carousel
+- Instagram Stories
+- Facebook Reels
+- TikTok
