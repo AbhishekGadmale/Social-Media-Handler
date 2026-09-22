@@ -4,7 +4,73 @@ import { LinkedInProvider } from './linkedin.provider';
 const mockFetch = vi.fn();
 global.fetch = mockFetch as any;
 
+
+async function callPublish(prov, creds, input, media) {
+  return prov.publish(creds, input, media, { beforeFinalMutation: async () => {} });
+}
 describe('LinkedInProvider Publishing', () => {
+
+  describe('Checkpoint Safety', () => {
+    it('A. missing required checkpoint hook -> final LinkedIn publish network call = 0', async () => {
+      // Intentionally do NOT use callPublish
+      const promise = provider.constructor.prototype.publish.call(
+        provider,
+        { accessToken: 'token' },
+        { externalAccountId: '123', content: 'hello' },
+        undefined,
+        undefined
+      );
+
+      await expect(promise).rejects.toThrow(/beforeFinalMutation hook is required/);
+
+      const postsCall = mockFetch.mock.calls.find(c => c[0].includes('rest/posts'));
+      expect(postsCall).toBeUndefined();
+    });
+
+    it('B. checkpoint callback succeeds -> final mutation occurs exactly once', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 201,
+        headers: new Headers({ 'x-restli-id': 'urn:li:share:123' })
+      });
+
+      let checkpointCalled = false;
+      const result = await provider.publish(
+        { accessToken: 'token' },
+        { externalAccountId: '123', content: 'hello' },
+        undefined,
+        { beforeFinalMutation: async () => { checkpointCalled = true; } }
+      );
+
+      expect(checkpointCalled).toBe(true);
+      expect(result.success).toBe(true);
+
+      const postsCalls = mockFetch.mock.calls.filter(c => c[0].includes('rest/posts'));
+      expect(postsCalls.length).toBe(1);
+    });
+
+    it('C. checkpoint callback fails -> final mutation = 0', async () => {
+      let checkpointCalled = false;
+
+      const promise = provider.publish(
+        { accessToken: 'token' },
+        { externalAccountId: '123', content: 'hello' },
+        undefined,
+        { beforeFinalMutation: async () => {
+            checkpointCalled = true;
+            throw new Error('Coordination failure');
+          }
+        }
+      );
+
+      await expect(promise).rejects.toThrow('Coordination failure');
+
+      expect(checkpointCalled).toBe(true);
+      const postsCalls = mockFetch.mock.calls.filter(c => c[0].includes('rest/posts'));
+      expect(postsCalls.length).toBe(0);
+    });
+  });
+
   let provider: LinkedInProvider;
   const originalEnv = process.env;
 
@@ -32,7 +98,7 @@ describe('LinkedInProvider Publishing', () => {
   });
 
   it('should return VALIDATION error if externalAccountId is missing', async () => {
-    const result = await provider.publish(
+    const result = await callPublish(provider,
       { accessToken: 'token' },
       { attemptId: 'a1', targetId: 't1', workspaceId: 'w1', externalAccountId: '', content: 'hello', providerOptions: {} }
     );
@@ -44,7 +110,7 @@ describe('LinkedInProvider Publishing', () => {
   });
 
   it('should return VALIDATION error if content is missing', async () => {
-    const result = await provider.publish(
+    const result = await callPublish(provider,
       { accessToken: 'token' },
       { attemptId: 'a1', targetId: 't1', workspaceId: 'w1', externalAccountId: 'user1', content: '', providerOptions: {} }
     );
@@ -64,7 +130,7 @@ describe('LinkedInProvider Publishing', () => {
       })
     });
 
-    const result = await provider.publish(
+    const result = await callPublish(provider,
       { accessToken: 'token' },
       { attemptId: 'a1', targetId: 't1', workspaceId: 'w1', externalAccountId: 'user123', content: 'Hello LinkedIn!', providerOptions: {} }
     );
@@ -103,7 +169,7 @@ describe('LinkedInProvider Publishing', () => {
 
   it('should map 401 to AUTH_REQUIRED', async () => {
     mockFetch.mockResolvedValueOnce({ status: 401, headers: new Headers() });
-    const result = await provider.publish(
+    const result = await callPublish(provider,
       { accessToken: 'token' },
       { attemptId: 'a1', targetId: 't1', workspaceId: 'w1', externalAccountId: 'u', content: 'txt', providerOptions: {} }
     );
@@ -113,7 +179,7 @@ describe('LinkedInProvider Publishing', () => {
 
   it('should map 403 to AUTH_REQUIRED', async () => {
     mockFetch.mockResolvedValueOnce({ status: 403, headers: new Headers() });
-    const result = await provider.publish(
+    const result = await callPublish(provider,
       { accessToken: 'token' },
       { attemptId: 'a1', targetId: 't1', workspaceId: 'w1', externalAccountId: 'u', content: 'txt', providerOptions: {} }
     );
@@ -126,7 +192,7 @@ describe('LinkedInProvider Publishing', () => {
 
   it('should map 429 to RATE_LIMITED', async () => {
     mockFetch.mockResolvedValueOnce({ status: 429, headers: new Headers() });
-    const result = await provider.publish(
+    const result = await callPublish(provider,
       { accessToken: 'token' },
       { attemptId: 'a1', targetId: 't1', workspaceId: 'w1', externalAccountId: 'u', content: 'txt', providerOptions: {} }
     );
@@ -136,7 +202,7 @@ describe('LinkedInProvider Publishing', () => {
 
   it('should map timeout/fetch error to UNKNOWN_RESULT', async () => {
     mockFetch.mockRejectedValueOnce(new Error('Network timeout'));
-    const result = await provider.publish(
+    const result = await callPublish(provider,
       { accessToken: 'token' },
       { attemptId: 'a1', targetId: 't1', workspaceId: 'w1', externalAccountId: 'u', content: 'txt', providerOptions: {} }
     );
@@ -150,7 +216,7 @@ describe('LinkedInProvider Publishing', () => {
 
 
   it('should return VALIDATION error if unsupported media is provided', async () => {
-    const result = await provider.publish(
+    const result = await callPublish(provider,
       { accessToken: 'token' },
       { attemptId: 'a1', targetId: 't1', workspaceId: 'w1', externalAccountId: 'u', content: 'txt', providerOptions: {}, media: [{ mimeType: 'application/msword', sizeBytes: 100, key: 'test' }] },
       {} as any
@@ -220,9 +286,9 @@ describe('LinkedInProvider Publishing', () => {
 
     vi.useFakeTimers();
 
-    const publishPromise = provider.publish(
+    const publishPromise = callPublish(provider,
       { accessToken: 'token' },
-      { 
+      {
         attemptId: 'a1', targetId: 't1', workspaceId: 'w1', externalAccountId: 'user123', content: 'Here is a video!', providerOptions: {},
         media: [{ mimeType: 'video/mp4', sizeBytes: 100, key: 's3/video.mp4' }]
       },
@@ -275,7 +341,7 @@ describe('LinkedInProvider Publishing', () => {
         })
       });
 
-      const result = await provider.publish(
+      const result = await callPublish(provider,
         { accessToken: 'token' },
         { attemptId: 'a1', targetId: 't1', workspaceId: 'w1', externalAccountId: 'u', content: 'txt', providerOptions: {}, media: [{ mimeType: 'video/mp4', sizeBytes: 100, key: 's3/v.mp4' }] },
         { getStream: vi.fn() } as any
@@ -309,7 +375,7 @@ describe('LinkedInProvider Publishing', () => {
     });
 
     vi.useFakeTimers();
-    const publishPromise = provider.publish(
+    const publishPromise = callPublish(provider,
       { accessToken: 'token' },
       { attemptId: 'a1', targetId: 't1', workspaceId: 'w1', externalAccountId: 'u', content: 'txt', providerOptions: {}, media: [{ mimeType: 'video/mp4', sizeBytes: 100, key: 's3/v.mp4' }] },
       { getStream: vi.fn().mockResolvedValue([Buffer.from('video-data')]) } as any
@@ -319,7 +385,7 @@ describe('LinkedInProvider Publishing', () => {
     vi.useRealTimers();
 
     expect(result.success).toBe(true);
-    
+
     // Verify Finalize Request
     const [finUrl, finOptions] = mockFetch.mock.calls[2];
     expect(finUrl).toBe('https://api.linkedin.com/rest/videos?action=finalizeUpload');
@@ -367,9 +433,9 @@ describe('LinkedInProvider Publishing', () => {
       getStream: vi.fn().mockResolvedValue(mockStream)
     };
 
-    const result = await provider.publish(
+    const result = await callPublish(provider,
       { accessToken: 'token' },
-      { 
+      {
         attemptId: 'a1', targetId: 't1', workspaceId: 'w1', externalAccountId: 'user123', content: 'Here is an image!', providerOptions: {},
         media: [{ mimeType: 'image/png', sizeBytes: 100, key: 's3/image.png' }]
       },
@@ -387,14 +453,14 @@ describe('LinkedInProvider Publishing', () => {
     expect(initUrl).toBe('https://api.linkedin.com/rest/images?action=initializeUpload');
     expect(initOptions.method).toBe('POST');
     expect(JSON.parse(initOptions.body)).toEqual({ initializeUploadRequest: { owner: 'urn:li:person:user123' }});
-    
+
     // Verify Upload Request
     const [uploadUrl, uploadOptions] = mockFetch.mock.calls[1];
     expect(uploadUrl).toBe('https://api.linkedin.com/upload');
     expect(uploadOptions.method).toBe('PUT');
     expect(uploadOptions.body.toString()).toBe('image-data');
     expect(uploadOptions.headers['Content-Type']).toBe('image/png');
-    
+
     // Verify Poll Request
     const [pollUrl] = mockFetch.mock.calls[2];
     expect(pollUrl).toBe('https://api.linkedin.com/rest/images/urn%3Ali%3Aimage%3A999');
@@ -423,7 +489,7 @@ describe('LinkedInProvider Publishing', () => {
 
     const mockMediaSource = { getStream: vi.fn().mockResolvedValue([Buffer.from('image-data')]) };
 
-    const publishPromise = provider.publish(
+    const publishPromise = callPublish(provider,
       { accessToken: 'token' },
       { attemptId: 'a1', targetId: 't1', workspaceId: 'w1', externalAccountId: 'u', content: 'txt', providerOptions: {}, media: [{ mimeType: 'image/png', sizeBytes: 100, key: 's3/image.png' }] },
       mockMediaSource as any
@@ -445,7 +511,7 @@ describe('LinkedInProvider Publishing', () => {
 
   it('should return TRANSIENT pre-post failure if initialize fails', async () => {
     mockFetch.mockResolvedValueOnce({ ok: false, status: 500 });
-    const result = await provider.publish(
+    const result = await callPublish(provider,
       { accessToken: 'token' },
       { attemptId: 'a1', targetId: 't1', workspaceId: 'w1', externalAccountId: 'user', content: 'Video', providerOptions: {}, media: [{ mimeType: 'video/mp4', sizeBytes: 100, key: 's3/video.mp4' }] },
       { getStream: vi.fn() } as any
@@ -473,7 +539,7 @@ describe('LinkedInProvider Publishing', () => {
     mockFetch.mockResolvedValueOnce({ ok: true, status: 200, headers: new Headers({ etag: '"etag1"' }) });
     mockFetch.mockResolvedValueOnce({ ok: false, status: 502 });
 
-    const result = await provider.publish(
+    const result = await callPublish(provider,
       { accessToken: 'token' },
       { attemptId: 'a1', targetId: 't1', workspaceId: 'w1', externalAccountId: 'u', content: 'Video', providerOptions: {}, media: [{ mimeType: 'video/mp4', sizeBytes: 100, key: 's3/vid' }] },
       { getStream: vi.fn().mockResolvedValue([Buffer.from('video-data')]) } as any
@@ -491,7 +557,7 @@ describe('LinkedInProvider Publishing', () => {
     });
     mockFetch.mockResolvedValueOnce({ ok: false, status: 400 }); // Finalize fails
 
-    const result = await provider.publish(
+    const result = await callPublish(provider,
       { accessToken: 'token' },
       { attemptId: 'a1', targetId: 't1', workspaceId: 'w1', externalAccountId: 'u', content: 'Vid', providerOptions: {}, media: [{ mimeType: 'video/mp4', sizeBytes: 100, key: 's3' }] },
       { getStream: vi.fn() } as any
@@ -509,7 +575,7 @@ describe('LinkedInProvider Publishing', () => {
     mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'PROCESSING_FAILED' }) }); // Poll
 
     vi.useFakeTimers();
-    const p = provider.publish(
+    const p = callPublish(provider,
       { accessToken: 'token' },
       { attemptId: 'a1', targetId: 't1', workspaceId: 'w1', externalAccountId: 'u', content: 'Vid', providerOptions: {}, media: [{ mimeType: 'video/mp4', sizeBytes: 100, key: 's3' }] },
       { getStream: vi.fn() } as any
@@ -535,7 +601,7 @@ describe('LinkedInProvider Publishing', () => {
     }
 
     vi.useFakeTimers();
-    const p = provider.publish(
+    const p = callPublish(provider,
       { accessToken: 'token' },
       { attemptId: 'a1', targetId: 't1', workspaceId: 'w1', externalAccountId: 'u', content: 'Vid', providerOptions: {}, media: [{ mimeType: 'video/mp4', sizeBytes: 100, key: 's3' }] },
       { getStream: vi.fn() } as any
@@ -557,7 +623,7 @@ describe('LinkedInProvider Publishing', () => {
     mockFetch.mockRejectedValueOnce(new Error('Network drop after posts')); // Post
 
     vi.useFakeTimers();
-    const p = provider.publish(
+    const p = callPublish(provider,
       { accessToken: 'token' },
       { attemptId: 'a1', targetId: 't1', workspaceId: 'w1', externalAccountId: 'u', content: 'Vid', providerOptions: {}, media: [{ mimeType: 'video/mp4', sizeBytes: 100, key: 's3' }] },
       { getStream: vi.fn() } as any
@@ -588,15 +654,15 @@ describe('LinkedInProvider Publishing', () => {
     };
 
     vi.useFakeTimers();
-    const p = provider.publish(
+    const p = callPublish(provider,
       { accessToken: 'token' },
-      { 
-        attemptId: 'a1', targetId: 't1', workspaceId: 'w1', externalAccountId: 'u', content: 'MULTI', providerOptions: {}, 
-        
+      {
+        attemptId: 'a1', targetId: 't1', workspaceId: 'w1', externalAccountId: 'u', content: 'MULTI', providerOptions: {},
+
         media: [
           { mimeType: 'image/jpeg', sizeBytes: 100, key: 's3/1.jpg' },
           { mimeType: 'image/png', sizeBytes: 100, key: 's3/2.png' }
-        ] 
+        ]
       },
       mediaSource as any
     );
@@ -605,7 +671,7 @@ describe('LinkedInProvider Publishing', () => {
     vi.useRealTimers();
 
     expect(result.success).toBe(true);
-    
+
     // Check payload
     const postCall = mockFetch.mock.calls.find(c => c[0] === 'https://api.linkedin.com/rest/posts');
     expect(postCall).toBeDefined();
@@ -622,15 +688,15 @@ describe('LinkedInProvider Publishing', () => {
       getStream: vi.fn().mockResolvedValue((async function* () { yield Buffer.from('img'); })())
     };
 
-    const p = await provider.publish(
+    const p = await callPublish(provider,
       { accessToken: 'token' },
-      { 
-        attemptId: 'a1', targetId: 't1', workspaceId: 'w1', externalAccountId: 'u', content: 'MULTI', providerOptions: {}, 
-        
+      {
+        attemptId: 'a1', targetId: 't1', workspaceId: 'w1', externalAccountId: 'u', content: 'MULTI', providerOptions: {},
+
         media: [
           { mimeType: 'image/jpeg', sizeBytes: 100, key: 's3/1.jpg' },
           { mimeType: 'image/png', sizeBytes: 100, key: 's3/2.png' }
-        ] 
+        ]
       },
       mediaSource as any
     );
@@ -671,27 +737,27 @@ describe('LinkedInProvider Publishing', () => {
       headers: { get: (name: string) => name === 'x-restli-id' ? 'urn:li:post:abc' : null }
     });
 
-    const result = await provider.publish(
+    const result = await callPublish(provider,
       { accessToken: 'token' },
       { attemptId: '1', targetId: '1', workspaceId: '1', externalAccountId: 'u', content: 'Testing regression', providerOptions: {}, media: [{ key: '1.jpg', mimeType: 'image/jpeg' }] },
       mockMediaSource as any
     );
 
     expect(result.success).toBe(true);
-    
+
     // Check the PUT request
     const putCall = mockFetch.mock.calls.find((call: any[]) => call[0] === 'https://api.linkedin.com/upload/url' && call[1] && call[1].method === 'PUT');
     expect(putCall).toBeDefined();
-    
+
     const putOptions = putCall[1];
-    
+
     // 1. Verify duplex: 'half'
     expect(putOptions.duplex).toBe('half');
-    
+
     // 2. Verify body is a stream (not a buffer)
     expect(putOptions.body).toBeDefined();
     expect(Buffer.isBuffer(putOptions.body)).toBe(false);
-    
+
     // 3. Verify Authorization header is present
     const headers = putOptions.headers || {};
     expect(headers['Authorization']).toBe('Bearer token');
@@ -710,7 +776,7 @@ describe('LinkedInProvider Publishing', () => {
     };
 
     vi.useFakeTimers();
-    const p = provider.publish(
+    const p = callPublish(provider,
       { accessToken: 'secret_token_abc' },
       {
         attemptId: 'a3', targetId: 't3', workspaceId: 'w3', externalAccountId: 'user123', content: 'Three images post', providerOptions: {},
@@ -757,7 +823,7 @@ describe('LinkedInProvider Publishing', () => {
 
     const mediaSource = { getStream: vi.fn().mockResolvedValue({}) };
 
-    const result = await provider.publish(
+    const result = await callPublish(provider,
       { accessToken: 'super_secret_oauth_token' },
       { attemptId: '1', targetId: '1', workspaceId: '1', externalAccountId: 'u', content: 'Testing leak', providerOptions: {}, media: [{ key: '1.jpg', mimeType: 'image/jpeg' }] },
       mediaSource as any
@@ -797,7 +863,7 @@ describe('LinkedInProvider Publishing', () => {
     };
 
     vi.useFakeTimers();
-    const p = provider.publish(
+    const p = callPublish(provider,
       { accessToken: 'video_secret_token' },
       { attemptId: 'v1', targetId: 't1', workspaceId: 'w1', externalAccountId: 'u', content: 'Video test', providerOptions: {}, media: [{ mimeType: 'video/mp4', sizeBytes: 100, key: 's3/v.mp4' }] },
       mockMediaSource as any
@@ -821,7 +887,7 @@ describe('LinkedInProvider Publishing', () => {
       key: `s3/img${i}.png`
     }));
 
-    const result = await provider.publish(
+    const result = await callPublish(provider,
       { accessToken: 'token' },
       { attemptId: '1', targetId: '1', workspaceId: '1', externalAccountId: 'u', content: 'Too many', providerOptions: {}, media: images },
       { getStream: vi.fn() } as any
@@ -854,7 +920,7 @@ describe('LinkedInProvider Publishing', () => {
     };
 
     vi.useFakeTimers();
-    const p = provider.publish(
+    const p = callPublish(provider,
       { accessToken: 'twenty_token' },
       { attemptId: 'a20', targetId: 't20', workspaceId: 'w20', externalAccountId: 'u', content: '20 images', providerOptions: {}, media: images },
       mediaSource as any
@@ -913,7 +979,7 @@ describe('LinkedInProvider Publishing', () => {
         return { ok: false };
       });
 
-      const result = await provider.publish(
+      const result = await callPublish(provider,
         { accessToken: 'token123' },
         { externalAccountId: 'acc1', content: 'Here is my document', media: [{ key: 'doc1.pdf', mimeType: 'application/pdf', sizeBytes: 1000, filename: 'my-doc.pdf' }] },
         mockMediaSource
@@ -923,7 +989,7 @@ describe('LinkedInProvider Publishing', () => {
       expect(uploadPutUrl).toBe('https://linkedin.com/upload-doc');
       // PDF upload PUT carries Authorization
       expect(uploadPutHeaders.get('Authorization')).toBe('Bearer token123');
-      
+
       expect(result.success).toBe(true);
       // x-restli-id returned/persistable
       expect((result as any).externalPostId).toBe('urn:li:share:doc1');
@@ -937,7 +1003,7 @@ describe('LinkedInProvider Publishing', () => {
         }
       });
 
-      const result = await provider.publish(
+      const result = await callPublish(provider,
         { accessToken: 'token123' },
         { externalAccountId: 'acc1', content: 'Doc', media: [{ key: 'doc1.pdf', mimeType: 'application/pdf' }] },
         mockMediaSource
@@ -968,7 +1034,7 @@ describe('LinkedInProvider Publishing', () => {
       });
 
       vi.useFakeTimers();
-      const p = provider.publish(
+      const p = callPublish(provider,
         { accessToken: 'token123' },
         { externalAccountId: 'acc1', content: 'Doc', media: [{ key: 'doc1.pdf', mimeType: 'application/pdf', filename: 'd.pdf' }] },
         mockMediaSource
@@ -991,7 +1057,7 @@ describe('LinkedInProvider Publishing', () => {
       });
 
       vi.useFakeTimers();
-      const p = provider.publish(
+      const p = callPublish(provider,
         { accessToken: 'token123' },
         { externalAccountId: 'acc1', content: 'Doc', media: [{ key: 'doc1.pdf', mimeType: 'application/pdf', filename: 'd.pdf' }] },
         mockMediaSource
@@ -1015,7 +1081,7 @@ describe('LinkedInProvider Publishing', () => {
       });
 
       vi.useFakeTimers();
-      const publishPromise = provider.publish(
+      const publishPromise = callPublish(provider,
         { accessToken: 'token123' },
         { externalAccountId: 'acc1', content: 'Doc', media: [{ key: 'doc1.pdf', mimeType: 'application/pdf', filename: 'd.pdf' }] },
         mockMediaSource
@@ -1037,12 +1103,12 @@ describe('LinkedInProvider Publishing', () => {
         if (url.includes('linkedin.com/up')) return { ok: false, status: 502, headers: new Headers() }; // 502 Gateway Error
       });
 
-      const result = await provider.publish(
+      const result = await callPublish(provider,
         { accessToken: 'token123' },
         { externalAccountId: 'acc1', content: 'Doc', media: [{ key: 'doc1.pdf', mimeType: 'application/pdf', filename: 'd.pdf' }] },
         mockMediaSource
       );
-      
+
       expect(result.success).toBe(false);
       expect((result as any).failureCategory).toBe('TRANSIENT');
       expect((result as any).failureCode).toBe('SERVER_ERROR');
@@ -1062,7 +1128,7 @@ describe('LinkedInProvider Publishing', () => {
       });
 
       vi.useFakeTimers();
-      const p = provider.publish(
+      const p = callPublish(provider,
         { accessToken: 'token123' },
         { externalAccountId: 'acc1', content: 'Doc', media: [{ key: 'doc1.pdf', mimeType: 'application/pdf', filename: 'd.pdf' }] },
         mockMediaSource
@@ -1085,7 +1151,7 @@ describe('LinkedInProvider Deleting', () => {
     provider = new LinkedInProvider();
     mockFetch.mockReset();
   });
-  
+
   it('should successfully delete a post and return success: true on 204', async () => {
     const mockFetch = vi.spyOn(global, 'fetch').mockResolvedValueOnce({ ok: true, status: 204 } as any);
     const res = await provider.deletePost({ accessToken: 'test-token' }, 'urn:li:ugcPost:123');

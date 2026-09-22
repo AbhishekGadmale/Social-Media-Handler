@@ -18,6 +18,7 @@ import {
 } from '../core/interfaces/IPublishingProvider';
 import { IMediaContentSource } from '../core/interfaces/IMediaContentSource';
 import { resolveCapabilities } from '../core/capability-resolver';
+import { ProviderCoordinationError } from '../core/errors';
 import { ProviderApiError } from '../core/errors/index';
 
 export class LinkedInProvider implements ISocialProvider, IPublishingProvider {
@@ -909,6 +910,11 @@ export class LinkedInProvider implements ISocialProvider, IPublishingProvider {
         }
       }
     }
+
+    if (!context || !context.beforeFinalMutation) {
+      throw new ProviderCoordinationError('beforeFinalMutation hook is required for safe publishing');
+    }
+    await context.beforeFinalMutation();
 
     let response: Response;
     try {

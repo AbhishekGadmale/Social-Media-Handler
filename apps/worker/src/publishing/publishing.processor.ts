@@ -214,7 +214,7 @@ export class PublishingProcessor extends WorkerHost {
           publicationId, currentOperationId!, 'PUBLISH_REQUESTED', 'AMBIGUOUS', expectedDispatchVersion
         );
         if (transitionRes.type === ExecutionTransitionResultType.SUCCESS) {
-          await this.handleUnknown(publicationId, attempt.id, 'AMBIGUOUS_RETRY_PROTECTION');
+          console.log("CALLING handleUnknown"); await this.handleUnknown(publicationId, attempt.id, 'AMBIGUOUS_RETRY_PROTECTION');
         } else {
            this.logger.error({ msg: 'publication.transition_ambiguous_failed', publicationId, reason: transitionRes.reason });
         }
@@ -334,15 +334,14 @@ export class PublishingProcessor extends WorkerHost {
         const parsed = safeParseExecutionMetadata(variant.executionMetadata);
         if (parsed.success && parsed.data.phase === 'PROCESSING_REMOTE') {
           const remoteResourceId = (parsed.data as any).remoteResourceId;
-          if (typeof adapter.checkStatus !== 'function') {
-            this.logger.error({ msg: 'publication.unsupported_status_check', publicationId });
-            result = {
-              success: false,
-              failureCategory: 'UNKNOWN_RESULT',
-              failureCode: 'UNKNOWN',
-              message: 'Provider does not support remote status checks.',
-            };
-          } else {
+                      if (typeof adapter.checkStatus !== 'function') {
+              this.logger.error({ msg: 'publication.unsupported_status_check', publicationId });
+              await executionRepo.transitionOperation(
+                publicationId, currentOperationId, currentSourcePhase, 'FAILED', expectedDispatchVersion
+              );
+              await this.handleUnknown(publicationId, attempt.id, 'UNKNOWN');
+              return;
+            } else {
             const statusRes = await adapter.checkStatus(credentials, remoteResourceId);
             if (statusRes.status === 'PUBLISHED') {
               result = { success: true, externalPostId: remoteResourceId };
@@ -372,7 +371,7 @@ export class PublishingProcessor extends WorkerHost {
         publicationId,
         error: error.message,
       });
-      await this.handleUnknown(
+      console.log("CALLING handleUnknown"); await this.handleUnknown(
         publicationId,
         attempt.id,
         'UNHANDLED_EXCEPTION',
@@ -402,7 +401,7 @@ export class PublishingProcessor extends WorkerHost {
           // For generic handling, let's allow INITIATED -> PROCESSING_REMOTE in ALLOWED_TRANSITIONS,
           // or we simulate CONTAINER_CREATED first.
           this.logger.error({ msg: 'publication.transition_processing_remote_failed', reason: transitionRes.reason });
-          await this.handleUnknown(publicationId, attempt.id, 'TRANSITION_FAILED');
+          console.log("CALLING handleUnknown"); await this.handleUnknown(publicationId, attempt.id, 'TRANSITION_FAILED');
           return;
         }
       } else {
@@ -413,17 +412,27 @@ export class PublishingProcessor extends WorkerHost {
         if (transitionRes.type === ExecutionTransitionResultType.SUCCESS) {
           await this.handleSuccess(publicationId, attempt.id, result);
         } else {
-          await this.handleUnknown(publicationId, attempt.id, 'TRANSITION_FAILED');
+          console.log("CALLING handleUnknown"); await this.handleUnknown(publicationId, attempt.id, 'TRANSITION_FAILED');
         }
       }
     } else {
-      await executionRepo.transitionOperation(
-        publicationId, currentOperationId!, currentSourcePhase, 'FAILED', expectedDispatchVersion
-      );
-      if (result.failureCategory === 'UNKNOWN_RESULT') {
-        await this.handleUnknown(publicationId, attempt.id, result.failureCode || 'UNKNOWN', result);
-      } else {
-        await this.handleFailure(publicationId, attempt.id, result.failureCategory || 'UNKNOWN', result.failureCode || 'UNKNOWN', result.message || 'Unknown error', result.retryAfterSeconds, result);
+      console.log("UNKNOWN_RESULT HIT. currentSourcePhase:", currentSourcePhase); if (result.failureCategory === 'UNKNOWN_RESULT') {
+          const isPublishRequested = (currentSourcePhase as string) === 'PUBLISH_REQUESTED';
+          console.log("CALLING handleUnknown"); await this.handleUnknown(
+            publicationId,
+            attempt.id,
+            result.failureCode || 'UNKNOWN',
+            result,
+            isPublishRequested ? executionRepo : undefined,
+            isPublishRequested ? {
+              currentOperationId: currentOperationId!,
+              currentSourcePhase: currentSourcePhase as any,
+              expectedDispatchVersion
+            } : undefined
+          );
+        } else {
+        await executionRepo.transitionOperation(publicationId, currentOperationId!, currentSourcePhase, 'FAILED', expectedDispatchVersion);
+          await this.handleFailure(publicationId, attempt.id, result.failureCategory || 'UNKNOWN', result.failureCode || 'UNKNOWN', result.message || 'Unknown error', result.retryAfterSeconds, result);
       }
     }
   }
@@ -537,8 +546,24 @@ export class PublishingProcessor extends WorkerHost {
     attemptId: string,
     code: string,
     rawResult?: any,
+    executionRepo?: any,
+    ambiguousTransitionData?: { currentOperationId: string, currentSourcePhase: any, expectedDispatchVersion: number }
   ) {
     await this.prisma.$transaction(async (tx) => {
+      if (executionRepo && ambiguousTransitionData) {
+        const tr = await executionRepo.transitionOperation(
+          publicationId,
+          ambiguousTransitionData.currentOperationId,
+          ambiguousTransitionData.currentSourcePhase,
+          'AMBIGUOUS',
+          ambiguousTransitionData.expectedDispatchVersion,
+          undefined,
+          tx
+        );
+        if (tr.type !== 'SUCCESS') {
+          throw new Error('Failed to transition to AMBIGUOUS: ' + tr.reason);
+        }
+      }
       await tx.postPlatformVariant.update({
         where: { id: publicationId },
         data: {
