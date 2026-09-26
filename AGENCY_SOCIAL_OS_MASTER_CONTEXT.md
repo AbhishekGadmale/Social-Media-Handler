@@ -60,12 +60,21 @@ Execution checkpoints protect against orphaned assets and dangerous duplicate pu
 **Legal State Transitions (`ALLOWED_TRANSITIONS`):**
 - `INITIATED` -> `CONTAINER_CREATED`, `PUBLISH_REQUESTED`, `COMPLETED`, `FAILED`
 - `CONTAINER_CREATED` -> `PROCESSING_REMOTE`, `PUBLISH_REQUESTED`, `FAILED`
-- `PROCESSING_REMOTE` -> `PROCESSING_REMOTE`, `PUBLISH_REQUESTED`, `COMPLETED`, `FAILED`
+- `PROCESSING_REMOTE` -> `PROCESSING_REMOTE`, `PUBLISH_REQUESTED`, `COMPLETED`, `FAILED`, `AMBIGUOUS`
 
 *(Explicitly illegal: `INITIATED` -> `PROCESSING_REMOTE`)*
 
-**DispatchVersion CAS Semantics:**
-`dispatchVersion` acts as a row-level compare-and-swap mechanism. Every state transition verifies the expected version, increments it atomically, and hands it forward. A rejection raises `ProviderCoordinationError` and immediately halts execution (prevents racing duplicate processes). It is NOT a bulletproof exactly-once guarantee.
+**Concrete Use Case for PROCESSING_REMOTE -> AMBIGUOUS:**
+A provider reports a remote resource is already published, but the authoritative final publication ID cannot be recovered.
+
+**DispatchVersion & OperationId CAS Semantics:**
+Continuation jobs are protected by two strict guards: `operationId` and `dispatchVersion`. A continuation job is authoritative only when BOTH match the current database state. `dispatchVersion` acts as a row-level compare-and-swap mechanism. Every state transition verifies the expected version, increments it atomically, and hands it forward. A rejection raises `ProviderCoordinationError` and immediately halts execution (prevents racing duplicate processes). A stale job returns without provider mutation and cannot overwrite a newer authoritative state. This is NOT a bulletproof exactly-once guarantee.
+
+**Terminal Atomicity:**
+Terminal resolution now occurs atomically within one Prisma transaction. Real PostgreSQL rollback tests prove that partial terminal states do not commit:
+- `handleSuccess`: `executionMetadata -> COMPLETED` + `variant -> PUBLISHED` + `PublicationAttempt terminal update` inside one transaction.
+- `handleFailure`: `executionMetadata -> FAILED` + `variant -> FAILED` + `PublicationAttempt update` inside one transaction.
+- `handleUnknown`: `executionMetadata -> AMBIGUOUS` + `variant -> UNKNOWN` inside one transaction.
 
 ## 8. Identifier Semantics
 - `containerId` / `remoteResourceId`: Intermediate resource tracking ID during remote processing (e.g., Meta IG Container, YouTube upload ID before processing check).
@@ -81,14 +90,33 @@ Execution checkpoints protect against orphaned assets and dangerous duplicate pu
 4. BullMQ schedules a continuation job.
 5. Continuation strictly executes `checkStatus()` read-only polling logic.
 
+**Terminal nextCheckAt Cleanup:**
+Transitions to `COMPLETED`, `FAILED`, or `AMBIGUOUS` explicitly clear `nextCheckAt`. Therefore, terminal rows are no longer eligible for continuation scheduling.
+
+**Read-Only Retry Semantics:**
+Temporary `checkStatus` failures, such as network timeouts or provider/HTTP 5xx errors, are read-only failures. `PROCESSING_REMOTE` remains authoritative, and a BullMQ technical retry may occur. They are NOT documented or treated immediately as `FAILED`, `AMBIGUOUS`, or `UNKNOWN` unless some additional dangerous-mutation uncertainty exists. No new `PublicationAttempt` is created during a technical retry.
+
 ## 10. PublicationAttempt Semantics
 `PublicationAttempt` represents a logical user execution history.
 `PROCESSING_REMOTE` continuation polling must NOT create new `PublicationAttempt` rows per poll. One logical publish stays one logical attempt.
+- YouTube multi-poll flow: 1 logical `PublicationAttempt`
+- Reels multi-poll + finalize: 1 logical `PublicationAttempt`
+- Temporary read failure + technical retry: 1 logical `PublicationAttempt`
+Polling/retries do not automatically create one attempt per queue execution.
 
 ## 11. Coordination Errors
 `ProviderCoordinationError` represents LOCAL coordination failures (missing checkpoint hooks, stale `dispatchVersion`, CAS rejections). They are NOT provider HTTP transient errors. Providers remain database-agnostic.
 
-## 12. Current Provider Flows
+## 12. BullMQ Retry Configuration
+The verified configuration for publishing workers is:
+- `attempts`: 3
+- `backoff`: `{ type: 'exponential', delay: 2000 }`
+- `removeOnComplete`: true
+- `removeOnFail`: false
+
+Technical retries are strictly safe for read-only continuation polling. Dangerous final mutations are NOT blindly replayed after `PUBLISH_REQUESTED`.
+
+## 13. Current Provider Flows
 
 ### Instagram Image
 - Canonical final-mutation checkpoint model.
@@ -101,7 +129,8 @@ Execution checkpoints protect against orphaned assets and dangerous duplicate pu
 - `checkStatus()` converts `FINISHED` -> `READY`.
 - `READY` calls `finalizePublish()`.
 - `finalizePublish()` calls `beforeFinalMutation()` to transition to `PUBLISH_REQUESTED`.
-- Finally, issues `/media_publish`.
+- Finally, issues remote final mutation (`/media_publish`).
+- Unknown final result: `PUBLISH_REQUESTED` -> `AMBIGUOUS` -> `UNKNOWN`.
 
 ### Facebook
 - Direct final-mutation checkpoint model. No intermediate async processing.
@@ -117,7 +146,7 @@ Execution checkpoints protect against orphaned assets and dangerous duplicate pu
 - Asset preparation occurs before final post creation (preparation idempotency not proven).
 - Unknown final network result defaults to `AMBIGUOUS` execution and `UNKNOWN` variant.
 
-## 13. Current Provider Status Matrix
+## 14. Current Provider Status Matrix
 
 | Provider | Content Type | Preparation | Async Processing | Final Checkpoint | Status Polling | Finalization | Known Risk |
 |---|---|---|---|---|---|---|---|
@@ -127,30 +156,48 @@ Execution checkpoints protect against orphaned assets and dangerous duplicate pu
 | YouTube | Video | No | Yes | Yes | Yes | No | - |
 | LinkedIn | Text/Image/Video/Doc | Yes | No | Yes | No | No | Preparation Idempotency |
 
-## 14. Current Known Risks
-1. **Instagram Reels initial /media unknown-outcome window**: Possible orphan/duplicate preparation containers if network dies precisely during creation.
-2. **Container creation idempotency**: NOT PROVEN across providers.
-3. **LinkedIn preparation idempotency/orphan cleanup**: NOT PROVEN.
-4. **Real Redis/BullMQ race behavior**: NOT EXECUTED / ENVIRONMENT-BLOCKED. Relying on mocks/DB transactions currently.
-5. **Generic DB polling scan scalability**: Current MVP design may require indexed scheduling before significant scale.
-6. **No exactly-once guarantee**: The system does NOT guarantee exactly-once publishing. Checkpointed dangerous final mutations are protected against blind automatic duplicate retry, and uncertain outcomes are represented conservatively as AMBIGUOUS / UNKNOWN.
-7. **Provider reconciliation**: Providers reporting already-published remote resources (but lacking identifiable IDs) will conservatively fallback to `AMBIGUOUS/UNKNOWN`.
+## 15. Current Known Risks
+No new blocker was identified within the tested real-infrastructure continuation boundary. However, the following systemic risks explicitly remain:
+1. **Exactly-once publishing is NOT guaranteed**: The system does NOT guarantee exactly-once publishing. Checkpointed dangerous final mutations are protected against blind automatic duplicate retry, and uncertain outcomes are represented conservatively as `AMBIGUOUS` / `UNKNOWN`.
+2. **Network partition / lost ACK**: A network partition after a dangerous provider mutation may produce unavoidable ambiguity.
+3. **Instagram Reels initial /media preparation ambiguity**: Can still create orphan/duplicate preparation resources if the network drops.
+4. **Container/preparation idempotency**: Remains provider-dependent and not proven.
+5. **LinkedIn preparation idempotency/orphan cleanup**: Remains not proven.
+6. **Provider HTTP**: Was mocked in real queue/database integration tests.
+7. **Provider rate limits/throttling**: Remain external operational risks.
+8. **Generic DB polling/dispatcher scan**: May need indexing/scheduling evolution at a larger scale.
+9. **Reconciliation of already-published remote resources**: Without an authoritative final ID, it remains conservatively `AMBIGUOUS`/`UNKNOWN`.
 
-## 15. Current Test Evidence
-Verified Baseline: `033c2b52007f1585e57c123b4e039da101b40404`
+## 16. Current Test Evidence
+Verified Baseline: `71953e6e803481c52f334784a8f9aa23c834a861`
 
-- **Providers**: 14 files / 202 tests PASS
-- **Worker**: 7 files / 63 tests PASS
-- **Database**: 9 files / 73 tests PASS
-- **API**: 13 files / 82 tests PASS
-- **Web**: 4 files / 44 tests PASS
-- **Turbo Matrix** (test, lint, typecheck): PASS
-- **Real PostgreSQL state-graph tests**: PASS
-- **Real Redis/BullMQ**: NOT EXECUTED / ENVIRONMENT-BLOCKED
+- **Real Redis**: EXECUTED / VERIFIED for tested continuation scenarios
+- **Real BullMQ**: EXECUTED / VERIFIED for tested continuation scenarios
+- **Real PostgreSQL**: EXECUTED / VERIFIED for state-machine, continuation, CAS, and rollback scenarios
+- **Provider HTTP**: MOCKED in real-infrastructure orchestration tests
 
-*(Note: These reflect the evidence at the above checkpoint, not eternal guarantees).*
+Real Redis/BullMQ/PostgreSQL orchestration was verified for the tested scenarios with mocked provider HTTP.
 
-## 16. Current Implementation Status
+Latest test metrics:
+- **Real-infra continuation**: 15 / 15 PASS
+- **Worker**: 76 / 76 PASS
+- **Providers**: 202 / 202 PASS
+- **Database**: 73 / 73 PASS
+- **API**: 82 / 82 PASS
+- **Web**: 44 / 44 PASS
+- **Turbo Matrix**: PASS
+- **Lint**: PASS
+- **Typecheck**: PASS
+
+*(Note: These are checkpoint evidence, not timeless guarantees).*
+
+## 17. Real-Infrastructure Test Isolation
+Real-infrastructure integration tests operate using:
+- A unique test queue namespace (`publishing_real_integration_test_${Date.now()}`).
+- Scoped DB cleanup targeting only explicitly tracked test-created IDs.
+- No broad shared `deleteMany` and no `FLUSHALL`.
+
+## 18. Current Implementation Status
 Publishing capabilities implemented:
 - Instagram image publishing
 - Instagram Reel/video publishing
