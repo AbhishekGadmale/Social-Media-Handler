@@ -448,15 +448,7 @@ export class PublishingProcessor extends WorkerHost {
           return;
         }
       } else {
-        const transitionRes = await executionRepo.transitionOperation(
-          publicationId, currentOperationId!, currentSourcePhase, 'COMPLETED', expectedDispatchVersion,
-          { finalRemoteId: result.externalPostId }
-        );
-        if (transitionRes.type === ExecutionTransitionResultType.SUCCESS) {
-          await this.handleSuccess(publicationId, attempt.id, result);
-        } else {
-          await this.handleUnknown(publicationId, attempt.id, 'TRANSITION_FAILED');
-        }
+        try { await this.handleSuccess(publicationId, attempt.id, result, executionRepo, { currentOperationId: currentOperationId!, currentSourcePhase: currentSourcePhase as any, expectedDispatchVersion }); } catch(e: any) { this.logger.error({ msg: 'publication.transition_completed_failed', publicationId, reason: e.message }); await this.handleUnknown(publicationId, attempt.id, 'TRANSITION_FAILED'); }
       }
     } else {
       if (result.failureCategory === 'UNKNOWN_RESULT') {
@@ -476,8 +468,7 @@ export class PublishingProcessor extends WorkerHost {
             }
           );
         } else {
-        await executionRepo.transitionOperation(publicationId, currentOperationId!, currentSourcePhase, 'FAILED', expectedDispatchVersion);
-          await this.handleFailure(publicationId, attempt.id, result.failureCategory || 'UNKNOWN', result.failureCode || 'UNKNOWN', result.message || 'Unknown error', result.retryAfterSeconds, result);
+        try { await this.handleFailure(publicationId, attempt.id, result.failureCategory || 'UNKNOWN', result.failureCode || 'UNKNOWN', result.message || 'Unknown error', result.retryAfterSeconds, result, executionRepo, { currentOperationId: currentOperationId!, currentSourcePhase: currentSourcePhase as any, expectedDispatchVersion }); } catch(e: any) { this.logger.error({ msg: 'publication.transition_failed_failed', publicationId, reason: e.message }); }
       }
     }
   }
@@ -502,12 +493,7 @@ export class PublishingProcessor extends WorkerHost {
     };
   }
 
-  private async handleSuccess(
-    publicationId: string,
-    attemptId: string,
-    result: any,
-  ) {
-    await this.prisma.$transaction(async (tx) => {
+  private async handleSuccess(publicationId: string, attemptId: string, result: any, executionRepo?: any, transitionData?: { currentOperationId: string, currentSourcePhase: any, expectedDispatchVersion: number }) { await this.prisma.$transaction(async (tx) => { if (executionRepo && transitionData) { const tr = await executionRepo.transitionOperation(publicationId, transitionData.currentOperationId, transitionData.currentSourcePhase, 'COMPLETED', transitionData.expectedDispatchVersion, { finalRemoteId: result.externalPostId }, tx); if (tr.type !== 'SUCCESS') { throw new Error('Failed to transition to COMPLETED: ' + tr.reason); } }
       await tx.postPlatformVariant.update({
         where: { id: publicationId },
         data: {
@@ -539,16 +525,7 @@ export class PublishingProcessor extends WorkerHost {
       );
   }
 
-  private async handleFailure(
-    publicationId: string,
-    attemptId: string,
-    category: any,
-    code: string,
-    message: string,
-    retryAfter?: number,
-    rawResult?: any,
-  ) {
-    await this.prisma.$transaction(async (tx) => {
+  private async handleFailure(publicationId: string, attemptId: string, category: any, code: string, message: string, retryAfter?: number, rawResult?: any, executionRepo?: any, transitionData?: { currentOperationId: string, currentSourcePhase: any, expectedDispatchVersion: number }) { await this.prisma.$transaction(async (tx) => { if (executionRepo && transitionData) { const tr = await executionRepo.transitionOperation(publicationId, transitionData.currentOperationId, transitionData.currentSourcePhase, 'FAILED', transitionData.expectedDispatchVersion, undefined, tx); if (tr.type !== 'SUCCESS') { throw new Error('Failed to transition to FAILED: ' + tr.reason); } }
       await tx.postPlatformVariant.update({
         where: { id: publicationId },
         data: {

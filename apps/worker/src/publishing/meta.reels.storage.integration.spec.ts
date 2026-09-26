@@ -363,8 +363,7 @@ describe('Meta Reels Worker Integration', () => {
       'PUBLISH_REQUESTED',
       'COMPLETED',
       2,
-      { finalRemoteId: 'final-1' },
-    );
+      { finalRemoteId: 'final-1' }, expect.anything());
 
     transitionSpy.mockRestore();
   });

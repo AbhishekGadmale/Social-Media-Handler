@@ -15,15 +15,9 @@ importers:
       dotenv-cli:
         specifier: ^11.0.0
         version: 11.0.0
-      postgres-memory-server:
-        specifier: ^0.3.0
-        version: 0.3.0
       prettier:
         specifier: ^3.0.0
         version: 3.9.6
-      redis-memory-server:
-        specifier: ^0.17.1
-        version: 0.17.1
       turbo:
         specifier: ^2.0.0
         version: 2.10.10
@@ -938,54 +932,6 @@ packages:
   '@dotenvx/primitives@0.8.0':
     resolution: {integrity: sha512-VYJy0uhFm9zTJ1TxBaW/pA8bjbOM/OttaNMwZ1RHG4JKyRG7DhSdiqD1ipQoAyoD22olUtxbP78W9xY3Wd11bg==}
 
-  '@embedded-postgres/darwin-arm64@18.3.0-beta.17':
-    resolution: {integrity: sha512-Pvrej3Xz5flfyVc9mchVfekrKoTJyvPtM3U0vjuXamZkRKmi+inP2zRmnmzYecIVbr7Zhu82xbsCENMXrwMp9Q==}
-    engines: {node: '>=16'}
-    cpu: [arm64]
-    os: [darwin]
-
-  '@embedded-postgres/darwin-x64@18.3.0-beta.17':
-    resolution: {integrity: sha512-MVWe+C47pPoMD9LlIWGQkvZ5Xsu3IBo54CYqnIps/Z1byMIUBNc7y/dZ3mfqEwiCbVDVqirG0CU462xnrSEfKA==}
-    engines: {node: '>=16'}
-    cpu: [x64]
-    os: [darwin]
-
-  '@embedded-postgres/linux-arm64@18.3.0-beta.17':
-    resolution: {integrity: sha512-hXp7yHJHYWkdjkgF6As8whEHbdYxhBdmXeLpLTw0aiac0O6+0Cbqk3cOR9U+e49oyIpElHVwZUo6OewquSRhSg==}
-    engines: {node: '>=16'}
-    cpu: [arm64]
-    os: [linux]
-
-  '@embedded-postgres/linux-arm@18.3.0-beta.17':
-    resolution: {integrity: sha512-Y2vw7p80PO/Ko7CDm8CCpStnNfMe+oc11e0WZtqAVRjxO6H0oic/ehULhUsWU3mZm5jq7wQAv37VMzf4JN+SFQ==}
-    engines: {node: '>=16'}
-    cpu: [arm]
-    os: [linux]
-
-  '@embedded-postgres/linux-ia32@18.3.0-beta.17':
-    resolution: {integrity: sha512-hVUOM+7QxkzAIdN3gewfVwL1EpJIx+0qUiNTD8cMqRtaZyU87e4AFIvBS0UiDJ9xzMTVWr/X24wePtbvIbkopg==}
-    engines: {node: '>=16'}
-    cpu: [ia32]
-    os: [linux]
-
-  '@embedded-postgres/linux-ppc64@18.3.0-beta.17':
-    resolution: {integrity: sha512-p3/u4YUqSdE2CKUBlC84JGZCi6RnE1fyeLPIIVy2DJUiKtExR5rE3OpDJcVoN40uecYGL+nR4qFocGzDwG1TBw==}
-    engines: {node: '>=16'}
-    cpu: [ppc64]
-    os: [linux]
-
-  '@embedded-postgres/linux-x64@18.3.0-beta.17':
-    resolution: {integrity: sha512-8orSD6NNopSLtjqir4dWQBrj+g8j1eJjWd9mB60A3xbWMzIBIPQpzT7XzbacW9YFSl/DejOLnRXfff+Wr13Tgw==}
-    engines: {node: '>=16'}
-    cpu: [x64]
-    os: [linux]
-
-  '@embedded-postgres/windows-x64@18.3.0-beta.17':
-    resolution: {integrity: sha512-kDC5aBsmhWDjeQjj2V4g+Bk+pMeDU27b7l0rBbaKgtt2gsNmCB34ULg/5cqs2kqUKSk/tiGMHKCNE+zQZ+s4rg==}
-    engines: {node: '>=16'}
-    cpu: [x64]
-    os: [win32]
-
   '@emnapi/core@1.10.0':
     resolution: {integrity: sha512-yq6OkJ4p82CAfPl0u9mQebQHKPJkY7WrIuk205cTYnYe+k2Z8YBh11FrbRG/H6ihirqcacOgl2BIO8oyMQLeXw==}
 
@@ -1704,10 +1650,6 @@ packages:
   '@isaacs/cliui@8.0.2':
     resolution: {integrity: sha512-O8jcjabXaleOG9DQ0+ARXWZBTfnP4WNAqzuiJK7ll44AmxGKv/J2M4TPjxjY3znBCfvBXFzucm1twdyFybFqEA==}
     engines: {node: '>=12'}
-
-  '@isaacs/fs-minipass@4.0.1':
-    resolution: {integrity: sha512-wgm9Ehl2jpeqP3zw/7mo3kRHFp5MEDhqAdwy1fTGkHAwnkGOVsgpvQhL8B5n1qlb01jV3n/bI0ZfZp5lWA1k4w==}
-    engines: {node: '>=18.0.0'}
 
   '@istanbuljs/load-nyc-config@1.1.0':
     resolution: {integrity: sha512-VjeHSlIzpv/NyD3N0YuHfXOPDIixcA1q2ZV98wsMqcYlPmv2n3Yb2lYP9XMElnaFVXg5A7YLTeLu6V84uQDjmQ==}
@@ -3437,10 +3379,6 @@ packages:
     resolution: {integrity: sha512-6t10qk83GOG8p0vKmaCr8eiilZwO171AvbROMtvvNiwrTly62t+7XkA8RdIIVbpMhCASAsxgAzdRSwh6nw/5Dg==}
     engines: {node: '>=4'}
 
-  async-exit-hook@2.0.1:
-    resolution: {integrity: sha512-NW2cX8m1Q7KPA7a5M2ULQeZ2wR5qI5PAbw5L0UOMxdioVk9PMZ0h1TmyZEkPYrCvYjDlFICusOu1dlEKAAeXBw==}
-    engines: {node: '>=0.12.0'}
-
   async-function@1.0.0:
     resolution: {integrity: sha512-hsU18Ae8CDTR6Kgu9DYf0EbCr/a5iGL0rytQDobUcdpYOKokk8LEjVphnXkDkgpi0wYVsqrXuP0bZxJaTqdgoA==}
     engines: {node: '>= 0.4'}
@@ -3682,10 +3620,6 @@ packages:
     resolution: {integrity: sha512-Qgzu8kfBvo+cA4962jnP1KkS6Dop5NS6g7R5LFYJr4b8Ub94PPQXUksCw9PvXoeXPRRddRNC5C1JQUR2SMGtnA==}
     engines: {node: '>= 14.16.0'}
 
-  chownr@3.0.0:
-    resolution: {integrity: sha512-+IxzY9BZOQd/XuYPRmrvEVjF/nqj5kgT4kEq7VofrDoM1MxoRjEWkrCC3EtLi59TVawxTAn+orJwFQcrqEN1+g==}
-    engines: {node: '>=18'}
-
   chrome-trace-event@1.0.4:
     resolution: {integrity: sha512-rNjApaLzuwaOTjCiT8lSDdGN1APCiqkChLMJxJPWLunPAt5fy8xgU9/jNOchV84wfIxrA0lRQB7oCT8jrn/wrQ==}
     engines: {node: '>=6.0'}
@@ -3792,9 +3726,6 @@ packages:
   comment-json@5.0.0:
     resolution: {integrity: sha512-uiqLcOiVDJtBP8WGkZHEP+FZIhTzP1dxvn59EfoYUi9gqupjrBWVQkO2atDrbnKPwLeotFYDsuNb26uBMqB+hw==}
     engines: {node: '>= 6'}
-
-  commondir@1.0.1:
-    resolution: {integrity: sha512-W9pAhw0ja1Edb5GVdIF1mjZw/ASI0AlShXM83UUGe2DVr5TdAPEA1OA8m/g8zWp9x6On7gqufY+FatDbC3MDQg==}
 
   component-emitter@1.3.1:
     resolution: {integrity: sha512-T0+barUSQRTUQASh8bx02dl+DhF54GtIDY13Y3m9oWTklKbb3Wv974meRpeZ3lp1JpLVECWWNHC4vaG2XHXouQ==}
@@ -4127,10 +4058,6 @@ packages:
 
   electron-to-chromium@1.5.409:
     resolution: {integrity: sha512-ChI4N44d0B4A6C8prnNjMOaGgE59fUyEVYcRYm2XEXIjMbbvF5i9UL1cblDbpGqiU0uS8FE8UcKxqZqTXdmzbQ==}
-
-  embedded-postgres@18.3.0-beta.17:
-    resolution: {integrity: sha512-1biFWyuPVtAV5S9RBgcr4PGuAdNL9WhnNZVQ5Arp3gsB24Ci9X9s/8Z7RFYFSc6tJWcj9kzF55YcDAcr3jLUbQ==}
-    engines: {node: '>=16'}
 
   emittery@0.13.1:
     resolution: {integrity: sha512-DeWwawk6r5yR9jFgnDKYt4sLS0LmHJJi3ZOnb5/JdbYwj3nW+FxQnHIjhBKz8YLC7oRNPVM9NQ47I3CVx34eqQ==}
@@ -4547,13 +4474,6 @@ packages:
     resolution: {integrity: sha512-S8KoZgRZN+a5rNwqTxlZZePjT/4cnm0ROV70LedRHZ0p8u9fRID0hJUZQpkKLzro8LfmC8sx23bY6tVNxv8pQA==}
     engines: {node: '>= 18.0.0'}
 
-  find-cache-dir@3.3.2:
-    resolution: {integrity: sha512-wXZV5emFEjrridIgED11OoUKLxiYjAcqot/NJdAkOhlJ+vGzwhOAfcG5OX1jP+S0PcjEn8bdMJv+g2jwQ3Onig==}
-    engines: {node: '>=8'}
-
-  find-package-json@1.2.0:
-    resolution: {integrity: sha512-+SOGcLGYDJHtyqHd87ysBhmaeQ95oWspDKnMXBrnQ9Eq4OkLNqejgoaD8xVWu6GPa0B6roa6KinCMEMcVeqONw==}
-
   find-up@3.0.0:
     resolution: {integrity: sha512-1yD6RmLI1XBfxugvORwlck6f75tYL+iR0jqwsOrOxMZyGYqUuDhJ0l4AXdO1iX/FTs9cBAMEk1gWSEx1kSbylg==}
     engines: {node: '>=6'}
@@ -4691,10 +4611,6 @@ packages:
   get-package-type@0.1.0:
     resolution: {integrity: sha512-pjzuKtY64GYfWizNAJ0fr9VqttZkNiK2iS430LtIHzjBEr6bX8Am2zm4sW4Ro5wjWW5cAlRL1qAMTcXbjNAO2Q==}
     engines: {node: '>=8.0.0'}
-
-  get-port@5.1.1:
-    resolution: {integrity: sha512-g/Q1aTSDOxFpchXC4i8ZWvxA1lnPqx/JHqcpIw0/LX9T8x/GBbi6YnlN5nhaKIFkT8oFsscUKgDJYxfwfS6QsQ==}
-    engines: {node: '>=8'}
 
   get-proto@1.0.1:
     resolution: {integrity: sha512-sTSfBjoXBp89JvIKIefqw7U2CCebsc74kiY6awiGogKtoSGbgjYE/G/+l9sF3MWFPNc9IcoOC4ODfKHfxFmp0g==}
@@ -5629,9 +5545,6 @@ packages:
     resolution: {integrity: sha512-iPZK6eYjbxRu3uB4/WZ3EsEIMJFMqAoopl3R+zuq0UjcAm/MO6KCweDgPfP3elTztoKP3KtnVHxTn2NHBSDVUw==}
     engines: {node: '>=10'}
 
-  lockfile@1.0.4:
-    resolution: {integrity: sha512-cvbTwETRfsFh4nHsL1eGWapU1XFi5Ot9E85sWAwia7Y7EgB7vfqcZhTKZ+l7hCGxSPoushMv5GKhT5PdLv03WA==}
-
   lodash.memoize@4.1.2:
     resolution: {integrity: sha512-t7j+NzmgnQzTAYXcsHYLgimltOV1MXHtlOWf6GjL9Kj8GK5FInw5JotxvbOs+IvV1/Dzo04/fCGfLVs7aXb4Ag==}
 
@@ -5687,10 +5600,6 @@ packages:
 
   magic-string@1.4.1:
     resolution: {integrity: sha512-8lyCu36ErXR0J9uaGKlKQoiLZKmtI63YGLE8G2o9jyRPdr4X47LusSOwgOJOzcVtp81fTAAjxR7BwKz682Jhow==}
-
-  make-dir@3.1.0:
-    resolution: {integrity: sha512-g3FeP20LNwhALb/6Cz6Dd4F2ngze0jz7tbzrD2wAV+o9FeNHe4rL+yK2md0J/fiSf1sa1ADhXqi5+oVwOM/eGw==}
-    engines: {node: '>=8'}
 
   make-dir@4.0.0:
     resolution: {integrity: sha512-hXdUTZYIVOt1Ex//jAQi+wTZZpUpwBj/0QsOzqegb3rGMMeJiSEu5xLHnYfBrRV4RH2+OCSOO95Is/7x1WJ4bw==}
@@ -5798,10 +5707,6 @@ packages:
   minipass@7.1.3:
     resolution: {integrity: sha512-tEBHqDnIoM/1rXME1zgka9g6Q2lcoCkxHLuc7ODJ5BxbP5d4c2Z5cGgtXAku59200Cx7diuHTOYfSBD8n6mm8A==}
     engines: {node: '>=16 || 14 >=14.17'}
-
-  minizlib@3.1.0:
-    resolution: {integrity: sha512-KZxYo1BUkWD2TVFLr0MQoM8vUUigWD3LlD83a/75BqC+4qE0Hb1Vo5v1FgcfaNXvfXzr+5EhQ6ing/CaBijTlw==}
-    engines: {node: '>= 18'}
 
   mlly@1.8.2:
     resolution: {integrity: sha512-d+ObxMQFmbt10sretNDytwt85VrbkhhUA/JBGm1MPaWJ65Cl4wOgLaB1NYvJSZ0Ef03MMEU/0xpPMXUIQ29UfA==}
@@ -6245,11 +6150,6 @@ packages:
     resolution: {integrity: sha512-9ZhXKM/rw350N1ovuWHbGxnGh/SNJ4cnxHiM0rxE4VN41wsg8P8zWn9hv/buK00RP4WvlOyr/RBDiptyxVbkZQ==}
     engines: {node: '>=0.10.0'}
 
-  postgres-memory-server@0.3.0:
-    resolution: {integrity: sha512-nM2FTQjBKPfwSgJtjwL5B+h2igH7QNyaMEIaUL6MCoW8UQAAUOtdI1ccx1mgnJskj+BN9sHD/bbEZ6SDnphUVA==}
-    engines: {node: '>=20'}
-    hasBin: true
-
   powershell-utils@0.1.0:
     resolution: {integrity: sha512-dM0jVuXJPsDN6DvRpea484tCUaMiXWjuCn++HGTqUWzGDjv5tZkEZldAJ/UMlqRYGFrD/etByo4/xOuC/snX2A==}
     engines: {node: '>=20'}
@@ -6398,11 +6298,6 @@ packages:
   redis-errors@1.2.0:
     resolution: {integrity: sha512-1qny3OExCf0UvUV/5wpYKf2YwPcOqXzkwKKSmKHiE6ZMQs5heeE/c8eXK+PNllPvmjgAbfnsbpkGZWy8cBpn9w==}
     engines: {node: '>=4'}
-
-  redis-memory-server@0.17.1:
-    resolution: {integrity: sha512-obdMVFkzLRM+NaCeuZObYNUY5klmAvv91Hq8UBtGsz6YbZd1s5DauaZpIbmjkDoMgxagWIP3/UJiSkuarXTlBg==}
-    engines: {node: '>=18'}
-    hasBin: true
 
   redis-parser@3.0.0:
     resolution: {integrity: sha512-DJnGAeenTdpMEH6uAJRK/uiyEIH9WVsUmoLwzudwGJUwZPp80PDBWPHXSAGNPwNvIXAbe7MSUB1zQFugFml66A==}
@@ -6861,10 +6756,6 @@ packages:
     resolution: {integrity: sha512-uxc/zpqFg6x7C8vOE7lh6Lbda8eEL9zmVm/PLeTPBRhh1xCgdWaQ+J1CUieGpIfm2HdtsUpRv+HshiasBMcc6A==}
     engines: {node: '>=6'}
 
-  tar@7.5.22:
-    resolution: {integrity: sha512-MFO/QzvtAOmJbkhOaCTvbGcFN9L9b+JunIsDwaKljSOdcLMea3NJ1k9Usz/rjdfSXTq4dfzfeS7W4p4YOAAHeA==}
-    engines: {node: '>=18'}
-
   terser-webpack-plugin@5.6.1:
     resolution: {integrity: sha512-201R5j+sJpK8nFWwKVyNfZot8FaJbLZDq5evriVzbV1wDtSXDjRUDRfJzHpAaxFDMEhsZL1QkeqM61wgsS3KaQ==}
     engines: {node: '>= 10.13.0'}
@@ -6957,10 +6848,6 @@ packages:
   tldts@7.4.13:
     resolution: {integrity: sha512-iHtaIWWIbMDkCeJdTBzZFGgbluE5J+oHlb2g7+oAz1S1gpuVpabRZdQyd471Vl8UUkcz2vXSL8xZH2kyCe8tfA==}
     hasBin: true
-
-  tmp@0.2.7:
-    resolution: {integrity: sha512-e0votIpp4Uo2AJYSzVHV6xCcawuiez3DzqDAbrTc3YxBkplN6e+dM13ZeIcZnDg/QpSuU2zfZ3rzwY8ukEnaXw==}
-    engines: {node: '>=14.14'}
 
   tmpl@1.0.5:
     resolution: {integrity: sha512-3f0uOEAQwIqGuWW2MVzYg8fV/QNnc/IpuJNG837rLuczAaLVHslWHZQj4IGiEl5Hs3kkbhwL9Ab7Hrsmuj+Smw==}
@@ -7615,10 +7502,6 @@ packages:
   yallist@3.1.1:
     resolution: {integrity: sha512-a4UGQaWPH59mOXUYnAG2ewncQS4i4F43Tv3JoAM+s2VDAmS9NsK8GpDMLrCHPksFT7h3K6TOoUNn2pb7RoXx4g==}
 
-  yallist@5.0.0:
-    resolution: {integrity: sha512-YgvUTfwqyc7UXVMrB+SImsVYSmTS8X/tSrtdNZMImM+n7+QTriRXyXim0mBrTXNeqzVF0KWGgHPeiyViFFrNDw==}
-    engines: {node: '>=18'}
-
   yargs-parser@21.1.1:
     resolution: {integrity: sha512-tVpsJW7DdjecAiFpbIB1e3qxIQsE6NoPc5/eTdrbbIC4h0LVsWhnoa3g+m2HclBIujHzsxZ4VJVA+GUuc2/LBw==}
     engines: {node: '>=12'}
@@ -8269,30 +8152,6 @@ snapshots:
 
   '@dotenvx/primitives@0.8.0': {}
 
-  '@embedded-postgres/darwin-arm64@18.3.0-beta.17':
-    optional: true
-
-  '@embedded-postgres/darwin-x64@18.3.0-beta.17':
-    optional: true
-
-  '@embedded-postgres/linux-arm64@18.3.0-beta.17':
-    optional: true
-
-  '@embedded-postgres/linux-arm@18.3.0-beta.17':
-    optional: true
-
-  '@embedded-postgres/linux-ia32@18.3.0-beta.17':
-    optional: true
-
-  '@embedded-postgres/linux-ppc64@18.3.0-beta.17':
-    optional: true
-
-  '@embedded-postgres/linux-x64@18.3.0-beta.17':
-    optional: true
-
-  '@embedded-postgres/windows-x64@18.3.0-beta.17':
-    optional: true
-
   '@emnapi/core@1.10.0':
     dependencies:
       '@emnapi/wasi-threads': 1.2.1
@@ -8846,10 +8705,6 @@ snapshots:
       strip-ansi-cjs: strip-ansi@6.0.1
       wrap-ansi: 8.1.0
       wrap-ansi-cjs: wrap-ansi@7.0.0
-
-  '@isaacs/fs-minipass@4.0.1':
-    dependencies:
-      minipass: 7.1.3
 
   '@istanbuljs/load-nyc-config@1.1.0':
     dependencies:
@@ -10727,8 +10582,6 @@ snapshots:
     dependencies:
       tslib: 2.8.1
 
-  async-exit-hook@2.0.1: {}
-
   async-function@1.0.0: {}
 
   asynckit@0.4.0: {}
@@ -11012,8 +10865,6 @@ snapshots:
     dependencies:
       readdirp: 4.1.2
 
-  chownr@3.0.0: {}
-
   chrome-trace-event@1.0.4: {}
 
   ci-info@3.9.0: {}
@@ -11097,8 +10948,6 @@ snapshots:
     dependencies:
       array-timsort: 1.0.3
       esprima: 4.0.1
-
-  commondir@1.0.1: {}
 
   component-emitter@1.3.1: {}
 
@@ -11400,22 +11249,6 @@ snapshots:
   ee-first@1.1.1: {}
 
   electron-to-chromium@1.5.409: {}
-
-  embedded-postgres@18.3.0-beta.17:
-    dependencies:
-      async-exit-hook: 2.0.1
-      pg: 8.23.0
-    optionalDependencies:
-      '@embedded-postgres/darwin-arm64': 18.3.0-beta.17
-      '@embedded-postgres/darwin-x64': 18.3.0-beta.17
-      '@embedded-postgres/linux-arm': 18.3.0-beta.17
-      '@embedded-postgres/linux-arm64': 18.3.0-beta.17
-      '@embedded-postgres/linux-ia32': 18.3.0-beta.17
-      '@embedded-postgres/linux-ppc64': 18.3.0-beta.17
-      '@embedded-postgres/linux-x64': 18.3.0-beta.17
-      '@embedded-postgres/windows-x64': 18.3.0-beta.17
-    transitivePeerDependencies:
-      - pg-native
 
   emittery@0.13.1: {}
 
@@ -12134,14 +11967,6 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  find-cache-dir@3.3.2:
-    dependencies:
-      commondir: 1.0.1
-      make-dir: 3.1.0
-      pkg-dir: 4.2.0
-
-  find-package-json@1.2.0: {}
-
   find-up@3.0.0:
     dependencies:
       locate-path: 3.0.0
@@ -12327,8 +12152,6 @@ snapshots:
   get-own-enumerable-keys@1.0.0: {}
 
   get-package-type@0.1.0: {}
-
-  get-port@5.1.1: {}
 
   get-proto@1.0.1:
     dependencies:
@@ -13475,10 +13298,6 @@ snapshots:
     dependencies:
       p-locate: 5.0.0
 
-  lockfile@1.0.4:
-    dependencies:
-      signal-exit: 3.0.7
-
   lodash.memoize@4.1.2: {}
 
   lodash.merge@4.6.2: {}
@@ -13530,10 +13349,6 @@ snapshots:
   magic-string@1.4.1:
     dependencies:
       '@jridgewell/sourcemap-codec': 1.6.0
-
-  make-dir@3.1.0:
-    dependencies:
-      semver: 6.3.1
 
   make-dir@4.0.0:
     dependencies:
@@ -13610,10 +13425,6 @@ snapshots:
   minimist@1.2.8: {}
 
   minipass@7.1.3: {}
-
-  minizlib@3.1.0:
-    dependencies:
-      minipass: 7.1.3
 
   mlly@1.8.2:
     dependencies:
@@ -13952,15 +13763,19 @@ snapshots:
   pg-cloudflare@1.4.0:
     optional: true
 
-  pg-connection-string@2.14.0: {}
+  pg-connection-string@2.14.0:
+    optional: true
 
-  pg-int8@1.0.1: {}
+  pg-int8@1.0.1:
+    optional: true
 
   pg-pool@3.14.0(pg@8.23.0):
     dependencies:
       pg: 8.23.0
+    optional: true
 
-  pg-protocol@1.16.0: {}
+  pg-protocol@1.16.0:
+    optional: true
 
   pg-types@2.2.0:
     dependencies:
@@ -13969,6 +13784,7 @@ snapshots:
       postgres-bytea: 1.0.1
       postgres-date: 1.0.7
       postgres-interval: 1.2.0
+    optional: true
 
   pg@8.23.0:
     dependencies:
@@ -13979,10 +13795,12 @@ snapshots:
       pgpass: 1.0.5
     optionalDependencies:
       pg-cloudflare: 1.4.0
+    optional: true
 
   pgpass@1.0.5:
     dependencies:
       split2: 4.2.0
+    optional: true
 
   picocolors@1.1.1: {}
 
@@ -14068,22 +13886,19 @@ snapshots:
       picocolors: 1.1.1
       source-map-js: 1.2.1
 
-  postgres-array@2.0.0: {}
+  postgres-array@2.0.0:
+    optional: true
 
-  postgres-bytea@1.0.1: {}
+  postgres-bytea@1.0.1:
+    optional: true
 
-  postgres-date@1.0.7: {}
+  postgres-date@1.0.7:
+    optional: true
 
   postgres-interval@1.2.0:
     dependencies:
       xtend: 4.0.2
-
-  postgres-memory-server@0.3.0:
-    dependencies:
-      embedded-postgres: 18.3.0-beta.17
-      pg: 8.23.0
-    transitivePeerDependencies:
-      - pg-native
+    optional: true
 
   powershell-utils@0.1.0: {}
 
@@ -14231,23 +14046,6 @@ snapshots:
       strip-indent: 3.0.0
 
   redis-errors@1.2.0: {}
-
-  redis-memory-server@0.17.1:
-    dependencies:
-      camelcase: 6.3.0
-      cross-spawn: 7.0.6
-      debug: 4.4.3
-      find-cache-dir: 3.3.2
-      find-package-json: 1.2.0
-      get-port: 5.1.1
-      https-proxy-agent: 7.0.6
-      lockfile: 1.0.4
-      rimraf: 5.0.10
-      semver: 7.8.5
-      tar: 7.5.22
-      tmp: 0.2.7
-    transitivePeerDependencies:
-      - supports-color
 
   redis-parser@3.0.0:
     dependencies:
@@ -14856,14 +14654,6 @@ snapshots:
 
   tapable@2.3.3: {}
 
-  tar@7.5.22:
-    dependencies:
-      '@isaacs/fs-minipass': 4.0.1
-      chownr: 3.0.0
-      minipass: 7.1.3
-      minizlib: 3.1.0
-      yallist: 5.0.0
-
   terser-webpack-plugin@5.6.1(@swc/core@1.16.0(@swc/helpers@0.5.23))(esbuild@0.28.2)(webpack@5.106.2(@swc/core@1.16.0(@swc/helpers@0.5.23))(esbuild@0.28.2)):
     dependencies:
       '@jridgewell/trace-mapping': 0.3.31
@@ -14928,8 +14718,6 @@ snapshots:
     dependencies:
       tldts-core: 7.4.13
     optional: true
-
-  tmp@0.2.7: {}
 
   tmpl@1.0.5: {}
 
@@ -15725,13 +15513,12 @@ snapshots:
   xmlchars@2.2.0:
     optional: true
 
-  xtend@4.0.2: {}
+  xtend@4.0.2:
+    optional: true
 
   y18n@5.0.8: {}
 
   yallist@3.1.1: {}
-
-  yallist@5.0.0: {}
 
   yargs-parser@21.1.1: {}
 
