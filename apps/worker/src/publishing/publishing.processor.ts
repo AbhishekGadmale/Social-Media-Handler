@@ -94,7 +94,7 @@ export class PublishingProcessor extends WorkerHost {
   async process(job: Job<any>) {
     if (job.name === 'publishing.delete') return this.processDelete(job);
 
-    const { workspaceId, publicationId, dispatchVersion } = job.data;
+    const { workspaceId, publicationId, dispatchVersion, operationId } = job.data;
     const repo = new PublishingRepository(this.prisma, workspaceId);
 
     this.logger.debug({
@@ -178,6 +178,10 @@ export class PublishingProcessor extends WorkerHost {
         return;
       }
       currentOperationId = parsed.data.operationId;
+      if (operationId && currentOperationId !== operationId) {
+        this.logger.warn({ msg: 'publication.job.stale_operation', publicationId, expected: currentOperationId, actual: operationId });
+        return;
+      }
       const phase = parsed.data.phase;
 
       if (phase === 'COMPLETED' || phase === 'FAILED' || phase === 'AMBIGUOUS') {
@@ -386,20 +390,29 @@ export class PublishingProcessor extends WorkerHost {
         result = await adapter.publish(credentials, providerInput, this.storage, publishContext);
       }
 
-    } catch (error) {
+    } catch (error: any) {
       this.logger.error({
         msg: 'publication.provider_error',
         publicationId,
         error: error.message,
       });
-      
+
+      if (error instanceof ProviderCoordinationError || (error.message && error.message.includes('ProviderCoordinationError')) || (error.message && error.message.includes('Dispatch version mismatch')) || (error.message && error.message.includes('Stale'))) {
+        this.logger.warn({ msg: 'publication.aborted_duplicate', publicationId });
+        return;
+      }
+
+      if (currentSourcePhase === 'PROCESSING_REMOTE') {
+        throw error;
+      }
+
       const isPublishRequested = (currentSourcePhase as string) === 'PUBLISH_REQUESTED';
       await this.handleUnknown(
         publicationId,
         attempt.id,
         'UNHANDLED_EXCEPTION',
         undefined,
-        executionRepo,
+        isPublishRequested ? executionRepo : undefined,
         isPublishRequested ? {
           currentOperationId: currentOperationId!,
           currentSourcePhase: currentSourcePhase as any,
@@ -447,18 +460,20 @@ export class PublishingProcessor extends WorkerHost {
       }
     } else {
       if (result.failureCategory === 'UNKNOWN_RESULT') {
-          const isPublishRequested = (currentSourcePhase as string) === 'PUBLISH_REQUESTED';
+          if ((currentSourcePhase as string) !== 'PUBLISH_REQUESTED' && result.failureCode !== 'AMBIGUOUS_PUBLISHED_CONTAINER') {
+            throw new Error('Transport failure during polling: ' + (result.message || 'Unknown error'));
+          }
           await this.handleUnknown(
             publicationId,
             attempt.id,
             result.failureCode || 'UNKNOWN',
             result,
-            isPublishRequested ? executionRepo : undefined,
-            isPublishRequested ? {
+            executionRepo,
+            {
               currentOperationId: currentOperationId!,
               currentSourcePhase: currentSourcePhase as any,
               expectedDispatchVersion
-            } : undefined
+            }
           );
         } else {
         await executionRepo.transitionOperation(publicationId, currentOperationId!, currentSourcePhase, 'FAILED', expectedDispatchVersion);

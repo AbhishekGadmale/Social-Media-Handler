@@ -33,7 +33,7 @@ const TERMINAL_PHASES: ExecutionPhase[] = ["COMPLETED", "FAILED", "AMBIGUOUS"];
 const ALLOWED_TRANSITIONS: Record<ExecutionPhase, ExecutionPhase[]> = {
   INITIATED: ["CONTAINER_CREATED", "PUBLISH_REQUESTED", "COMPLETED", "FAILED"],
   CONTAINER_CREATED: ["PROCESSING_REMOTE", "PUBLISH_REQUESTED", "FAILED"],
-  PROCESSING_REMOTE: ["PROCESSING_REMOTE", "PUBLISH_REQUESTED", "COMPLETED", "FAILED"],
+  PROCESSING_REMOTE: ["PROCESSING_REMOTE", "PUBLISH_REQUESTED", "COMPLETED", "FAILED", "AMBIGUOUS"],
   PUBLISH_REQUESTED: ["COMPLETED", "AMBIGUOUS", "PROCESSING_REMOTE"],
   COMPLETED: [],
   FAILED: [],
@@ -213,6 +213,11 @@ export class ExecutionMetadataRepository {
             reason: "finalRemoteId is required for COMPLETED",
           };
         nextMetadata.finalRemoteId = data.finalRemoteId;
+      }
+
+      if (TERMINAL_PHASES.includes(nextPhase)) {
+        delete nextMetadata.nextCheckAt;
+        delete nextMetadata.lastCheckedAt;
       }
 
       const updated = await tx.postPlatformVariant.updateMany({
