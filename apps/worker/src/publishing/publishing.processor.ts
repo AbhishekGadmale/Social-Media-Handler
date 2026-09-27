@@ -38,30 +38,30 @@ export class PublishingProcessor extends WorkerHost {
     super();
   }
 
-  
+
   private async processDelete(job: Job<any>) {
     const { workspaceId, publicationId } = job.data;
-    
+
     // 1. Authoritative load
     const variant = await this.prisma.postPlatformVariant.findFirst({
       where: { id: publicationId, workspaceId },
       include: { socialAccount: true },
     });
-    
+
     if (!variant) return; // Deleted already
     if (variant.status === 'DELETED') return; // Idempotent
     if (!variant.externalPostId) {
       await this.prisma.postPlatformVariant.update({ where: { id: publicationId }, data: { status: 'DELETED' } });
       return;
     }
-    
+
     // 2. Validate provider
     const provider = this.providerRegistry.get(variant.socialAccount.provider);
     if (!provider || !provider.deletePost) {
       this.logger.error({ msg: 'delete.provider_not_found_or_unsupported', provider: variant.socialAccount.provider });
       throw new Error('Provider does not support deletion');
     }
-    
+
     // 3. Decrypt token
     let credentials;
     try {
@@ -70,7 +70,7 @@ export class PublishingProcessor extends WorkerHost {
       // Mark as unknown or failed depending on the error
       throw err;
     }
-    
+
     // 4. Call provider
     try {
       const res = (await provider.deletePost(credentials, variant.externalPostId)) as any;
@@ -166,7 +166,7 @@ export class PublishingProcessor extends WorkerHost {
         this.logger.warn({ msg: 'publication.job.start_failed', publicationId, reason: startRes.reason });
         return;
       }
-      
+
       const p = safeParseExecutionMetadata(startRes.variant.executionMetadata);
       if (p.success) currentOperationId = p.data.operationId;
       expectedDispatchVersion = startRes.variant.dispatchVersion;
@@ -307,7 +307,7 @@ export class PublishingProcessor extends WorkerHost {
             phase,
             'CONTAINER_CREATED',
             expectedDispatchVersion,
-            { containerId: remoteIdentity.containerId }
+            { containerId: remoteIdentity.containerId, preparationState: remoteIdentity.providerState }
           );
           if (tRes.type !== ExecutionTransitionResultType.SUCCESS) {
             throw new ProviderCoordinationError(`Failed to persist preparation state: ${(tRes as any).reason}`);
@@ -342,7 +342,7 @@ export class PublishingProcessor extends WorkerHost {
                 this.logger.error({ msg: 'publication.unsupported_status_check', publicationId });
                 result = {
                   success: false,
-                  failureCategory: 'CONFIGURATION_ERROR',
+                  failureCategory: 'PERMANENT',
                   failureCode: 'MISSING_CAPABILITY',
                   message: 'Provider does not support remote status checks.',
                 }
@@ -367,9 +367,35 @@ export class PublishingProcessor extends WorkerHost {
                 if (typeof adapter.finalizePublish !== 'function') {
                   throw new Error('Provider returned READY but finalizePublish is not implemented');
                 }
-                
+
                 // 1. Provider is responsible for calling ctx.beforeFinalMutation() inside finalizePublish
                 result = await adapter.finalizePublish(credentials, providerInput, remoteResourceId, publishContext);
+              } else if (statusRes.status === 'PREPARATION_READY') {
+                if (typeof adapter.continuePreparation !== 'function') {
+                  this.logger.error({ msg: 'publication.missing_continue_preparation', publicationId });
+                  result = {
+                    success: false,
+                    failureCategory: 'PERMANENT',
+                    failureCode: 'MISSING_CAPABILITY',
+                    message: 'Provider returned PREPARATION_READY but continuePreparation is not implemented',
+                  };
+                } else {
+                  const currentVariant = await this.prisma.postPlatformVariant.findUniqueOrThrow({ where: { id: publicationId }});
+                  const p = safeParseExecutionMetadata(currentVariant.executionMetadata);
+                  const providerState = p.success ? (p.data as any).preparationState : undefined;
+                  const prepRes = await adapter.continuePreparation(credentials, providerInput, { ...publishContext, providerState });
+                  if (prepRes.status === 'FAILED') {
+                    result = {
+                      success: false,
+                      failureCategory: prepRes.failureCategory || 'PERMANENT',
+                      failureCode: prepRes.failureCode || 'PROVIDER_PREPARATION_FAILED',
+                      message: prepRes.message || 'Preparation failed',
+                      retryAfterSeconds: prepRes.retryAfterSeconds,
+                    };
+                  } else {
+                    result = { success: true, processingState: 'PROCESSING', externalPostId: remoteResourceId, providerState: prepRes.providerState, delayMs: prepRes.delayMs };
+                  }
+                }
               } else if (statusRes.status === 'FAILED') {
               result = {
                 success: false,
@@ -427,10 +453,10 @@ export class PublishingProcessor extends WorkerHost {
     // 8. Handle Result
     if (result.success) {
       if (result.processingState === 'PROCESSING') {
-        const delayMs = 60000;
+        const delayMs = result.delayMs || 60000;
         const transitionRes = await executionRepo.transitionOperation(
           publicationId, currentOperationId!, currentSourcePhase, 'PROCESSING_REMOTE', expectedDispatchVersion,
-          { delayMs, remoteResourceId: result.externalPostId }
+          { delayMs, remoteResourceId: result.externalPostId, preparationState: result.providerState }
         );
         if (transitionRes.type === ExecutionTransitionResultType.SUCCESS) {
           this.logger.log({ msg: 'publication.processing_remote', publicationId, delayMs });

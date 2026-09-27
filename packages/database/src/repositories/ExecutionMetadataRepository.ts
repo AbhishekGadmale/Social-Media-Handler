@@ -115,6 +115,7 @@ export class ExecutionMetadataRepository {
       finalRemoteId?: string;
       delayMs?: number;
       remoteResourceId?: string;
+      preparationState?: unknown;
     },
     clientTx?: Prisma.TransactionClient
   ): Promise<ExecutionTransitionResult> {
@@ -175,6 +176,10 @@ export class ExecutionMetadataRepository {
 
       // Enforce data constraints
       const nextMetadata: Record<string, unknown> = { ...current, phase: nextPhase };
+
+      if (data?.preparationState !== undefined) {
+        nextMetadata.preparationState = data.preparationState;
+      }
 
       if (nextPhase === "CONTAINER_CREATED") {
         if (!data?.containerId)
@@ -243,7 +248,7 @@ export class ExecutionMetadataRepository {
         variant: finalVariant,
       };
     };
-    
+
     if (clientTx) {
       return runTx(clientTx);
     } else {

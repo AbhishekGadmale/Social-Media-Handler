@@ -33,6 +33,7 @@ const BaseExecutionMetadataSchema = z.object({
   lastCheckedAt: z.string().datetime().optional(),
   nextCheckAt: z.string().datetime().optional(),
   remoteResourceId: z.string().optional(),
+  preparationState: z.unknown().optional(),
 });
 
 export const ExecutionMetadataSchema = z.discriminatedUnion('phase', [
