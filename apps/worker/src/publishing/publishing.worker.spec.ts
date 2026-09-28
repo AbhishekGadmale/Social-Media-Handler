@@ -688,7 +688,9 @@ describe('Publishing Worker (e2e)', () => {
       finalizeSpy = jest.fn();
       checkSpy = jest.fn();
 
-      const adapter = moduleRef.get(ProviderRegistry).getPublishingAdapter('LINKEDIN');
+      const adapter = moduleRef
+        .get(ProviderRegistry)
+        .getPublishingAdapter('LINKEDIN');
       adapter.continuePreparation = continueSpy;
       adapter.finalizePublish = finalizeSpy;
       adapter.checkStatus = checkSpy;
@@ -696,29 +698,61 @@ describe('Publishing Worker (e2e)', () => {
 
     it('PREPARATION_READY -> continuePreparation exactly once, finalizePublish zero (PROCESSING accepted)', async () => {
       const { variantId, wsId } = await createFixture(PostStatus.QUEUED);
-      const adapter = moduleRef.get(ProviderRegistry).getPublishingAdapter('LINKEDIN');
+      const adapter = moduleRef
+        .get(ProviderRegistry)
+        .getPublishingAdapter('LINKEDIN');
 
       checkSpy.mockResolvedValue({ status: 'PREPARATION_READY' });
-      continueSpy.mockResolvedValue({ status: 'PROCESSING', providerState: { step: 1 } });
-      adapter.publish = jest.fn().mockImplementation(async (cred, input, media, ctx) => {
-        if (ctx && ctx.onRemotePrepared) await ctx.onRemotePrepared({ containerId: '123' });
-        return { success: true, processingState: 'PROCESSING', externalPostId: 'ext1' };
+      continueSpy.mockResolvedValue({
+        status: 'PROCESSING',
+        providerState: { step: 1 },
       });
+      adapter.publish = jest
+        .fn()
+        .mockImplementation(async (cred, input, media, ctx) => {
+          if (ctx && ctx.onRemotePrepared)
+            await ctx.onRemotePrepared({ containerId: '123' });
+          return {
+            success: true,
+            processingState: 'PROCESSING',
+            externalPostId: 'ext1',
+          };
+        });
 
       // Execute initial publish
-      await processor.process({ id: 'job-1', data: { workspaceId: wsId, publicationId: variantId, dispatchVersion: 1 } } as any);
+      await processor.process({
+        id: 'job-1',
+        data: {
+          workspaceId: wsId,
+          publicationId: variantId,
+          dispatchVersion: 1,
+        },
+      } as any);
 
-      let v = await prisma.postPlatformVariant.findUniqueOrThrow({ where: { id: variantId } });
+      const v = await prisma.postPlatformVariant.findUniqueOrThrow({
+        where: { id: variantId },
+      });
 
       // Execute poll (checkStatus -> PREPARATION_READY -> continuePreparation)
-      await processor.process({ id: 'job-2', data: { workspaceId: wsId, publicationId: variantId, dispatchVersion: v.dispatchVersion } } as any);
+      await processor.process({
+        id: 'job-2',
+        data: {
+          workspaceId: wsId,
+          publicationId: variantId,
+          dispatchVersion: v.dispatchVersion,
+        },
+      } as any);
 
       expect((adapter.checkStatus as jest.Mock).mock.calls.length).toBe(1);
-      expect((adapter.continuePreparation as jest.Mock).mock.calls.length).toBe(1);
+      expect((adapter.continuePreparation as jest.Mock).mock.calls.length).toBe(
+        1,
+      );
       expect((adapter.finalizePublish as jest.Mock).mock.calls.length).toBe(0);
 
       // Verify exactly one CAS update occurred and state was merged
-      const v2 = await prisma.postPlatformVariant.findUniqueOrThrow({ where: { id: variantId } });
+      const v2 = await prisma.postPlatformVariant.findUniqueOrThrow({
+        where: { id: variantId },
+      });
       expect(v2.status).toBe(PostStatus.PUBLISHING);
       const meta = v2.executionMetadata as any;
       expect(meta.preparationState).toEqual({ step: 1 });
@@ -727,75 +761,170 @@ describe('Publishing Worker (e2e)', () => {
 
     it('PREPARATION_READY without continuePreparation capability fails closed', async () => {
       const { variantId, wsId } = await createFixture(PostStatus.QUEUED);
-      const adapter = moduleRef.get(ProviderRegistry).getPublishingAdapter('LINKEDIN');
+      const adapter = moduleRef
+        .get(ProviderRegistry)
+        .getPublishingAdapter('LINKEDIN');
 
       delete adapter.continuePreparation;
       checkSpy.mockResolvedValue({ status: 'PREPARATION_READY' });
-      adapter.publish = jest.fn().mockImplementation(async (cred, input, media, ctx) => {
-        if (ctx && ctx.onRemotePrepared) await ctx.onRemotePrepared({ containerId: '123' });
-        return { success: true, processingState: 'PROCESSING', externalPostId: 'ext1' };
+      adapter.publish = jest
+        .fn()
+        .mockImplementation(async (cred, input, media, ctx) => {
+          if (ctx && ctx.onRemotePrepared)
+            await ctx.onRemotePrepared({ containerId: '123' });
+          return {
+            success: true,
+            processingState: 'PROCESSING',
+            externalPostId: 'ext1',
+          };
+        });
+
+      await processor.process({
+        id: 'job-1',
+        data: {
+          workspaceId: wsId,
+          publicationId: variantId,
+          dispatchVersion: 1,
+        },
+      } as any);
+      const v = await prisma.postPlatformVariant.findUniqueOrThrow({
+        where: { id: variantId },
       });
 
-      await processor.process({ id: 'job-1', data: { workspaceId: wsId, publicationId: variantId, dispatchVersion: 1 } } as any);
-      const v = await prisma.postPlatformVariant.findUniqueOrThrow({ where: { id: variantId } });
+      await processor.process({
+        id: 'job-2',
+        data: {
+          workspaceId: wsId,
+          publicationId: variantId,
+          dispatchVersion: v.dispatchVersion,
+        },
+      } as any);
 
-      await processor.process({ id: 'job-2', data: { workspaceId: wsId, publicationId: variantId, dispatchVersion: v.dispatchVersion } } as any);
-
-      const v2 = await prisma.postPlatformVariant.findUniqueOrThrow({ where: { id: variantId } });
+      const v2 = await prisma.postPlatformVariant.findUniqueOrThrow({
+        where: { id: variantId },
+      });
       expect(v2.status).toBe(PostStatus.FAILED);
 
-      const attempt = await prisma.publicationAttempt.findFirst({ where: { variantId }, orderBy: { attemptNumber: 'desc' } });
+      const attempt = await prisma.publicationAttempt.findFirst({
+        where: { variantId },
+        orderBy: { attemptNumber: 'desc' },
+      });
       expect(attempt?.failureCategory).toBe('PERMANENT');
       expect(attempt?.failureCode).toBe('MISSING_CAPABILITY');
     });
 
     it('READY -> finalizePublish exactly once, continuePreparation zero', async () => {
       const { variantId, wsId } = await createFixture(PostStatus.QUEUED);
-      const adapter = moduleRef.get(ProviderRegistry).getPublishingAdapter('LINKEDIN');
+      const adapter = moduleRef
+        .get(ProviderRegistry)
+        .getPublishingAdapter('LINKEDIN');
 
       checkSpy.mockResolvedValue({ status: 'READY' });
-      finalizeSpy.mockResolvedValue({ success: true, externalPostId: 'ext-final' });
-      adapter.publish = jest.fn().mockImplementation(async (cred, input, media, ctx) => {
-        if (ctx && ctx.onRemotePrepared) await ctx.onRemotePrepared({ containerId: '123' });
-        return { success: true, processingState: 'PROCESSING', externalPostId: 'ext1' };
+      finalizeSpy.mockResolvedValue({
+        success: true,
+        externalPostId: 'ext-final',
+      });
+      adapter.publish = jest
+        .fn()
+        .mockImplementation(async (cred, input, media, ctx) => {
+          if (ctx && ctx.onRemotePrepared)
+            await ctx.onRemotePrepared({ containerId: '123' });
+          return {
+            success: true,
+            processingState: 'PROCESSING',
+            externalPostId: 'ext1',
+          };
+        });
+
+      await processor.process({
+        id: 'job-1',
+        data: {
+          workspaceId: wsId,
+          publicationId: variantId,
+          dispatchVersion: 1,
+        },
+      } as any);
+      const v = await prisma.postPlatformVariant.findUniqueOrThrow({
+        where: { id: variantId },
       });
 
-      await processor.process({ id: 'job-1', data: { workspaceId: wsId, publicationId: variantId, dispatchVersion: 1 } } as any);
-      const v = await prisma.postPlatformVariant.findUniqueOrThrow({ where: { id: variantId } });
-
-      await processor.process({ id: 'job-2', data: { workspaceId: wsId, publicationId: variantId, dispatchVersion: v.dispatchVersion } } as any);
+      await processor.process({
+        id: 'job-2',
+        data: {
+          workspaceId: wsId,
+          publicationId: variantId,
+          dispatchVersion: v.dispatchVersion,
+        },
+      } as any);
 
       expect((adapter.checkStatus as jest.Mock).mock.calls.length).toBe(1);
-      expect((adapter.continuePreparation as jest.Mock).mock.calls.length).toBe(0);
+      expect((adapter.continuePreparation as jest.Mock).mock.calls.length).toBe(
+        0,
+      );
       expect((adapter.finalizePublish as jest.Mock).mock.calls.length).toBe(1);
 
-      const v2 = await prisma.postPlatformVariant.findUniqueOrThrow({ where: { id: variantId } });
+      const v2 = await prisma.postPlatformVariant.findUniqueOrThrow({
+        where: { id: variantId },
+      });
       expect(v2.status).toBe(PostStatus.PUBLISHED);
     });
 
     it('continuePreparation FAILED uses existing atomic failure path', async () => {
       const { variantId, wsId } = await createFixture(PostStatus.QUEUED);
-      const adapter = moduleRef.get(ProviderRegistry).getPublishingAdapter('LINKEDIN');
+      const adapter = moduleRef
+        .get(ProviderRegistry)
+        .getPublishingAdapter('LINKEDIN');
 
       checkSpy.mockResolvedValue({ status: 'PREPARATION_READY' });
-      continueSpy.mockResolvedValue({ status: 'FAILED', failureCategory: 'VALIDATION', failureCode: 'BAD_PREP' });
-      adapter.publish = jest.fn().mockImplementation(async (cred, input, media, ctx) => {
-        if (ctx && ctx.onRemotePrepared) await ctx.onRemotePrepared({ containerId: '123' });
-        return { success: true, processingState: 'PROCESSING', externalPostId: 'ext1' };
+      continueSpy.mockResolvedValue({
+        status: 'FAILED',
+        failureCategory: 'VALIDATION',
+        failureCode: 'BAD_PREP',
+      });
+      adapter.publish = jest
+        .fn()
+        .mockImplementation(async (cred, input, media, ctx) => {
+          if (ctx && ctx.onRemotePrepared)
+            await ctx.onRemotePrepared({ containerId: '123' });
+          return {
+            success: true,
+            processingState: 'PROCESSING',
+            externalPostId: 'ext1',
+          };
+        });
+
+      await processor.process({
+        id: 'job-1',
+        data: {
+          workspaceId: wsId,
+          publicationId: variantId,
+          dispatchVersion: 1,
+        },
+      } as any);
+      const v = await prisma.postPlatformVariant.findUniqueOrThrow({
+        where: { id: variantId },
       });
 
-      await processor.process({ id: 'job-1', data: { workspaceId: wsId, publicationId: variantId, dispatchVersion: 1 } } as any);
-      const v = await prisma.postPlatformVariant.findUniqueOrThrow({ where: { id: variantId } });
+      await processor.process({
+        id: 'job-2',
+        data: {
+          workspaceId: wsId,
+          publicationId: variantId,
+          dispatchVersion: v.dispatchVersion,
+        },
+      } as any);
 
-      await processor.process({ id: 'job-2', data: { workspaceId: wsId, publicationId: variantId, dispatchVersion: v.dispatchVersion } } as any);
-
-      const v2 = await prisma.postPlatformVariant.findUniqueOrThrow({ where: { id: variantId } });
+      const v2 = await prisma.postPlatformVariant.findUniqueOrThrow({
+        where: { id: variantId },
+      });
       expect(v2.status).toBe(PostStatus.FAILED);
 
-      const attempt = await prisma.publicationAttempt.findFirst({ where: { variantId }, orderBy: { attemptNumber: 'desc' } });
+      const attempt = await prisma.publicationAttempt.findFirst({
+        where: { variantId },
+        orderBy: { attemptNumber: 'desc' },
+      });
       expect(attempt?.failureCategory).toBe('VALIDATION');
       expect(attempt?.failureCode).toBe('BAD_PREP');
     });
   });
-
 });
