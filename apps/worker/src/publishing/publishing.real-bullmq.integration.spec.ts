@@ -23,6 +23,7 @@ describe('REAL REDIS/BULLMQ: Publishing Architecture Continuation', () => {
     publish: jest.fn(),
     checkStatus: jest.fn(),
     finalizePublish: jest.fn(),
+    continuePreparation: jest.fn(),
     getPublishingCapabilities: jest.fn().mockReturnValue({
       contentTypes: {
         TEXT_POST: { supported: true },
@@ -164,8 +165,19 @@ describe('REAL REDIS/BULLMQ: Publishing Architecture Continuation', () => {
           provider: overrides.provider || 'YOUTUBE',
           phase,
           operationId: generateId(),
-          lastCheckedAt: new Date().toISOString(),
-          nextCheckAt: new Date(Date.now() + nextCheckAtDelayMs).toISOString(),
+          ...(phase === 'PROCESSING_REMOTE'
+            ? {
+                lastCheckedAt: new Date().toISOString(),
+                nextCheckAt: new Date(
+                  Date.now() + nextCheckAtDelayMs,
+                ).toISOString(),
+              }
+            : {}),
+          ...(phase === 'PUBLISH_REQUESTED'
+            ? {
+                publishRequestedAt: new Date().toISOString(),
+              }
+            : {}),
           ...overrides,
         },
       },
@@ -776,5 +788,89 @@ describe('REAL REDIS/BULLMQ: Publishing Architecture Continuation', () => {
     // 3. Assert processor aborts (no dangerous final mutation)
     expect(mockAdapter.finalizePublish).toHaveBeenCalledTimes(0);
     expect(mockAdapter.publish).toHaveBeenCalledTimes(0);
+  });
+
+  it('14. Task A PROCESSING_REMOTE -> PREPARATION_READY -> continuePreparation -> PROCESSING', async () => {
+    const { variant } = await createTestVariant('PROCESSING_REMOTE', -1000, {
+      remoteResourceId: 'ig-14-container',
+    });
+    const jobId = `publication-${variant.id}-v${variant.dispatchVersion}`;
+    const payload = {
+      workspaceId: variant.workspaceId,
+      publicationId: variant.id,
+      dispatchVersion: variant.dispatchVersion,
+      operationId: (variant.executionMetadata as any).operationId,
+    };
+
+    mockAdapter.checkStatus.mockResolvedValueOnce({
+      status: 'PREPARATION_READY',
+    });
+    mockAdapter.continuePreparation = jest.fn().mockResolvedValueOnce({
+      status: 'PROCESSING',
+      providerState: { step: 2 },
+      delayMs: 30000,
+    });
+    mockAdapter.finalizePublish.mockClear();
+
+    await queue.add('publish-job', payload, { jobId });
+    await sleep(400);
+
+    expect(mockAdapter.continuePreparation).toHaveBeenCalledTimes(1);
+    expect(mockAdapter.finalizePublish).toHaveBeenCalledTimes(0);
+
+    const finalVariant = await prisma.postPlatformVariant.findUniqueOrThrow({
+      where: { id: variant.id },
+    });
+    expect(finalVariant.status).toBe('PUBLISHING');
+    expect((finalVariant.executionMetadata as any).phase).toBe(
+      'PROCESSING_REMOTE',
+    );
+    expect((finalVariant.executionMetadata as any).preparationState).toEqual({
+      step: 2,
+    });
+    expect(finalVariant.dispatchVersion).toBe(variant.dispatchVersion + 1);
+  });
+
+  it('15. Task A stale preparation continuation', async () => {
+    const { variant } = await createTestVariant('PROCESSING_REMOTE', -1000, {
+      remoteResourceId: 'ig-15-container',
+      preparationState: { step: 1 },
+    });
+    const jobId = `publication-${variant.id}-v${variant.dispatchVersion}`;
+    const payload = {
+      workspaceId: variant.workspaceId,
+      publicationId: variant.id,
+      dispatchVersion: variant.dispatchVersion,
+      operationId: (variant.executionMetadata as any).operationId,
+    };
+
+    mockAdapter.checkStatus.mockResolvedValueOnce({
+      status: 'PREPARATION_READY',
+    });
+    mockAdapter.continuePreparation = jest
+      .fn()
+      .mockImplementationOnce(async () => {
+        await prisma.postPlatformVariant.update({
+          where: { id: variant.id },
+          data: { dispatchVersion: { increment: 1 } },
+        });
+        return {
+          status: 'PROCESSING',
+          providerState: { step: 2 },
+          delayMs: 30000,
+        };
+      });
+
+    await queue.add('publish-job', payload, { jobId });
+    await sleep(400);
+
+    expect(mockAdapter.continuePreparation).toHaveBeenCalledTimes(1);
+
+    const finalVariant = await prisma.postPlatformVariant.findUniqueOrThrow({
+      where: { id: variant.id },
+    });
+    expect((finalVariant.executionMetadata as any).preparationState).toEqual({
+      step: 1,
+    });
   });
 });

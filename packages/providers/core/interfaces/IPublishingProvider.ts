@@ -88,7 +88,7 @@ export interface ProviderExecutionCredentials {
 
 export type ProviderJsonValue = string | number | boolean | null | ProviderJsonObject | ProviderJsonArray;
 export interface ProviderJsonObject { [key: string]: ProviderJsonValue }
-export interface ProviderJsonArray extends Array<ProviderJsonValue> {}
+export type ProviderJsonArray = Array<ProviderJsonValue>;
 
 export interface ProviderRemotePreparation {
   containerId?: string;
