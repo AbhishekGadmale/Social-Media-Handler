@@ -93,7 +93,34 @@ Allowed atomic transitions:
 Atomic persistence via `repo.transitionVariantState(variantId, PostStatus.UNKNOWN, targetStatus)`. This guarantees a stale operator cannot overwrite an already resolved state (e.g. if the user clicks twice, or two admins act concurrently).
 
 ## 11. DB/Transaction Ownership
-*Defect:* Currently, `PublishingApplicationService` writes the `AuditLog` AFTER `transitionVariantState` and it is NOT inside the same DB transaction. Current manual reconciliation is not fully transactional. In E1, required reconciliation writes must be made atomic to keep the `AuditLog` consistent with terminal resolution.
+*Defect:* In the CURRENT implementation, `PublishingApplicationService` writes the `AuditLog` AFTER `transitionVariantState` and it is NOT inside the same DB transaction. Current manual reconciliation is not fully transactional. Furthermore, `executionMetadata` and `PublicationAttempt` are currently untouched.
+
+**E1 RECOMMENDATION:**
+E1 terminal reconciliation persistence must occur in ONE database transaction covering the required aligned state to ensure these records cannot end in a torn reconciled state:
+1. `executionMetadata`
+2. `PostPlatformVariant`
+3. EXISTING logical `PublicationAttempt`
+4. `AuditLog`
+
+For `CONFIRM_PUBLISHED`, conceptually align:
+- `executionMetadata.phase` -> `COMPLETED`
+- `PostPlatformVariant.status` -> `PUBLISHED`
+- existing `PublicationAttempt` -> corresponding successful terminal result (using exact schema-supported values)
+- `AuditLog` -> `PUBLICATION_RECONCILED_PUBLISHED`
+
+For `CONFIRM_FAILED`, conceptually align:
+- `executionMetadata.phase` -> `FAILED`
+- `PostPlatformVariant.status` -> `FAILED`
+- existing `PublicationAttempt` -> corresponding failed terminal result (using exact schema-supported values)
+- `AuditLog` -> `PUBLICATION_RECONCILED_FAILED`
+
+*Ownership:*
+- **Provider:** no role in manual reconciliation persistence.
+- **Controller:** authorization/request validation only.
+- **PublishingApplicationService (or dedicated domain service):** orchestrates reconciliation decision.
+- **Database transaction:** owns the atomic four-record update.
+
+E1 must also preserve current UNKNOWN-source CAS / stale-write protection, workspace isolation, operator reason, reconciliation metadata, and externalPostId/finalRemoteId policy.
 
 ## 12. Scheduling/Retry Design
 No background BullMQ jobs are required for reconciliation at this stage, as automatic provider evidence lookup is deemed too heuristic. No retry loops are needed.
@@ -117,21 +144,28 @@ No background BullMQ jobs are required for reconciliation at this stage, as auto
 **NONE.** Due to the lack of authoritative lookup capabilities across all implemented providers, the recommendation is to **harden manual reconciliation across all providers** rather than pretending automatic reconciliation is safe.
 
 ## 17. Future E1+ Task Breakdown
-- **E1 - Manual Reconciliation Hardening & RBAC:**
+- **E1 — Manual Reconciliation Hardening + Dedicated RBAC:**
   - Add dedicated `publishing.reconcile` permission and update RBAC grants.
-  - Switch reconciliation endpoint to `publishing.reconcile`.
-  - Synchronize `executionMetadata.phase`.
-  - Synchronize `PublicationAttempt`.
-  - Preserve `PostPlatformVariant` transition.
-  - Make required reconciliation writes atomic (keep `AuditLog` consistent with terminal resolution).
-  - Require operator reason.
-  - Define `finalRemoteId`/`externalPostId` policy (close the invariant gap).
+  - Switch reconciliation endpoint away from `publishing.publish`.
+  - Maintain workspace isolation and strict `UNKNOWN` / `AMBIGUOUS` reconciliation preconditions.
   - Prevent stale/double resolution.
-  - Maintain workspace isolation.
-  - API tests + worker/domain/repository tests as needed.
-  - *Constraints:* No automatic provider lookup, no republish.
-- **E5 - Admin Visibility:** Enhance the UI to display the exact time of ambiguity and guide the user on how to manually verify on each platform.
-- **E6 - Metrics & Observability:** Implement the low-cardinality Prometheus metrics for ambiguous states.
+  - Perform the required four-record terminal persistence atomically:
+    - Synchronize `executionMetadata`.
+    - Synchronize `PostPlatformVariant`.
+    - Synchronize the EXISTING `PublicationAttempt`.
+    - Write `AuditLog`.
+  - *PublicationAttempt Semantics:* Manual reconciliation does NOT represent a second publication attempt. E1 must synchronize the EXISTING logical `PublicationAttempt` associated with the ambiguous publication (Rule: one dangerous publication operation -> one logical `PublicationAttempt`). It must NOT create a new `PublicationAttempt` merely because an operator reconciles the result.
+  - *Schema Gate:* Exact E1 implementation must map the manual resolution onto the existing attempt using the statuses/results already supported by the current schema. If current schema cannot express the desired terminal state cleanly, E1 must STOP and surface that as an implementation question before introducing a schema change. Do NOT invent new enum/values here.
+  - Require/retain operator reason.
+  - Define `finalRemoteId`/`externalPostId` policy (explicitly deciding/enforcing the final ID invariant) and define `canonicalUrl` policy.
+  - API/domain/repository tests + concurrency/race tests.
+  - *Constraints:* No automatic provider lookup, no dangerous mutation replay.
+- **E2 — Admin / Operator Visibility:** Enhance the UI to display the exact time of ambiguity and guide the user on how to manually verify on each platform.
+- **E3 — Metrics / Observability:** Implement low-cardinality Prometheus metrics for ambiguous states.
+- **E4 — Real-Infra + Concurrency Reliability Verification:** Validate end-to-end atomic semantics.
+- **E5 — Documentation / Source-of-Truth Checkpoint:** Update documentation to reflect completed E1-E4 state.
+
+Provider automatic reconciliation is NOT part of this sequence unless future official provider capability research identifies an authoritative lookup path.
 
 ## 18. Test Strategy
 - **Orchestration Tests:** Simulate a manual reconciliation call interrupting or resolving an `UNKNOWN` variant, verifying CAS constraints and audit logs.
