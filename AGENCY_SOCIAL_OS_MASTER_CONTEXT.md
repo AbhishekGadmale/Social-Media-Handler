@@ -137,11 +137,12 @@ GET `/{parentContainerId}?fields=status_code`. Mapping: `FINISHED -> READY`.
 - `INITIATED` -> `PUBLISH_REQUESTED` -> POST `/rest/posts` -> `COMPLETED`.
 
 ## 14. Current Known Risks & Final Ambiguity Policy
-1. **Final AMBIGUOUS reconciliation risk**: If `/media_publish` succeeds remotely and the response is lost, the system enters `AMBIGUOUS` / `UNKNOWN`. Manual, asynchronous, or future provider-side reconciliation is required.
+1. **Final AMBIGUOUS reconciliation risk (Network Loss)**: If `/media_publish` succeeds remotely and the response is lost, the system enters `AMBIGUOUS` / `UNKNOWN`. Manual, asynchronous, or future provider-side reconciliation is required.
 2. **Child/Parent preparation ambiguity risk**: If POST `/media` reaches Meta but response is lost, retry may create an additional orphan/duplicate preparation container. Preparation idempotency is NOT proven.
 3. **HTTP 5xx / Timeout Ambiguity**: During `PUBLISH_REQUESTED`, these translate to `AMBIGUOUS`.
-4. **Restart Safety**: A restarted job already in `PUBLISH_REQUESTED` does not call `finalizePublish()` or `media_publish` again, but conservatively resolves via ambiguity recovery.
-5. **Exactly-once publishing is NOT guaranteed**: Publishing uses durable execution checkpoints, CAS-based stale-worker exclusion, continuation-safe provider state, and conservative ambiguous-outcome handling (duplicate-risk containment + ambiguity protection).
+4. **Malformed Successful Response Missing Authoritative Final ID**: An HTTP success response may be received, but if the provider response lacks the authoritative published resource ID required by the contract (e.g. `/media_publish` missing `data.id`), the system MUST NOT synthesize a fake `finalRemoteId`. The dangerous mutation may have already happened. The system MUST NOT blindly repeat the dangerous mutation. Execution routes to `AMBIGUOUS` and the outer PostPlatformVariant routes to `UNKNOWN`.
+5. **Restart Safety**: A restarted job already in `PUBLISH_REQUESTED` does not call `finalizePublish()` or `media_publish` again, but conservatively resolves via ambiguity recovery.
+6. **Exactly-once publishing is NOT guaranteed**: Publishing uses durable execution checkpoints, CAS-based stale-worker exclusion, continuation-safe provider state, and conservative ambiguous-outcome handling (duplicate-risk containment + ambiguity protection).
 
 ## 15. Current Checkpoint & Regression Baseline
 **Baseline Checkpoint**: `85285c8bc4ef5f4ad22b9a24d419024c10bc65fb`
