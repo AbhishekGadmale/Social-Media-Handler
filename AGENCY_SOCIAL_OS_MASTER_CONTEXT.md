@@ -1,9 +1,7 @@
-# Agency Social OS - Master Context
+# AGENCY_SOCIAL_OS_MASTER_CONTEXT
 
-This is the definitive handoff document for Claude Code, Antigravity, OpenCode, Gemini, and future developers.
-
-## 1. Product Vision
-A multi-tenant social media management platform allowing agencies to connect client social accounts, schedule and publish posts, and track analytics across platforms.
+## 1. Goal
+Provide context for coding agents working on the repository. Do NOT summarize this file; load it fully via `cat` or file-reading tools.
 
 ## 2. Current Architecture
 Monorepo architecture (Turborepo + pnpm) separating frontend (Next.js), backend (NestJS API), background processing (NestJS Worker via BullMQ), and shared domain logic (Prisma Database, Providers).
@@ -28,59 +26,39 @@ Monorepo architecture (Turborepo + pnpm) separating frontend (Next.js), backend 
 - **CSRF**: Enforced via `x-csrf-token` header matching a secure cookie.
 - **RBAC**: Granular roles evaluated via `PermissionMatrix`.
 
-## 6. Provider-Neutral Contract (`IPublishingProvider`)
-Providers implement a stateless contract:
+## 6. Provider Contract
+Providers implement a stateless contract via `IPublishingProvider`:
 - `publish(credentials, input, context)`: Initiates publishing.
-- `checkStatus?(credentials, remoteResourceId)`: Polls remote async processing status. Returns `ProviderStatusCheckResult` with status: `PROCESSING`, `READY`, `PUBLISHED`, `FAILED`, `UNKNOWN`.
-- `finalizePublish?(credentials, input, remoteResourceId, context)`: Commits final remote publishing step after preparation.
+- `checkStatus?(credentials, providerState)`: Polls remote async processing status. Returns `ProviderStatusCheckResult` (with status: `PROCESSING`, `PREPARATION_READY`, `READY`, `PUBLISHED`, `FAILED`, `UNKNOWN`).
+- `continuePreparation?(credentials, input, providerState, context)`: Advances a multi-step preparation flow.
+- `finalizePublish?(credentials, input, context)`: Commits final remote publishing step after preparation.
 
-**ProviderPublishContext Coordination Hooks:**
-- `onRemotePrepared({ containerId })`: Informs the system of intermediate resource creation (e.g., Meta container).
-- `beforeFinalMutation()`: A mandatory checkpoint function yielding a database CAS lock. This MUST be invoked immediately before the dangerous final remote network call.
+**Coordination Context (`ProviderPublishContext` / `ProviderPreparationContext`):**
+- `onRemotePrepared(ProviderRemotePreparation)`: Checkpoints intermediate provider state (`containerId`, `providerState`).
+- `beforeFinalMutation()`: A mandatory checkpoint yielding a database CAS lock. MUST be invoked strictly before the dangerous final remote network call.
 
-**Semantic Status Map:**
-- `PROCESSING`: Remote asset is still rendering/processing.
-- `READY`: Remote preparation complete; final mutation still required via `finalizePublish`.
-- `PUBLISHED`: Provider reports already-published remote state. (NOTE: If final ID cannot be isolated, this falls back to an AMBIGUOUS safety outcome).
-- `FAILED`: Terminal remote processing error.
-- `UNKNOWN`: Unrecognized state, or temporary HTTP transport timeout/5xx.
+**Semantic Status Map Distinction:**
+- `PREPARATION_READY`: Provider preparation can advance through a mutable preparation step via `continuePreparation()`.
+- `READY`: Dangerous final publication mutation may now proceed via `finalizePublish()`.
 
 ## 7. Execution Metadata & State Graph
 Execution checkpoints protect against orphaned assets and dangerous duplicate publications.
 
-**Execution Phases:**
-- `INITIATED`: Worker has started execution. No remote publication mutations have occurred. Safe to retry.
-- `CONTAINER_CREATED`: Provider created an intermediate remote resource (e.g., Reel container). Safe to query status.
-- `PROCESSING_REMOTE`: System is async polling the provider. Worker is yielded.
-- `PUBLISH_REQUESTED`: **The dangerous final publication mutation is now allowed to be issued and may already have been issued.** Automatic replay of final mutation is STRICTLY FORBIDDEN.
-- `COMPLETED`: Publication successfully completed with a valid final ID.
+**Global Execution Phases:**
+- `INITIATED`: Worker has started execution. No remote publication mutations have occurred.
+- `CONTAINER_CREATED`: Provider created an intermediate remote resource (e.g., Reel container or Carousel child). Allowed to loop (`CONTAINER_CREATED` -> `CONTAINER_CREATED`) for repeated durable child checkpoints.
+- `PROCESSING_REMOTE`: System is async polling or advancing preparation. Supports continuation/progress via `PROCESSING_REMOTE` -> `PROCESSING_REMOTE`.
+- `PUBLISH_REQUESTED`: The durable pre-final-mutation checkpoint. Automatic replay of final mutation is STRICTLY FORBIDDEN.
+- `COMPLETED`: Publication successfully completed with a valid authoritative final ID.
 - `FAILED`: Execution terminated due to validation or definitive remote failure.
-- `AMBIGUOUS`: A dangerous remote mutation may have succeeded, but the local system cannot authoritatively confirm the final outcome. High-level variant falls back to `UNKNOWN`. Never automatically replay.
+- `AMBIGUOUS`: A dangerous remote mutation may have succeeded, but the local system cannot authoritatively confirm the outcome. Outer variant falls back to `UNKNOWN`.
 
-**Legal State Transitions (`ALLOWED_TRANSITIONS`):**
-- `INITIATED` -> `CONTAINER_CREATED`, `PUBLISH_REQUESTED`, `COMPLETED`, `FAILED`
-- `CONTAINER_CREATED` -> `PROCESSING_REMOTE`, `PUBLISH_REQUESTED`, `FAILED`
-- `PROCESSING_REMOTE` -> `PROCESSING_REMOTE`, `PUBLISH_REQUESTED`, `COMPLETED`, `FAILED`, `AMBIGUOUS`
-
-*(Explicitly illegal: `INITIATED` -> `PROCESSING_REMOTE`)*
-
-**Concrete Use Case for PROCESSING_REMOTE -> AMBIGUOUS:**
-A provider reports a remote resource is already published, but the authoritative final publication ID cannot be recovered.
-
-**DispatchVersion & OperationId CAS Semantics:**
-Continuation jobs are protected by two strict guards: `operationId` and `dispatchVersion`. A continuation job is authoritative only when BOTH match the current database state. `dispatchVersion` acts as a row-level compare-and-swap mechanism. Every state transition verifies the expected version, increments it atomically, and hands it forward. A rejection raises `ProviderCoordinationError` and immediately halts execution (prevents racing duplicate processes). A stale job returns without provider mutation and cannot overwrite a newer authoritative state. This is NOT a bulletproof exactly-once guarantee.
-
-**Terminal Atomicity:**
-Terminal resolution now occurs atomically within one Prisma transaction. Real PostgreSQL rollback tests prove that partial terminal states do not commit:
-- `handleSuccess`: `executionMetadata -> COMPLETED` + `variant -> PUBLISHED` + `PublicationAttempt terminal update` inside one transaction.
-- `handleFailure`: `executionMetadata -> FAILED` + `variant -> FAILED` + `PublicationAttempt update` inside one transaction.
-- `handleUnknown`: `executionMetadata -> AMBIGUOUS` + `variant -> UNKNOWN` inside one transaction.
+**CAS Behavior:**
+Continuation uses `operationId` and `dispatchVersion`. A successful CAS increments `dispatchVersion` exactly once. Stale contenders are rejected, preventing downstream remote mutation when the checkpoint precedes that mutation. *This is duplicate-risk containment, NOT exactly-once publishing.*
 
 ## 8. Identifier Semantics
-- `containerId` / `remoteResourceId`: Intermediate resource tracking ID during remote processing (e.g., Meta IG Container, YouTube upload ID before processing check).
+- `containerId` / `parentContainerId`: Intermediate resource tracking ID during remote processing.
 - `finalRemoteId` / `externalPostId`: The authoritative completed publication identity on the social network. Do NOT use container IDs as finalRemoteIds.
-- `operationId`: Internal idempotent tracking UUID spanning logical checkpoints.
-- `dispatchVersion`: CAS integer for execution metadata mutations.
 
 ## 9. Async Continuation Model
 `PROCESSING_REMOTE` does NOT mean a worker thread sleeps.
@@ -88,132 +66,125 @@ Terminal resolution now occurs atomically within one Prisma transaction. Real Po
 2. The worker function returns naturally.
 3. A separate dispatcher routinely scans the DB for due operations.
 4. BullMQ schedules a continuation job.
-5. Continuation strictly executes `checkStatus()` read-only polling logic.
+5. Continuation executes `checkStatus()` read-only polling or `continuePreparation()` steps.
 
-**Terminal nextCheckAt Cleanup:**
-Transitions to `COMPLETED`, `FAILED`, or `AMBIGUOUS` explicitly clear `nextCheckAt`. Therefore, terminal rows are no longer eligible for continuation scheduling.
-
-**Read-Only Retry Semantics:**
-Temporary `checkStatus` failures, such as network timeouts or provider/HTTP 5xx errors, are read-only failures. `PROCESSING_REMOTE` remains authoritative, and a BullMQ technical retry may occur. They are NOT documented or treated immediately as `FAILED`, `AMBIGUOUS`, or `UNKNOWN` unless some additional dangerous-mutation uncertainty exists. No new `PublicationAttempt` is created during a technical retry.
+**Generic Transient Failure Rule:**
+During the authoritative `PUBLISH_REQUESTED` phase, a provider `failureCategory === TRANSIENT` is treated as an uncertain final outcome and routed to `handleUnknown` (AMBIGUOUS), NOT `handleFailure`, preventing blind retry of final mutations.
 
 ## 10. PublicationAttempt Semantics
-`PublicationAttempt` represents a logical user execution history.
-`PROCESSING_REMOTE` continuation polling must NOT create new `PublicationAttempt` rows per poll. One logical publish stays one logical attempt.
-- YouTube multi-poll flow: 1 logical `PublicationAttempt`
-- Reels multi-poll + finalize: 1 logical `PublicationAttempt`
-- Temporary read failure + technical retry: 1 logical `PublicationAttempt`
-Polling/retries do not automatically create one attempt per queue execution.
+`PublicationAttempt` represents a logical user execution history. Polling/retries do not create new attempt rows. One logical publish stays one logical attempt.
 
 ## 11. Coordination Errors
-`ProviderCoordinationError` represents LOCAL coordination failures (missing checkpoint hooks, stale `dispatchVersion`, CAS rejections). They are NOT provider HTTP transient errors. Providers remain database-agnostic.
+`ProviderCoordinationError` represents LOCAL failures (missing hooks, stale CAS rejections). They immediately halt execution and reject stale contenders before external final mutations.
 
 ## 12. BullMQ Retry Configuration
-The verified configuration for publishing workers is:
 - `attempts`: 3
 - `backoff`: `{ type: 'exponential', delay: 2000 }`
 - `removeOnComplete`: true
 - `removeOnFail`: false
 
-Technical retries are strictly safe for read-only continuation polling. Dangerous final mutations are NOT blindly replayed after `PUBLISH_REQUESTED`.
-
 ## 13. Current Provider Flows
+
+### Instagram Carousel (Verified Lifecycle)
+1. `INITIATED`
+2. Child 1 remote container creation -> `CONTAINER_CREATED` (providerState contains child 1).
+3. Additional child creations -> repeated `CONTAINER_CREATED` checkpoints (completed children are skipped on resume).
+4. All child containers created -> `PROCESSING_REMOTE` (`providerState.step = CHILD_PROCESSING`).
+5. Child polling (all children `FINISHED`) -> `PREPARATION_READY`.
+6. Worker calls `continuePreparation()`.
+7. Parent carousel container creation -> `PROCESSING_REMOTE` (`providerState.step = PARENT_PROCESSING`; `parentContainerId` persisted).
+8. Parent polling (parent `FINISHED`) -> `READY`.
+9. Worker calls `finalizePublish()`.
+10. `beforeFinalMutation()` -> durable `PROCESSING_REMOTE` -> `PUBLISH_REQUESTED` CAS.
+11. POST `/{ig-user-id}/media_publish` (`creation_id=<providerState.parentContainerId>`). No remoteResourceId fallback.
+12. Authoritative success -> `COMPLETED` -> `finalRemoteId` = published post ID -> Variant `PUBLISHED` -> Attempt `SUCCESS`.
+
+**Carousel Provider State:**
+`kind: INSTAGRAM_CAROUSEL`, `step`, `completedChildren` (sortOrder, containerId, mediaType), `pendingChildrenIndices`, `parentContainerId`.
+*Must NOT contain access tokens, credentials, signed URLs, or CAS versions.*
+
+**Carousel Child Preparation:**
+- Image: POST `/{ig-user-id}/media` (`image_url=<transient signed URL>`, `is_carousel_item=true`)
+- Video: POST `/{ig-user-id}/media` (`video_url=<transient signed URL>`, `media_type=VIDEO`, `is_carousel_item=true`) (No REELS type).
+No caption on children.
+
+**Carousel Child Polling:**
+GET `/{childContainerId}?fields=status_code`. Mapping: `IN_PROGRESS -> PROCESSING`, `FINISHED -> ready child`, `ERROR/EXPIRED -> FAILED`.
+All children `FINISHED` -> `PREPARATION_READY`.
+
+**Carousel Parent Preparation:**
+POST `/{ig-user-id}/media` (`media_type=CAROUSEL`, `children=<ordered ids>`, `caption`). Parent caption only. Response ID becomes `parentContainerId`.
+
+**Carousel Parent Polling:**
+GET `/{parentContainerId}?fields=status_code`. Mapping: `FINISHED -> READY`.
 
 ### Instagram Image
 - Canonical final-mutation checkpoint model.
 - Container creation -> `onRemotePrepared` -> container persistence.
 - `beforeFinalMutation` -> `PUBLISH_REQUESTED` -> `/{ig-user-id}/media_publish`.
-- Yields final ID.
 
 ### Instagram Reels
-- `INITIATED` -> `CONTAINER_CREATED` -> `PROCESSING_REMOTE` -> `PROCESSING_REMOTE` (0..N) -> `PUBLISH_REQUESTED` -> `COMPLETED`.
-- `checkStatus()` converts `FINISHED` -> `READY`.
-- `READY` calls `finalizePublish()`.
-- `finalizePublish()` calls `beforeFinalMutation()` to transition to `PUBLISH_REQUESTED`.
-- Finally, issues remote final mutation (`/media_publish`).
-- Unknown final result: `PUBLISH_REQUESTED` -> `AMBIGUOUS` -> `UNKNOWN`.
+- `INITIATED` -> `CONTAINER_CREATED` -> `PROCESSING_REMOTE` -> `PUBLISH_REQUESTED` -> `COMPLETED`.
+- `checkStatus()` converts `FINISHED` -> `READY`. `READY` -> `finalizePublish()`.
 
 ### Facebook
 - Direct final-mutation checkpoint model. No intermediate async processing.
 
 ### YouTube
-- `INITIATED` -> `PUBLISH_REQUESTED` -> `youtube.videos.insert` -> `PROCESSING_REMOTE` -> `PROCESSING_REMOTE` (polling) -> `COMPLETED`.
-- Publish happens exactly once per normal operation.
-- Continuation uses `checkStatus()` only.
-- `remoteResourceId` is the stable YouTube video ID. Polling does not re-upload.
+- `INITIATED` -> `PUBLISH_REQUESTED` -> `youtube.videos.insert` -> `PROCESSING_REMOTE` (polling) -> `COMPLETED`.
 
 ### LinkedIn
-- `INITIATED` -> `PUBLISH_REQUESTED` -> `POST /rest/posts` -> `COMPLETED`.
-- Asset preparation occurs before final post creation (preparation idempotency not proven).
-- Unknown final network result defaults to `AMBIGUOUS` execution and `UNKNOWN` variant.
+- `INITIATED` -> `PUBLISH_REQUESTED` -> POST `/rest/posts` -> `COMPLETED`.
 
-## 14. Current Provider Status Matrix
+## 14. Current Known Risks & Final Ambiguity Policy
+1. **Final AMBIGUOUS reconciliation risk**: If `/media_publish` succeeds remotely and the response is lost, the system enters `AMBIGUOUS` / `UNKNOWN`. Manual, asynchronous, or future provider-side reconciliation is required.
+2. **Child/Parent preparation ambiguity risk**: If POST `/media` reaches Meta but response is lost, retry may create an additional orphan/duplicate preparation container. Preparation idempotency is NOT proven.
+3. **HTTP 5xx / Timeout Ambiguity**: During `PUBLISH_REQUESTED`, these translate to `AMBIGUOUS`.
+4. **Restart Safety**: A restarted job already in `PUBLISH_REQUESTED` does not call `finalizePublish()` or `media_publish` again, but conservatively resolves via ambiguity recovery.
+5. **Exactly-once publishing is NOT guaranteed**: Publishing uses durable execution checkpoints, CAS-based stale-worker exclusion, continuation-safe provider state, and conservative ambiguous-outcome handling (duplicate-risk containment + ambiguity protection).
 
-| Provider | Content Type | Preparation | Async Processing | Final Checkpoint | Status Polling | Finalization | Known Risk |
-|---|---|---|---|---|---|---|---|
-| Instagram Image | Image | Yes | No | Yes | No | Yes | Ambiguity |
-| Instagram Reel | Video | Yes | Yes | Yes | Yes | Yes | Ambiguity, Orphan |
-| Facebook | Text/Image/Video | Yes | No | Yes | No | No | Ambiguity |
-| YouTube | Video | No | Yes | Yes | Yes | No | - |
-| LinkedIn | Text/Image/Video/Doc | Yes | No | Yes | No | No | Preparation Idempotency |
+## 15. Current Checkpoint & Regression Baseline
+**Baseline Checkpoint**: `85285c8bc4ef5f4ad22b9a24d419024c10bc65fb`
+Task D: feat(publishing): finalize Instagram carousel publishing
 
-## 15. Current Known Risks
-No new blocker was identified within the tested real-infrastructure continuation boundary. However, the following systemic risks explicitly remain:
-1. **Exactly-once publishing is NOT guaranteed**: The system does NOT guarantee exactly-once publishing. Checkpointed dangerous final mutations are protected against blind automatic duplicate retry, and uncertain outcomes are represented conservatively as `AMBIGUOUS` / `UNKNOWN`.
-2. **Network partition / lost ACK**: A network partition after a dangerous provider mutation may produce unavoidable ambiguity.
-3. **Instagram Reels initial /media preparation ambiguity**: Can still create orphan/duplicate preparation resources if the network drops.
-4. **Container/preparation idempotency**: Remains provider-dependent and not proven.
-5. **LinkedIn preparation idempotency/orphan cleanup**: Remains not proven.
-6. **Provider HTTP**: Was mocked in real queue/database integration tests.
-7. **Provider rate limits/throttling**: Remain external operational risks.
-8. **Generic DB polling/dispatcher scan**: May need indexing/scheduling evolution at a larger scale.
-9. **Reconciliation of already-published remote resources**: Without an authoritative final ID, it remains conservatively `AMBIGUOUS`/`UNKNOWN`.
+**Historical Milestones:**
+- Task A: `1d70ba1fd722553841ea85f57cedb348b10c47f6` (multi-step preparation)
+- Task B: `06478cea4fe077117ae58bbdeab0be7593195f76` (carousel child preparation)
+- Task C: `f072d26befd2df0812b4cf0e6abb34859f5c898c` (carousel parent preparation)
+- Task D: `85285c8bc4ef5f4ad22b9a24d419024c10bc65fb` (carousel final media_publish)
 
-## 16. Current Test Evidence
-Verified Baseline: `71953e6e803481c52f334784a8f9aa23c834a861`
-
-- **Real Redis**: EXECUTED / VERIFIED for tested continuation scenarios
-- **Real BullMQ**: EXECUTED / VERIFIED for tested continuation scenarios
-- **Real PostgreSQL**: EXECUTED / VERIFIED for state-machine, continuation, CAS, and rollback scenarios
-- **Provider HTTP**: MOCKED in real-infrastructure orchestration tests
+**Verified Test Baseline:**
+- **Real-infra continuation**: 18 / 18 PASS
+- **Providers**: 15 suites / 225 tests PASS
+- **Worker**: PASS
+- **Database**: PASS
+- **API**: PASS
+- **Web**: PASS
+- **Turbo Matrix**: PASS (test, lint, typecheck)
 
 Real Redis/BullMQ/PostgreSQL orchestration was verified for the tested scenarios with mocked provider HTTP.
 
-Latest test metrics:
-- **Real-infra continuation**: 15 / 15 PASS
-- **Worker**: 76 / 76 PASS
-- **Providers**: 202 / 202 PASS
-- **Database**: 73 / 73 PASS
-- **API**: 82 / 82 PASS
-- **Web**: 44 / 44 PASS
-- **Turbo Matrix**: PASS
-- **Lint**: PASS
-- **Typecheck**: PASS
+**Evidence Boundaries:**
+- Stale finalization race: generic real-infra CAS proof + carousel provider integration/unit behavior.
+- Unknown final result: generic real-infra AMBIGUOUS handling + carousel finalization classification.
+- PUBLISH_REQUESTED restart: generic real-infra recovery behavior.
 
-*(Note: These are checkpoint evidence, not timeless guarantees).*
+## 16. Current Implementation Status
+**Instagram Support:**
+- Single-image feed publishing
+- Reels/video publishing
+- Carousel child preparation
+- Carousel parent preparation
+- Carousel final media_publish
+Carousel MVP supports 2..10 media, ordered media, image/video mixed assets where currently supported.
 
-## 17. Real-Infrastructure Test Isolation
-Real-infrastructure integration tests operate using:
-- A unique test queue namespace (`publishing_real_integration_test_${Date.now()}`).
-- Scoped DB cleanup targeting only explicitly tracked test-created IDs.
-- No broad shared `deleteMany` and no `FLUSHALL`.
-
-## 18. Current Implementation Status
-Publishing capabilities implemented:
-- Instagram image publishing
-- Instagram Reel/video publishing
-- Facebook publishing
-- YouTube publishing
-- LinkedIn publishing
-
-Checkpoint safety adopted for:
-- Instagram image final mutation
-- Facebook final mutation
-- YouTube upload mutation + processing continuation
-- LinkedIn final post mutation
-- Instagram Reels async preparation + final mutation
-
-**Explicitly Unsupported Features (DO NOT CLAIM):**
-- Instagram carousel
+**Out-of-Scope / Not Implemented:**
 - Instagram Stories
+- Collaborative posts
+- Product tagging
+- Music attachment
+- Advanced carousel metadata
+- Speculative reconciliation API
+- Exactly-once external publishing
 - Facebook Reels
 - TikTok
