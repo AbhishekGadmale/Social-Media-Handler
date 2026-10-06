@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unsafe-call */
 import { Test, TestingModule } from '@nestjs/testing';
 import { BullModule, getQueueToken } from '@nestjs/bullmq';
 import { Queue, Job, Worker } from 'bullmq';
@@ -885,49 +886,45 @@ describe('REAL REDIS/BULLMQ: Publishing Architecture Continuation', () => {
     // 2. Setup mock meta provider
     mockAdapter.publish.mockReset();
     mockAdapter.publish.mockImplementationOnce(
-      async (creds, input, storage, ctx) => {
-        try {
-          if (ctx?.onRemotePrepared) {
-            await ctx.onRemotePrepared({
-              containerId: 'child-1',
-              providerState: {
-                kind: 'INSTAGRAM_CAROUSEL',
-                step: 'CHILD_CREATION',
-                completedChildren: [
-                  { containerId: 'child-1', sortOrder: 0, mediaType: 'IMAGE' },
-                ],
-                pendingChildrenIndices: [1],
-              },
-            });
+      async (creds: any, input: any, storage: any, ctx: any) => {
+        if (ctx?.onRemotePrepared) {
+          await ctx.onRemotePrepared({
+            containerId: 'child-1',
+            providerState: {
+              kind: 'INSTAGRAM_CAROUSEL',
+              step: 'CHILD_CREATION',
+              completedChildren: [
+                { containerId: 'child-1', sortOrder: 0, mediaType: 'IMAGE' },
+              ],
+              pendingChildrenIndices: [1],
+            },
+          });
 
-            await ctx.onRemotePrepared({
-              containerId: 'child-2',
-              providerState: {
-                kind: 'INSTAGRAM_CAROUSEL',
-                step: 'CHILD_CREATION',
-                completedChildren: [
-                  { containerId: 'child-1', sortOrder: 0, mediaType: 'IMAGE' },
-                  { containerId: 'child-2', sortOrder: 1, mediaType: 'IMAGE' },
-                ],
-                pendingChildrenIndices: [],
-              },
-            });
-            return {
-              success: true,
-              processingState: 'PROCESSING',
-              providerState: {
-                kind: 'INSTAGRAM_CAROUSEL',
-                step: 'CHILD_PROCESSING',
-                completedChildren: [
-                  { containerId: 'child-1', sortOrder: 0, mediaType: 'IMAGE' },
-                  { containerId: 'child-2', sortOrder: 1, mediaType: 'IMAGE' },
-                ],
-                pendingChildrenIndices: [],
-              },
-            };
-          }
-        } catch (e) {
-          throw e;
+          await ctx.onRemotePrepared({
+            containerId: 'child-2',
+            providerState: {
+              kind: 'INSTAGRAM_CAROUSEL',
+              step: 'CHILD_CREATION',
+              completedChildren: [
+                { containerId: 'child-1', sortOrder: 0, mediaType: 'IMAGE' },
+                { containerId: 'child-2', sortOrder: 1, mediaType: 'IMAGE' },
+              ],
+              pendingChildrenIndices: [],
+            },
+          });
+          return {
+            success: true,
+            processingState: 'PROCESSING',
+            providerState: {
+              kind: 'INSTAGRAM_CAROUSEL',
+              step: 'CHILD_PROCESSING',
+              completedChildren: [
+                { containerId: 'child-1', sortOrder: 0, mediaType: 'IMAGE' },
+                { containerId: 'child-2', sortOrder: 1, mediaType: 'IMAGE' },
+              ],
+              pendingChildrenIndices: [],
+            },
+          };
         }
         return { success: true, processingState: 'PROCESSING' };
       },
@@ -1033,5 +1030,79 @@ describe('REAL REDIS/BULLMQ: Publishing Architecture Continuation', () => {
 
     // Finalization should not be called yet
     expect(mockAdapter.finalizePublish).not.toHaveBeenCalled();
+  });
+
+  it('18. Task D Instagram Carousel Final Publish Mutation: PARENT_PROCESSING -> READY -> beforeFinalMutation (PUBLISH_REQUESTED CAS) -> finalizePublish -> COMPLETED', async () => {
+    mockAdapter.publish.mockReset();
+    mockAdapter.checkStatus.mockReset();
+    mockAdapter.continuePreparation.mockReset();
+    mockAdapter.finalizePublish.mockReset();
+
+    const initialState = {
+      kind: 'INSTAGRAM_CAROUSEL',
+      step: 'PARENT_PROCESSING',
+      completedChildren: [
+        { sortOrder: 0, containerId: 'c1', mediaType: 'IMAGE' },
+        { sortOrder: 1, containerId: 'c2', mediaType: 'VIDEO' },
+      ],
+      pendingChildrenIndices: [],
+      parentContainerId: 'parent-123',
+    };
+
+    const { variant: v } = await createTestVariant('PROCESSING_REMOTE', -1000, {
+      provider: 'INSTAGRAM',
+      preparationState: initialState,
+    });
+
+    const variantId = v.id;
+    const jobId = 'job-carousel-finalize-' + variantId;
+    const payload = {
+      workspaceId: v.workspaceId,
+      publicationId: variantId,
+      dispatchVersion: v.dispatchVersion,
+      operationId: (v.executionMetadata as any).operationId,
+    };
+
+    // First checkStatus says READY
+    mockAdapter.checkStatus.mockResolvedValueOnce({ status: 'READY' });
+
+    let beforeFinalMutationCalled = false;
+    mockAdapter.finalizePublish.mockImplementationOnce(
+      async (
+        creds: any,
+        input: any,
+        remoteId: any,
+        context: { beforeFinalMutation: () => Promise<void> },
+      ) => {
+        if (context?.beforeFinalMutation) {
+          await context.beforeFinalMutation();
+          beforeFinalMutationCalled = true;
+        }
+        return {
+          success: true,
+          processingState: 'PUBLISHED',
+          externalPostId: 'published-carousel-123',
+        };
+      },
+    );
+
+    await queue.add('publish-job', payload, { jobId });
+    await sleep(600);
+
+    expect(mockAdapter.checkStatus).toHaveBeenCalledTimes(1);
+    expect(mockAdapter.finalizePublish).toHaveBeenCalledTimes(1);
+    expect(beforeFinalMutationCalled).toBe(true);
+
+    const finalVariant = await prisma.postPlatformVariant.findUniqueOrThrow({
+      where: { id: variantId },
+    });
+
+    expect(finalVariant.status).toBe('PUBLISHED');
+    const meta =
+      typeof finalVariant.executionMetadata === 'string'
+        ? JSON.parse(finalVariant.executionMetadata)
+        : finalVariant.executionMetadata;
+    expect(meta.phase).toBe('COMPLETED');
+    expect(meta.finalRemoteId).toBe('published-carousel-123');
   });
 });

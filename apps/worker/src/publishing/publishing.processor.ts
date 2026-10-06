@@ -339,40 +339,41 @@ export class PublishingProcessor extends WorkerHost {
         const parsed = safeParseExecutionMetadata(variant.executionMetadata);
         if (parsed.success && parsed.data.phase === 'PROCESSING_REMOTE') {
           const remoteResourceId = (parsed.data as any).remoteResourceId;
-                      if (typeof adapter.checkStatus !== 'function') {
-                this.logger.error({ msg: 'publication.unsupported_status_check', publicationId });
+          const providerState = (parsed.data as any).preparationState;
+          if (typeof adapter.checkStatus !== 'function') {
+            this.logger.error({ msg: 'publication.unsupported_status_check', publicationId });
+            result = {
+              success: false,
+              failureCategory: 'PERMANENT',
+              failureCode: 'MISSING_CAPABILITY',
+              message: 'Provider does not support remote status checks.',
+            };
+          } else {
+            const statusRes = await adapter.checkStatus(credentials, remoteResourceId, { providerState });
+            if (statusRes.status === 'PUBLISHED') {
+              if (typeof adapter.finalizePublish === 'function') {
+                // Container published out-of-band or final ID lost.
+                // We cannot use the container ID as finalRemoteId.
                 result = {
                   success: false,
-                  failureCategory: 'PERMANENT',
-                  failureCode: 'MISSING_CAPABILITY',
-                  message: 'Provider does not support remote status checks.',
-                }
+                  failureCategory: 'UNKNOWN_RESULT',
+                  failureCode: 'AMBIGUOUS_PUBLISHED_CONTAINER',
+                  message: 'Container reported PUBLISHED, but final media ID is unknown.'
+                };
               } else {
-            const statusRes = await adapter.checkStatus(credentials, remoteResourceId);
-              if (statusRes.status === 'PUBLISHED') {
-                  if (typeof adapter.finalizePublish === 'function') {
-                    // Container published out-of-band or final ID lost.
-                    // We cannot use the container ID as finalRemoteId.
-                    result = {
-                      success: false,
-                      failureCategory: 'UNKNOWN_RESULT',
-                      failureCode: 'AMBIGUOUS_PUBLISHED_CONTAINER',
-                      message: 'Container reported PUBLISHED, but final media ID is unknown.'
-                    };
-                  } else {
-                    // Provider does not use finalizePublish (e.g. YouTube).
-                    // The remoteResourceId IS the final ID.
-                    result = { success: true, externalPostId: remoteResourceId };
-                  }
-                } else if (statusRes.status === 'READY') {
-                if (typeof adapter.finalizePublish !== 'function') {
-                  throw new Error('Provider returned READY but finalizePublish is not implemented');
-                }
+                // Provider does not use finalizePublish (e.g. YouTube).
+                // The remoteResourceId IS the final ID.
+                result = { success: true, externalPostId: remoteResourceId };
+              }
+            } else if (statusRes.status === 'READY') {
+              if (typeof adapter.finalizePublish !== 'function') {
+                throw new Error('Provider returned READY but finalizePublish is not implemented');
+              }
 
-                // 1. Provider is responsible for calling ctx.beforeFinalMutation() inside finalizePublish
-                result = await adapter.finalizePublish(credentials, providerInput, remoteResourceId, publishContext);
-              } else if (statusRes.status === 'PREPARATION_READY') {
-                if (typeof adapter.continuePreparation !== 'function') {
+              // 1. Provider is responsible for calling ctx.beforeFinalMutation() inside finalizePublish
+              result = await adapter.finalizePublish(credentials, providerInput, remoteResourceId, { ...publishContext, providerState });
+            } else if (statusRes.status === 'PREPARATION_READY') {
+              if (typeof adapter.continuePreparation !== 'function') {
                   this.logger.error({ msg: 'publication.missing_continue_preparation', publicationId });
                   result = {
                     success: false,
@@ -478,8 +479,12 @@ export class PublishingProcessor extends WorkerHost {
         try { await this.handleSuccess(publicationId, attempt.id, result, executionRepo, { currentOperationId: currentOperationId!, currentSourcePhase: currentSourcePhase as any, expectedDispatchVersion }); } catch(e: any) { this.logger.error({ msg: 'publication.transition_completed_failed', publicationId, reason: e.message }); await this.handleUnknown(publicationId, attempt.id, 'TRANSITION_FAILED'); }
       }
     } else {
-      if (result.failureCategory === 'UNKNOWN_RESULT') {
-          if ((currentSourcePhase as string) !== 'PUBLISH_REQUESTED' && result.failureCode !== 'AMBIGUOUS_PUBLISHED_CONTAINER') {
+      const isPublishRequested = (currentSourcePhase as string) === 'PUBLISH_REQUESTED';
+      const isUnknownPublish = isPublishRequested && (result.failureCategory === 'UNKNOWN_RESULT' || result.failureCategory === 'TRANSIENT');
+      const isAmbiguousContainer = result.failureCode === 'AMBIGUOUS_PUBLISHED_CONTAINER';
+
+      if (result.failureCategory === 'UNKNOWN_RESULT' || isUnknownPublish || isAmbiguousContainer) {
+          if (!isPublishRequested && !isAmbiguousContainer) {
             throw new Error('Transport failure during polling: ' + (result.message || 'Unknown error'));
           }
           await this.handleUnknown(

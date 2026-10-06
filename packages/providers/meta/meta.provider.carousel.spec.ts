@@ -84,7 +84,7 @@ describe("Instagram Carousel Publishing", () => {
       ],
       pendingChildrenIndices: [1, 2],
     };
-    
+
     const context: any = {
       providerState: initialState,
       onRemotePrepared: vi.fn().mockResolvedValue(undefined),
@@ -101,7 +101,7 @@ describe("Instagram Carousel Publishing", () => {
 
     // Should only create children 1 and 2
     expect(mockFetch).toHaveBeenCalledTimes(2);
-    
+
     // onRemotePrepared called for child 1, child 2, and step transition
     expect(context.onRemotePrepared).toHaveBeenCalledTimes(3);
   });
@@ -254,7 +254,7 @@ describe("Instagram Carousel Publishing", () => {
       const url = mockFetch.mock.calls[0][0];
       const opts = mockFetch.mock.calls[0][1];
       expect(opts.method).toBe("POST");
-      
+
       const searchParams = new URLSearchParams(url.split("?")[1]);
       expect(searchParams.get("media_type")).toBe("CAROUSEL");
       // Ordering proof: sortOrder 0 -> c1, sortOrder 1 -> c2
@@ -311,7 +311,7 @@ describe("Instagram Carousel Publishing", () => {
         completedChildren: [{ sortOrder: 0, containerId: "c1", mediaType: "IMAGE" }],
         pendingChildrenIndices: [],
       };
-      
+
       mockFetch.mockRejectedValueOnce(new Error("Network timeout"));
 
       await expect(
@@ -330,7 +330,7 @@ describe("Instagram Carousel Publishing", () => {
         completedChildren: [{ sortOrder: 0, containerId: "c1", mediaType: "IMAGE" }],
         pendingChildrenIndices: [],
       };
-      
+
       mockFetch.mockResolvedValueOnce({
         ok: false,
         status: 502,
@@ -384,6 +384,110 @@ describe("Instagram Carousel Publishing", () => {
       mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status_code: "FINISHED" }) });
       const res = await provider.checkStatus!(credentials, undefined, { providerState: state });
       expect(res.status).toBe("READY");
+    });
+  });
+
+  describe("finalizePublish for Carousels", () => {
+    it("fails if beforeFinalMutation hook is missing", async () => {
+      await expect(
+        provider.finalizePublish!(credentials, createCarouselInput(), "some-id", undefined)
+      ).rejects.toThrow("Instagram finalization strictly requires beforeFinalMutation coordination hook.");
+    });
+
+    it("fails if step is not PARENT_PROCESSING", async () => {
+      const state = {
+        kind: "INSTAGRAM_CAROUSEL",
+        step: "CHILD_PROCESSING",
+        completedChildren: [],
+        pendingChildrenIndices: [],
+      };
+
+      const res = await provider.finalizePublish!(credentials, createCarouselInput(), undefined, {
+        providerState: state,
+        beforeFinalMutation: vi.fn(),
+      });
+
+      expect(res.success).toBe(false);
+      if (!res.success) {
+        expect(res.failureCode).toBe("INVALID_STATE");
+      }
+    });
+
+    it("fails if parentContainerId is missing", async () => {
+      const state = {
+        kind: "INSTAGRAM_CAROUSEL",
+        step: "PARENT_PROCESSING",
+        completedChildren: [],
+        pendingChildrenIndices: [],
+      };
+
+      const res = await provider.finalizePublish!(credentials, createCarouselInput(), undefined, {
+        providerState: state,
+        beforeFinalMutation: vi.fn(),
+      });
+
+      expect(res.success).toBe(false);
+      if (!res.success) {
+        expect(res.failureCode).toBe("MISSING_PARENT_ID");
+      }
+    });
+
+    it("prohibits remoteResourceId fallback when parentContainerId is missing for carousels", async () => {
+      const state = {
+        kind: "INSTAGRAM_CAROUSEL",
+        step: "PARENT_PROCESSING",
+        completedChildren: [],
+        pendingChildrenIndices: [],
+      };
+
+      const res = await provider.finalizePublish!(credentials, createCarouselInput(), "generic-remote-id", {
+        providerState: state,
+        beforeFinalMutation: vi.fn(),
+      });
+
+      expect(res.success).toBe(false);
+      if (!res.success) {
+        expect(res.failureCode).toBe("MISSING_PARENT_ID");
+      }
+    });
+
+    it("calls beforeFinalMutation and returns PUBLISHED on success", async () => {
+      const state = {
+        kind: "INSTAGRAM_CAROUSEL",
+        step: "PARENT_PROCESSING",
+        completedChildren: [],
+        pendingChildrenIndices: [],
+        parentContainerId: "parent-container-id-123",
+      };
+
+      const beforeFinalMutation = vi.fn().mockResolvedValue(undefined);
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ id: "published-carousel-id" }),
+      });
+
+      const res = await provider.finalizePublish!(credentials, createCarouselInput(), undefined, {
+        providerState: state,
+        beforeFinalMutation,
+      });
+
+      expect(res.success).toBe(true);
+      if (res.success) {
+        expect(res.externalPostId).toBe("published-carousel-id");
+        expect(res.processingState).toBe("PUBLISHED");
+      }
+
+      expect(beforeFinalMutation).toHaveBeenCalledTimes(1);
+
+      // Verify POST media_publish exact shape
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      const url = mockFetch.mock.calls[0][0];
+      const opts = mockFetch.mock.calls[0][1];
+      expect(opts.method).toBe("POST");
+
+      const searchParams = new URLSearchParams(url.split("?")[1]);
+      expect(searchParams.get("creation_id")).toBe("parent-container-id-123");
     });
   });
 });

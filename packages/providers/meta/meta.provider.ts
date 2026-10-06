@@ -22,6 +22,7 @@ import {
   ProviderPublicationInput,
   ProviderPublishResult,
   ProviderPublishFailure,
+  ProviderJsonObject,
 } from "../core/interfaces/IPublishingProvider";
 import { IMediaContentSource } from "../core/interfaces/IMediaContentSource";
 import sizeOf from "image-size";
@@ -1221,13 +1222,13 @@ export class MetaProvider implements ISocialProvider, IPublishingProvider {
         redirect: "error",
       });
     } catch (e: any) {
-      throw new ProviderApiError(`Network or timeout error: ${e.message}`, 500, "meta");
+      throw new ProviderApiError(`Network or timeout error: ${e.message}`, 500);
     }
 
     const data = await res.json();
     if (!res.ok) {
       if (res.status >= 500) {
-        throw new ProviderApiError(`Meta server error: ${res.status}`, 500, "meta");
+        throw new ProviderApiError(`Meta server error: ${res.status}`, 500);
       }
       const fail = this.handleGraphError(res.status, data, credentials.accessToken);
       return {
@@ -1514,13 +1515,86 @@ export class MetaProvider implements ISocialProvider, IPublishingProvider {
   async finalizePublish(
     credentials: ProviderExecutionCredentials,
     input: ProviderPublicationInput,
-    remoteResourceId: string,
-    context?: ProviderPublishContext,
+    remoteResourceId: string | undefined,
+    context?: ProviderPreparationContext,
   ): Promise<ProviderPublishResult> {
     if (!context?.beforeFinalMutation) {
       throw new ProviderCoordinationError(
         "Instagram finalization strictly requires beforeFinalMutation coordination hook.",
       );
+    }
+
+    const isCarousel = input.media && input.media.length > 1;
+
+    let creationId = remoteResourceId;
+
+    if (isCarousel) {
+      if (!context?.providerState) {
+        return {
+          success: false,
+          failureCategory: "PERMANENT",
+          failureCode: "MISSING_PARENT_ID",
+          message: "Carousel publishing requires InstagramCarouselProviderState",
+        };
+      }
+      const parsed = InstagramCarouselProviderStateSchema.safeParse(context.providerState);
+      if (!parsed.success || parsed.data.kind !== "INSTAGRAM_CAROUSEL") {
+        return {
+          success: false,
+          failureCategory: "PERMANENT",
+          failureCode: "MISSING_PARENT_ID",
+          message: "Carousel publishing requires INSTAGRAM_CAROUSEL state",
+        };
+      }
+      if (parsed.data.step !== "PARENT_PROCESSING") {
+        return {
+          success: false,
+          failureCategory: "PERMANENT",
+          failureCode: "INVALID_STATE",
+          message: "Cannot finalize carousel not in PARENT_PROCESSING step",
+        };
+      }
+      if (!parsed.data.parentContainerId) {
+        return {
+          success: false,
+          failureCategory: "PERMANENT",
+          failureCode: "MISSING_PARENT_ID",
+          message: "Missing parentContainerId in PARENT_PROCESSING step",
+        };
+      }
+      creationId = parsed.data.parentContainerId;
+    } else {
+      if (context?.providerState) {
+        const parsed = InstagramCarouselProviderStateSchema.safeParse(context.providerState);
+        if (parsed.success && parsed.data.kind === "INSTAGRAM_CAROUSEL") {
+          if (parsed.data.step !== "PARENT_PROCESSING") {
+            return {
+              success: false,
+              failureCategory: "PERMANENT",
+              failureCode: "INVALID_STATE",
+              message: "Cannot finalize carousel not in PARENT_PROCESSING step",
+            };
+          }
+          if (!parsed.data.parentContainerId) {
+            return {
+              success: false,
+              failureCategory: "PERMANENT",
+              failureCode: "MISSING_PARENT_ID",
+              message: "Missing parentContainerId in PARENT_PROCESSING step",
+            };
+          }
+          creationId = parsed.data.parentContainerId;
+        }
+      }
+    }
+
+    if (!creationId) {
+      return {
+        success: false,
+        failureCategory: "PERMANENT",
+        failureCode: "MISSING_REMOTE_ID",
+        message: "Missing remoteResourceId or parentContainerId for finalization",
+      };
     }
 
     try {
@@ -1536,7 +1610,7 @@ export class MetaProvider implements ISocialProvider, IPublishingProvider {
 
       const publishParams = new URLSearchParams();
       publishParams.append("access_token", credentials.accessToken);
-      publishParams.append("creation_id", remoteResourceId);
+      publishParams.append("creation_id", creationId);
       const publishUrl = `${this.baseUrl}/${this.version}/${igId}/media_publish?${publishParams.toString()}`;
 
       if (context?.beforeFinalMutation) {

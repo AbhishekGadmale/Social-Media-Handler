@@ -192,8 +192,8 @@ export interface IPublishingProvider {
   finalizePublish?(
     credentials: ProviderExecutionCredentials,
     input: ProviderPublicationInput,
-    remoteResourceId: string,
-    context?: ProviderPublishContext,
+    remoteResourceId: string | undefined,
+    context?: ProviderPreparationContext,
   ): Promise<ProviderPublishResult>;
 
   continuePreparation?(
