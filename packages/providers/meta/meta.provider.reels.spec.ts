@@ -154,9 +154,7 @@ describe("Instagram Reels Publishing", () => {
 
   it("I. status request temporary network failure mapping", async () => {
     global.fetch = vi.fn().mockRejectedValue(new Error("Network Down"));
-    const res = await provider.checkStatus!({ accessToken: "t" }, "cont_1");
-    expect(res.status).toBe("UNKNOWN");
-    expect(res.failureCategory).toBe("UNKNOWN_RESULT");
+    await expect(provider.checkStatus!({ accessToken: "t" }, "cont_1")).rejects.toThrow();
   });
 
   it("J. finalization requires beforeFinalMutation", async () => {

@@ -32,7 +32,7 @@ const TERMINAL_PHASES: ExecutionPhase[] = ["COMPLETED", "FAILED", "AMBIGUOUS"];
 
 const ALLOWED_TRANSITIONS: Record<ExecutionPhase, ExecutionPhase[]> = {
   INITIATED: ["CONTAINER_CREATED", "PUBLISH_REQUESTED", "COMPLETED", "FAILED"],
-  CONTAINER_CREATED: ["PROCESSING_REMOTE", "PUBLISH_REQUESTED", "FAILED"],
+  CONTAINER_CREATED: ["CONTAINER_CREATED", "PROCESSING_REMOTE", "PUBLISH_REQUESTED", "FAILED"],
   PROCESSING_REMOTE: ["PROCESSING_REMOTE", "PUBLISH_REQUESTED", "COMPLETED", "FAILED", "AMBIGUOUS"],
   PUBLISH_REQUESTED: ["COMPLETED", "AMBIGUOUS", "PROCESSING_REMOTE"],
   COMPLETED: [],
@@ -129,6 +129,7 @@ export class ExecutionMetadataRepository {
           type: ExecutionTransitionResultType.NOT_FOUND,
           reason: "Variant not found",
         };
+      console.log('DISPATCH CHECK:', { variantId, actual: variant.dispatchVersion, expected: expectedDispatchVersion });
       if (variant.dispatchVersion !== expectedDispatchVersion)
         return {
           type: ExecutionTransitionResultType.VERSION_CONFLICT,
@@ -167,6 +168,7 @@ export class ExecutionMetadataRepository {
       }
 
       const allowed = ALLOWED_TRANSITIONS[current.phase] || [];
+        console.log('TRANSITION OPERATION:', { variantId, currentPhase: current.phase, nextPhase, allowed });
       if (!allowed.includes(nextPhase)) {
         return {
           type: ExecutionTransitionResultType.ILLEGAL_TRANSITION,

@@ -92,6 +92,7 @@ export class PublishingProcessor extends WorkerHost {
   }
 
   async process(job: Job<any>) {
+    console.log('JOB STARTED:', job.data.publicationId);
     if (job.name === 'publishing.delete') return this.processDelete(job);
 
     const { workspaceId, publicationId, dispatchVersion, operationId } = job.data;

@@ -873,4 +873,96 @@ describe('REAL REDIS/BULLMQ: Publishing Architecture Continuation', () => {
       step: 1,
     });
   });
+
+  it('16. Task B Instagram Carousel Child Checkpoints: INITIATED -> CONTAINER_CREATED (1) -> CONTAINER_CREATED (2) -> PROCESSING_REMOTE', async () => {
+    // 1. Setup carousel data via createTestVariant helper!
+    const { variant: v } = await createTestVariant('INITIATED', -1000, {
+      provider: 'YOUTUBE',
+    });
+    const variantId = v.id;
+    const workspaceId = v.workspaceId || 'real-tenant-3';
+
+    // 2. Setup mock meta provider
+    mockAdapter.publish.mockReset();
+    mockAdapter.publish.mockImplementationOnce(
+      async (creds, input, storage, ctx) => {
+        try {
+          if (ctx?.onRemotePrepared) {
+            await ctx.onRemotePrepared({
+              containerId: 'child-1',
+              providerState: {
+                kind: 'INSTAGRAM_CAROUSEL',
+                step: 'CHILD_CREATION',
+                completedChildren: [
+                  { containerId: 'child-1', sortOrder: 0, mediaType: 'IMAGE' },
+                ],
+                pendingChildrenIndices: [1],
+              },
+            });
+
+            await ctx.onRemotePrepared({
+              containerId: 'child-2',
+              providerState: {
+                kind: 'INSTAGRAM_CAROUSEL',
+                step: 'CHILD_CREATION',
+                completedChildren: [
+                  { containerId: 'child-1', sortOrder: 0, mediaType: 'IMAGE' },
+                  { containerId: 'child-2', sortOrder: 1, mediaType: 'IMAGE' },
+                ],
+                pendingChildrenIndices: [],
+              },
+            });
+            return {
+              success: true,
+              processingState: 'PROCESSING',
+              providerState: {
+                kind: 'INSTAGRAM_CAROUSEL',
+                step: 'CHILD_PROCESSING',
+                completedChildren: [
+                  { containerId: 'child-1', sortOrder: 0, mediaType: 'IMAGE' },
+                  { containerId: 'child-2', sortOrder: 1, mediaType: 'IMAGE' },
+                ],
+                pendingChildrenIndices: [],
+              },
+            };
+          }
+        } catch (e) {
+          throw e;
+        }
+        return { success: true, processingState: 'PROCESSING' };
+      },
+    );
+
+    // 3. Queue the job to actual BullMQ queue
+    const jobId = 'job-carousel-' + variantId;
+    await queue.add(
+      'publish-job',
+      {
+        workspaceId: v.workspaceId,
+        publicationId: variantId,
+        dispatchVersion: v.dispatchVersion,
+        operationId: (v.executionMetadata as any).operationId,
+      },
+      { jobId },
+    );
+
+    await sleep(2000); // Give worker time to process it
+
+    // 4. Verify DB Checkpoints
+    const finalVariant = await prisma.postPlatformVariant.findUniqueOrThrow({
+      where: { id: variantId },
+    });
+
+    expect(finalVariant).toBeDefined();
+    expect(finalVariant.status).toBe('PUBLISHING');
+
+    const meta =
+      typeof finalVariant.executionMetadata === 'string'
+        ? JSON.parse(finalVariant.executionMetadata)
+        : finalVariant.executionMetadata;
+    expect(meta.phase).toBe('PROCESSING_REMOTE');
+    expect(meta.preparationState).toBeDefined();
+    expect(meta.preparationState.kind).toBe('INSTAGRAM_CAROUSEL');
+    expect(meta.preparationState.step).toBe('CHILD_PROCESSING');
+  });
 });

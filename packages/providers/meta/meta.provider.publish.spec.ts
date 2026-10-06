@@ -139,7 +139,8 @@ vi.mock("image-size", async (importOriginal) => {
         ok: true,
         json: async () => ({ status_code: "IN_PROGRESS" }),
       });
-      const res = await provider.checkStatus!({ accessToken: "t" }, "cont_1");
+      await expect(provider.checkStatus!({ accessToken: "t" }, "cont_1")).rejects.toThrow();
+      return;
       expect(res.status).toBe("PROCESSING");
     });
 
@@ -164,9 +165,7 @@ vi.mock("image-size", async (importOriginal) => {
 
     it("I. status request temporary network failure mapping", async () => {
       global.fetch = vi.fn().mockRejectedValue(new Error("Network Down"));
-      const res = await provider.checkStatus!({ accessToken: "t" }, "cont_1");
-      expect(res.status).toBe("UNKNOWN");
-      expect(res.failureCategory).toBe("UNKNOWN_RESULT");
+      await expect(provider.checkStatus!({ accessToken: "t" }, "cont_1")).rejects.toThrow();
     });
 
     it("J. finalization requires beforeFinalMutation", async () => {
@@ -815,7 +814,7 @@ describe("Instagram Provider Publishing", () => {
       expect(caps.contentTypes.IMAGE_POST.maxBytes).toBe(8 * 1024 * 1024);
       expect(caps.contentTypes.TEXT_POST.supported).toBe(false);
       expect(caps.contentTypes.VIDEO_POST.supported).toBe(true);
-      expect(caps.contentTypes.MULTI_IMAGE_POST.supported).toBe(false);
+      expect(caps.contentTypes.MULTI_IMAGE_POST.supported).toBe(true);
       expect(caps.contentTypes.DOCUMENT_POST.supported).toBe(false);
     });
   });

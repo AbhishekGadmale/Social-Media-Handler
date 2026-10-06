@@ -501,10 +501,11 @@ export class YouTubeProvider implements ISocialProvider, IPublishingProvider {
 
   async checkStatus(
     credentials: ProviderExecutionCredentials,
-    remoteResourceId: string,
+    remoteResourceId: string | undefined,
   ): Promise<
     import("../core/interfaces/IPublishingProvider").ProviderStatusCheckResult
   > {
+    if (!remoteResourceId) return { status: 'FAILED', failureCategory: 'PERMANENT', failureCode: 'MISSING_ID', message: 'Missing remoteResourceId' };
     const oauth2Client = new google.auth.OAuth2(
       this.clientId,
       this.clientSecret,

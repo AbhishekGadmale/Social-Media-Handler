@@ -1,21 +1,21 @@
-import { ZodSchema, z } from 'zod';
-import { IMediaContentSource } from './IMediaContentSource';
+import { ZodSchema, z } from "zod";
+import { IMediaContentSource } from "./IMediaContentSource";
 
 export type ProviderFailureCategory =
-  | 'TRANSIENT'
-  | 'RATE_LIMITED'
-  | 'AUTH_REQUIRED'
-  | 'VALIDATION'
-  | 'PERMANENT'
-  | 'UNKNOWN_RESULT';
+  | "TRANSIENT"
+  | "RATE_LIMITED"
+  | "AUTH_REQUIRED"
+  | "VALIDATION"
+  | "PERMANENT"
+  | "UNKNOWN_RESULT";
 
 export type PublicationContentType =
-  | 'TEXT_POST'
-  | 'IMAGE_POST'
-  | 'MULTI_IMAGE_POST'
-  | 'VIDEO_POST'
-  | 'DOCUMENT_POST'
-  | 'LINK_POST';
+  | "TEXT_POST"
+  | "IMAGE_POST"
+  | "MULTI_IMAGE_POST"
+  | "VIDEO_POST"
+  | "DOCUMENT_POST"
+  | "LINK_POST";
 
 export interface ContentConstraint {
   supported: boolean;
@@ -56,17 +56,26 @@ export interface ProviderPublicationInput {
   providerOptions: unknown;
 }
 
-export interface ProviderPublishSuccess {
-  providerState?: ProviderJsonObject;
-  delayMs?: number;
-  success: true;
-  externalPostId: string;
-  canonicalUrl?: string;
-  publishedAt?: Date;
-  providerRequestId?: string;
-  processingState?: 'PUBLISHED' | 'PROCESSING';
-  safeMetadata?: Record<string, string | number | boolean>;
-}
+export type ProviderPublishSuccess =
+  | {
+      success: true;
+      processingState?: "PUBLISHED";
+      externalPostId: string;
+      canonicalUrl?: string;
+      publishedAt?: Date;
+      providerRequestId?: string;
+      safeMetadata?: Record<string, string | number | boolean>;
+    }
+  | {
+      success: true;
+      processingState: "PROCESSING";
+      externalPostId?: string;
+      canonicalUrl?: string;
+      publishedAt?: Date;
+      providerRequestId?: string;
+      providerState?: ProviderJsonObject;
+      delayMs?: number;
+    };
 
 export interface ProviderPublishFailure {
   success: false;
@@ -77,17 +86,24 @@ export interface ProviderPublishFailure {
   providerRequestId?: string;
 }
 
-export interface ProviderDeleteSuccess { success: true; }
-export type ProviderDeleteResult = ProviderDeleteSuccess | ProviderPublishFailure;
+export interface ProviderDeleteSuccess {
+  success: true;
+}
+export type ProviderDeleteResult =
+  ProviderDeleteSuccess | ProviderPublishFailure;
 
-export type ProviderPublishResult = ProviderPublishSuccess | ProviderPublishFailure;
+export type ProviderPublishResult =
+  ProviderPublishSuccess | ProviderPublishFailure;
 
 export interface ProviderExecutionCredentials {
   accessToken: string;
 }
 
-export type ProviderJsonValue = string | number | boolean | null | ProviderJsonObject | ProviderJsonArray;
-export interface ProviderJsonObject { [key: string]: ProviderJsonValue }
+export type ProviderJsonValue =
+  string | number | boolean | null | ProviderJsonObject | ProviderJsonArray;
+export interface ProviderJsonObject {
+  [key: string]: ProviderJsonValue;
+}
 export type ProviderJsonArray = Array<ProviderJsonValue>;
 
 export interface ProviderRemotePreparation {
@@ -115,12 +131,12 @@ export interface ProviderPreparationContext extends ProviderPublishContext {
 
 export type ProviderPreparationResult =
   | {
-      status: 'PROCESSING';
+      status: "PROCESSING";
       providerState: ProviderJsonObject;
       delayMs?: number;
     }
   | {
-      status: 'FAILED';
+      status: "FAILED";
       failureCategory?: ProviderFailureCategory;
       failureCode?: string;
       message?: string;
@@ -128,8 +144,20 @@ export type ProviderPreparationResult =
     };
 
 export interface ProviderStatusCheckResult {
-  status: 'PROCESSING' | 'READY' | 'PREPARATION_READY' | 'PUBLISHED' | 'FAILED' | 'UNKNOWN';
-  failureCategory?: 'PERMANENT' | 'RETRYABLE' | 'UNKNOWN_RESULT' | 'RATE_LIMIT' | 'AUTH_REQUIRED' | 'MEDIA_ERROR';
+  status:
+    | "PROCESSING"
+    | "READY"
+    | "PREPARATION_READY"
+    | "PUBLISHED"
+    | "FAILED"
+    | "UNKNOWN";
+  failureCategory?:
+    | "PERMANENT"
+    | "RETRYABLE"
+    | "UNKNOWN_RESULT"
+    | "RATE_LIMIT"
+    | "AUTH_REQUIRED"
+    | "MEDIA_ERROR";
   failureCode?: string;
   message?: string;
 }
@@ -149,18 +177,34 @@ export interface IPublishingProvider {
    * Executes the logical publish operation.
    * Credentials (e.g. OAuth tokens) are injected by the execution boundary, not passed in the domain input payload.
    */
-  deletePost?(credentials: ProviderExecutionCredentials, externalPostId: string): Promise<ProviderDeleteResult>;
+  deletePost?(
+    credentials: ProviderExecutionCredentials,
+    externalPostId: string,
+  ): Promise<ProviderDeleteResult>;
 
   publish(
     credentials: ProviderExecutionCredentials,
     input: ProviderPublicationInput,
     mediaSource?: IMediaContentSource,
-    context?: ProviderPublishContext
+    context?: ProviderPublishContext,
   ): Promise<ProviderPublishResult>;
 
-  finalizePublish?(credentials: ProviderExecutionCredentials, input: ProviderPublicationInput, remoteResourceId: string, context?: ProviderPublishContext): Promise<ProviderPublishResult>;
+  finalizePublish?(
+    credentials: ProviderExecutionCredentials,
+    input: ProviderPublicationInput,
+    remoteResourceId: string,
+    context?: ProviderPublishContext,
+  ): Promise<ProviderPublishResult>;
 
-  continuePreparation?(credentials: ProviderExecutionCredentials, input: ProviderPublicationInput, context: ProviderPreparationContext): Promise<ProviderPreparationResult>;
+  continuePreparation?(
+    credentials: ProviderExecutionCredentials,
+    input: ProviderPublicationInput,
+    context: ProviderPreparationContext,
+  ): Promise<ProviderPreparationResult>;
 
-  checkStatus?(credentials: ProviderExecutionCredentials, remoteResourceId: string): Promise<ProviderStatusCheckResult>;
+  checkStatus?(
+    credentials: ProviderExecutionCredentials,
+    remoteResourceId: string | undefined,
+    context?: ProviderPreparationContext,
+  ): Promise<ProviderStatusCheckResult>;
 }

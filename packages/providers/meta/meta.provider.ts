@@ -1,3 +1,4 @@
+import { z } from "zod";
 import {
   AuthUrlInput,
   OAuthCredentials,
@@ -6,11 +7,15 @@ import {
   ProviderProfileResult,
 } from "../core/types/index";
 import { ISocialProvider } from "../core/interfaces/ISocialProvider";
-import { ProviderApiError, ProviderCoordinationError } from "../core/errors/index";
+import {
+  ProviderApiError,
+  ProviderCoordinationError,
+} from "../core/errors/index";
 import {
   IPublishingProvider,
   ProviderStatusCheckResult,
   ProviderPublishContext,
+  ProviderPreparationContext,
   PublishingCapabilities,
   ProviderOptionsValidationResult,
   ProviderExecutionCredentials,
@@ -20,6 +25,22 @@ import {
 } from "../core/interfaces/IPublishingProvider";
 import { IMediaContentSource } from "../core/interfaces/IMediaContentSource";
 import sizeOf from "image-size";
+
+const InstagramCarouselProviderStateSchema = z.object({
+  kind: z.literal("INSTAGRAM_CAROUSEL"),
+  step: z.enum(["CHILD_CREATION", "CHILD_PROCESSING"]),
+  completedChildren: z.array(
+    z.object({
+      sortOrder: z.number(),
+      containerId: z.string(),
+      mediaType: z.enum(["IMAGE", "VIDEO"]),
+    }),
+  ),
+  pendingChildrenIndices: z.array(z.number()),
+});
+type InstagramCarouselProviderState = z.infer<
+  typeof InstagramCarouselProviderStateSchema
+>;
 
 export class MetaProvider implements ISocialProvider, IPublishingProvider {
   private readonly version = "v20.0";
@@ -359,13 +380,18 @@ export class MetaProvider implements ISocialProvider, IPublishingProvider {
             maxBytes: 8 * 1024 * 1024,
             mimeTypes: ["image/jpeg"],
           },
-          MULTI_IMAGE_POST: { supported: false },
+          MULTI_IMAGE_POST: {
+            supported: true,
+            maxCount: 10,
+            maxBytes: 100 * 1024 * 1024,
+            mimeTypes: ["image/jpeg", "video/mp4", "video/quicktime"],
+          },
           VIDEO_POST: {
-              supported: true,
-              maxCount: 1,
-              maxBytes: 100 * 1024 * 1024,
-              mimeTypes: ["video/mp4", "video/quicktime"],
-            },
+            supported: true,
+            maxCount: 1,
+            maxBytes: 100 * 1024 * 1024,
+            mimeTypes: ["video/mp4", "video/quicktime"],
+          },
           LINK_POST: { supported: false },
           DOCUMENT_POST: { supported: false },
         },
@@ -380,11 +406,11 @@ export class MetaProvider implements ISocialProvider, IPublishingProvider {
         IMAGE_POST: { supported: false },
         MULTI_IMAGE_POST: { supported: false },
         VIDEO_POST: {
-              supported: true,
-              maxCount: 1,
-              maxBytes: 100 * 1024 * 1024,
-              mimeTypes: ["video/mp4", "video/quicktime"],
-            },
+          supported: true,
+          maxCount: 1,
+          maxBytes: 100 * 1024 * 1024,
+          mimeTypes: ["video/mp4", "video/quicktime"],
+        },
         LINK_POST: { supported: false },
         DOCUMENT_POST: { supported: false },
       },
@@ -429,7 +455,9 @@ export class MetaProvider implements ISocialProvider, IPublishingProvider {
 
     // --- Facebook Page Publishing ---
     if (!context?.beforeFinalMutation) {
-      throw new ProviderCoordinationError("Facebook publishing strictly requires beforeFinalMutation coordination hook.");
+      throw new ProviderCoordinationError(
+        "Facebook publishing strictly requires beforeFinalMutation coordination hook.",
+      );
     }
 
     const pageId = input.externalAccountId;
@@ -594,21 +622,200 @@ export class MetaProvider implements ISocialProvider, IPublishingProvider {
     }
   }
 
-    private async publishInstagram(
+  private async publishInstagramCarousel(
+    credentials: ProviderExecutionCredentials,
+    input: ProviderPublicationInput,
+    mediaSource?: IMediaContentSource,
+    context?: ProviderPreparationContext,
+  ): Promise<ProviderPublishResult> {
+    if (!context?.onRemotePrepared || !context?.beforeFinalMutation) {
+      throw new ProviderCoordinationError(
+        "Instagram carousel publishing strictly requires both onRemotePrepared and beforeFinalMutation coordination hooks.",
+      );
+    }
+
+    const igId = encodeURIComponent(input.externalAccountId);
+    if (!igId) {
+      return {
+        success: false,
+        failureCategory: "VALIDATION",
+        failureCode: "NO_IG_ID",
+        message: "No Instagram ID provided",
+      };
+    }
+
+    if (!input.media || input.media.length < 2 || input.media.length > 10) {
+      return {
+        success: false,
+        failureCategory: "VALIDATION",
+        failureCode: "MEDIA_COUNT_INVALID",
+        message: "Instagram carousel requires between 2 and 10 media items",
+      };
+    }
+
+    if (!mediaSource || !mediaSource.getSignedReadUrl) {
+      return {
+        success: false,
+        failureCategory: "TRANSIENT",
+        failureCode: "NO_SIGNED_URL_SUPPORT",
+        message: "Storage does not support getSignedReadUrl",
+      };
+    }
+
+    let state: InstagramCarouselProviderState = {
+      kind: "INSTAGRAM_CAROUSEL",
+      step: "CHILD_CREATION",
+      completedChildren: [],
+      pendingChildrenIndices: input.media.map((_, i) => i),
+    };
+
+    if (context.providerState) {
+      const parsed = InstagramCarouselProviderStateSchema.safeParse(
+        context.providerState,
+      );
+      if (parsed.success && parsed.data.kind === "INSTAGRAM_CAROUSEL") {
+        state = parsed.data;
+      }
+    }
+
+    if (state.step === "CHILD_CREATION") {
+      for (const idx of state.pendingChildrenIndices) {
+        const media = input.media[idx];
+        const isVideo = media.mimeType.startsWith("video/");
+        const mediaType = isVideo ? "VIDEO" : "IMAGE";
+
+        let url: string;
+        try {
+          url = await mediaSource.getSignedReadUrl(
+            media.key!,
+            this.INSTAGRAM_SIGNED_URL_TTL_SECONDS,
+          );
+        } catch (e: any) {
+          return {
+            success: false,
+            failureCategory: "TRANSIENT",
+            failureCode: "SIGNED_URL_FAILED",
+            message: `Failed to generate signed URL: ${e.message}`,
+          };
+        }
+
+        let creationId: string;
+        try {
+          const createParams = new URLSearchParams();
+          createParams.append("access_token", credentials.accessToken);
+          createParams.append(isVideo ? "video_url" : "image_url", url);
+          createParams.append("is_carousel_item", "true");
+          if (isVideo) {
+            createParams.append("media_type", "VIDEO");
+          }
+
+          const createUrl = `${this.baseUrl}/${this.version}/${igId}/media?${createParams.toString()}`;
+          const res = await this.fetchWithTimeout(createUrl, {
+            method: "POST",
+            redirect: "error",
+          });
+          const data = await res.json();
+          if (!res.ok || !data.id) {
+            return this.handleGraphError(
+              res.status,
+              data,
+              credentials.accessToken,
+            );
+          }
+          creationId = data.id;
+
+          state.completedChildren.push({
+            sortOrder: idx,
+            containerId: creationId,
+            mediaType,
+          });
+          state.pendingChildrenIndices = state.pendingChildrenIndices.filter(
+            (i) => i !== idx,
+          );
+
+          await context.onRemotePrepared({
+            providerState: state,
+          });
+        } catch (err: any) {
+          if (err.name === "ProviderCoordinationError") throw err;
+          return {
+            success: false,
+            failureCategory: "TRANSIENT",
+            failureCode: "NETWORK_ERROR",
+            message: this.sanitizeErrorMessage(
+              err.message,
+              credentials.accessToken,
+            ),
+          };
+        }
+      }
+
+      state.step = "CHILD_PROCESSING";
+      try {
+        await context.onRemotePrepared({
+          providerState: state,
+        });
+      } catch (err: any) {
+        if (err.name === "ProviderCoordinationError") throw err;
+        return {
+          success: false,
+          failureCategory: "TRANSIENT",
+          failureCode: "NETWORK_ERROR",
+          message: this.sanitizeErrorMessage(
+            err.message,
+            credentials.accessToken,
+          ),
+        };
+      }
+    }
+
+    if (state.step === "CHILD_PROCESSING") {
+      return {
+        success: true,
+        processingState: "PROCESSING",
+        providerState: state,
+      };
+    }
+
+    return {
+      success: false,
+      failureCategory: "UNKNOWN_RESULT",
+      failureCode: "UNKNOWN_STEP",
+      message: "Unknown step",
+    };
+  }
+
+  private async publishInstagram(
     credentials: ProviderExecutionCredentials,
     input: ProviderPublicationInput,
     mediaSource?: IMediaContentSource,
     context?: ProviderPublishContext,
   ): Promise<ProviderPublishResult> {
     if (!context?.onRemotePrepared || !context?.beforeFinalMutation) {
-      throw new ProviderCoordinationError("Instagram publishing strictly requires both onRemotePrepared and beforeFinalMutation coordination hooks.");
+      throw new ProviderCoordinationError(
+        "Instagram publishing strictly requires both onRemotePrepared and beforeFinalMutation coordination hooks.",
+      );
     }
-    
+
+    if (input.media && input.media.length > 1) {
+      return this.publishInstagramCarousel(
+        credentials,
+        input,
+        mediaSource,
+        context as any,
+      );
+    }
+
     const media = input.media?.[0];
-    if (media && media.mimeType && media.mimeType.startsWith('video/')) {
-      return this.publishInstagramVideo(credentials, input, mediaSource, context);
+    if (media && media.mimeType && media.mimeType.startsWith("video/")) {
+      return this.publishInstagramVideo(
+        credentials,
+        input,
+        mediaSource,
+        context,
+      );
     }
-    
+
     return this.publishInstagramImage(credentials, input, mediaSource, context);
   }
 
@@ -620,25 +827,53 @@ export class MetaProvider implements ISocialProvider, IPublishingProvider {
   ): Promise<ProviderPublishResult> {
     const igId = encodeURIComponent(input.externalAccountId);
     if (!igId) {
-      return { success: false, failureCategory: "VALIDATION", failureCode: "NO_IG_ID", message: "No Instagram ID provided" };
+      return {
+        success: false,
+        failureCategory: "VALIDATION",
+        failureCode: "NO_IG_ID",
+        message: "No Instagram ID provided",
+      };
     }
 
     if (!input.media || input.media.length === 0 || !input.media[0]) {
-      return { success: false, failureCategory: "VALIDATION", failureCode: "MEDIA_REQUIRED", message: "Instagram video requires exactly one video" };
+      return {
+        success: false,
+        failureCategory: "VALIDATION",
+        failureCode: "MEDIA_REQUIRED",
+        message: "Instagram video requires exactly one video",
+      };
     }
     if (input.media.length > 1) {
-      return { success: false, failureCategory: "VALIDATION", failureCode: "TOO_MANY_MEDIA", message: "Instagram single-video only" };
+      return {
+        success: false,
+        failureCategory: "VALIDATION",
+        failureCode: "TOO_MANY_MEDIA",
+        message: "Instagram single-video only",
+      };
     }
     if (!mediaSource || !mediaSource.getSignedReadUrl) {
-      return { success: false, failureCategory: "TRANSIENT", failureCode: "NO_SIGNED_URL_SUPPORT", message: "Storage does not support getSignedReadUrl" };
+      return {
+        success: false,
+        failureCategory: "TRANSIENT",
+        failureCode: "NO_SIGNED_URL_SUPPORT",
+        message: "Storage does not support getSignedReadUrl",
+      };
     }
 
     const media = input.media[0];
     let videoUrl: string;
     try {
-      videoUrl = await mediaSource.getSignedReadUrl(media.key!, this.INSTAGRAM_SIGNED_URL_TTL_SECONDS);
+      videoUrl = await mediaSource.getSignedReadUrl(
+        media.key!,
+        this.INSTAGRAM_SIGNED_URL_TTL_SECONDS,
+      );
     } catch (e: any) {
-      return { success: false, failureCategory: "TRANSIENT", failureCode: "SIGNED_URL_FAILED", message: `Failed to generate signed URL: ${e.message}` };
+      return {
+        success: false,
+        failureCategory: "TRANSIENT",
+        failureCode: "SIGNED_URL_FAILED",
+        message: `Failed to generate signed URL: ${e.message}`,
+      };
     }
 
     let creationId: string;
@@ -652,7 +887,10 @@ export class MetaProvider implements ISocialProvider, IPublishingProvider {
       }
       const createUrl = `${this.baseUrl}/${this.version}/${igId}/media?${createParams.toString()}`;
 
-      const res = await this.fetchWithTimeout(createUrl, { method: "POST", redirect: "error" });
+      const res = await this.fetchWithTimeout(createUrl, {
+        method: "POST",
+        redirect: "error",
+      });
       const data = await res.json();
       if (!res.ok || !data.id) {
         return this.handleGraphError(res.status, data, credentials.accessToken);
@@ -664,7 +902,15 @@ export class MetaProvider implements ISocialProvider, IPublishingProvider {
       }
     } catch (err: any) {
       if (err.name === "ProviderCoordinationError") throw err;
-      return { success: false, failureCategory: "TRANSIENT", failureCode: "NETWORK_ERROR", message: this.sanitizeErrorMessage(err.message, credentials.accessToken) };
+      return {
+        success: false,
+        failureCategory: "TRANSIENT",
+        failureCode: "NETWORK_ERROR",
+        message: this.sanitizeErrorMessage(
+          err.message,
+          credentials.accessToken,
+        ),
+      };
     }
 
     return {
@@ -681,7 +927,9 @@ export class MetaProvider implements ISocialProvider, IPublishingProvider {
     context?: ProviderPublishContext,
   ): Promise<ProviderPublishResult> {
     if (!context?.onRemotePrepared || !context?.beforeFinalMutation) {
-      throw new ProviderCoordinationError("Instagram single-image publishing strictly requires both onRemotePrepared and beforeFinalMutation coordination hooks.");
+      throw new ProviderCoordinationError(
+        "Instagram single-image publishing strictly requires both onRemotePrepared and beforeFinalMutation coordination hooks.",
+      );
     }
     const igId = encodeURIComponent(input.externalAccountId);
     if (!igId) {
@@ -894,48 +1142,199 @@ export class MetaProvider implements ISocialProvider, IPublishingProvider {
     }
   }
 
-    async checkStatus(credentials: ProviderExecutionCredentials, remoteResourceId: string): Promise<ProviderStatusCheckResult> {
-    if (this.providerAlias !== 'instagram') {
-      return { status: 'UNKNOWN', failureCategory: 'UNKNOWN_RESULT', message: 'Status checks not supported for this provider' };
+  async checkStatus(
+    credentials: ProviderExecutionCredentials,
+    remoteResourceId: string | undefined,
+    context?: ProviderPreparationContext,
+  ): Promise<ProviderStatusCheckResult> {
+    if (this.providerAlias !== "instagram") {
+      return {
+        status: "UNKNOWN",
+        failureCategory: "UNKNOWN_RESULT",
+        message: "Status checks not supported for this provider",
+      };
     }
+    if (!remoteResourceId && context?.providerState) {
+      if (!context?.providerState) {
+        return {
+          status: "FAILED",
+          failureCategory: "PERMANENT",
+          failureCode: "MISSING_STATE",
+          message: "Missing providerState for carousel checkStatus",
+        };
+      }
+      const parsed = InstagramCarouselProviderStateSchema.safeParse(
+        context.providerState,
+      );
+      if (!parsed.success || parsed.data.kind !== "INSTAGRAM_CAROUSEL") {
+        return {
+          status: "FAILED",
+          failureCategory: "PERMANENT",
+          failureCode: "INVALID_STATE",
+          message: "Invalid providerState for carousel",
+        };
+      }
+
+      const state = parsed.data;
+      if (state.step !== "CHILD_PROCESSING") {
+        return { status: "PROCESSING" };
+      }
+
+      let allFinished = true;
+      for (const child of state.completedChildren) {
+        try {
+          const params = new URLSearchParams();
+          params.append("access_token", credentials.accessToken);
+          params.append("fields", "status_code");
+          const url = `${this.baseUrl}/${this.version}/${child.containerId}?${params.toString()}`;
+          const res = await this.fetchWithTimeout(url, {
+            method: "GET",
+            redirect: "error",
+          });
+          const data = await res.json();
+
+          if (!res.ok) {
+            const errCode = data?.error?.code;
+            if (errCode === 100) {
+              return {
+                status: "FAILED",
+                failureCategory: "PERMANENT",
+                failureCode: "NOT_FOUND",
+                message: `Container ${child.containerId} not found`,
+              };
+            }
+            return {
+              status: "UNKNOWN",
+              failureCategory: "UNKNOWN_RESULT",
+              failureCode: "GRAPH_ERROR",
+              message: data?.error?.message || "Error checking status",
+            };
+          }
+
+          const statusCode = data.status_code;
+          if (statusCode === "ERROR")
+            return {
+              status: "FAILED",
+              failureCategory: "PERMANENT",
+              failureCode: "PROCESSING_FAILED",
+              message: `Child ${child.containerId} failed`,
+            };
+          if (statusCode === "EXPIRED")
+            return {
+              status: "FAILED",
+              failureCategory: "PERMANENT",
+              failureCode: "EXPIRED",
+              message: `Child ${child.containerId} expired`,
+            };
+          if (statusCode === "IN_PROGRESS") {
+            allFinished = false;
+          } else if (statusCode !== "FINISHED") {
+            return {
+              status: "UNKNOWN",
+              failureCategory: "UNKNOWN_RESULT",
+              failureCode: "UNRECOGNIZED_STATUS",
+              message: "Unrecognized status: " + statusCode,
+            };
+          }
+        } catch (err: any) {
+          if (err.name === "ProviderApiError") throw err;
+          throw new ProviderApiError(
+            "Network error during status check: " +
+              this.sanitizeErrorMessage(err.message, credentials.accessToken),
+            500,
+          );
+        }
+      }
+
+      if (allFinished) {
+        return { status: "PREPARATION_READY" };
+      }
+      return { status: "PROCESSING" };
+    }
+
     try {
       const params = new URLSearchParams();
-      params.append('access_token', credentials.accessToken);
-      params.append('fields', 'status_code');
+      params.append("access_token", credentials.accessToken);
+      params.append("fields", "status_code");
       const url = `${this.baseUrl}/${this.version}/${remoteResourceId}?${params.toString()}`;
 
-      const res = await this.fetchWithTimeout(url, { method: 'GET', redirect: 'error' });
+      const res = await this.fetchWithTimeout(url, {
+        method: "GET",
+        redirect: "error",
+      });
       const data = await res.json();
       if (!res.ok) {
         const errCode = data?.error?.code;
         if (errCode === 100) {
-           return { status: 'FAILED', failureCategory: 'PERMANENT', failureCode: 'NOT_FOUND', message: 'Container not found' };
+          return {
+            status: "FAILED",
+            failureCategory: "PERMANENT",
+            failureCode: "NOT_FOUND",
+            message: "Container not found",
+          };
         }
-        return { status: 'UNKNOWN', failureCategory: 'UNKNOWN_RESULT', failureCode: 'GRAPH_ERROR', message: data?.error?.message || 'Error checking status' };
+        return {
+          status: "UNKNOWN",
+          failureCategory: "UNKNOWN_RESULT",
+          failureCode: "GRAPH_ERROR",
+          message: data?.error?.message || "Error checking status",
+        };
       }
 
       const statusCode = data.status_code;
-      if (statusCode === 'IN_PROGRESS') return { status: 'PROCESSING' };
-      if (statusCode === 'FINISHED') return { status: 'READY' };
-      if (statusCode === 'ERROR') return { status: 'FAILED', failureCategory: 'PERMANENT', failureCode: 'PROCESSING_FAILED' };
-      if (statusCode === 'EXPIRED') return { status: 'FAILED', failureCategory: 'PERMANENT', failureCode: 'EXPIRED' };
-      if (statusCode === 'PUBLISHED') return { status: 'PUBLISHED' };
+      if (statusCode === "IN_PROGRESS") return { status: "PROCESSING" };
+      if (statusCode === "FINISHED") return { status: "READY" };
+      if (statusCode === "ERROR")
+        return {
+          status: "FAILED",
+          failureCategory: "PERMANENT",
+          failureCode: "PROCESSING_FAILED",
+        };
+      if (statusCode === "EXPIRED")
+        return {
+          status: "FAILED",
+          failureCategory: "PERMANENT",
+          failureCode: "EXPIRED",
+        };
+      if (statusCode === "PUBLISHED") return { status: "PUBLISHED" };
 
-      return { status: 'UNKNOWN', failureCategory: 'UNKNOWN_RESULT', failureCode: 'UNRECOGNIZED_STATUS', message: 'Unrecognized status: ' + statusCode };
+      return {
+        status: "UNKNOWN",
+        failureCategory: "UNKNOWN_RESULT",
+        failureCode: "UNRECOGNIZED_STATUS",
+        message: "Unrecognized status: " + statusCode,
+      };
     } catch (err: any) {
-      return { status: 'UNKNOWN', failureCategory: 'UNKNOWN_RESULT', failureCode: 'NETWORK_ERROR', message: this.sanitizeErrorMessage(err.message, credentials.accessToken) };
+      if (err.name === "ProviderApiError") throw err;
+      throw new ProviderApiError(
+        "Network error during status check: " +
+          this.sanitizeErrorMessage(err.message, credentials.accessToken),
+        500,
+      );
     }
   }
 
-  async finalizePublish(credentials: ProviderExecutionCredentials, input: ProviderPublicationInput, remoteResourceId: string, context?: ProviderPublishContext): Promise<ProviderPublishResult> {
+  async finalizePublish(
+    credentials: ProviderExecutionCredentials,
+    input: ProviderPublicationInput,
+    remoteResourceId: string,
+    context?: ProviderPublishContext,
+  ): Promise<ProviderPublishResult> {
     if (!context?.beforeFinalMutation) {
-      throw new ProviderCoordinationError("Instagram finalization strictly requires beforeFinalMutation coordination hook.");
+      throw new ProviderCoordinationError(
+        "Instagram finalization strictly requires beforeFinalMutation coordination hook.",
+      );
     }
-    
+
     try {
       const igId = encodeURIComponent(input.externalAccountId);
       if (!igId) {
-        return { success: false, failureCategory: "VALIDATION", failureCode: "NO_IG_ID", message: "No Instagram ID provided" };
+        return {
+          success: false,
+          failureCategory: "VALIDATION",
+          failureCode: "NO_IG_ID",
+          message: "No Instagram ID provided",
+        };
       }
 
       const publishParams = new URLSearchParams();
@@ -947,7 +1346,10 @@ export class MetaProvider implements ISocialProvider, IPublishingProvider {
         await context.beforeFinalMutation();
       }
 
-      const res = await this.fetchWithTimeout(publishUrl, { method: "POST", redirect: "error" });
+      const res = await this.fetchWithTimeout(publishUrl, {
+        method: "POST",
+        redirect: "error",
+      });
       const data = await res.json();
       if (!res.ok || !data.id) {
         return this.handleGraphError(res.status, data, credentials.accessToken);
@@ -961,14 +1363,26 @@ export class MetaProvider implements ISocialProvider, IPublishingProvider {
     } catch (err: any) {
       if (err.name === "ProviderCoordinationError") throw err;
       if (err.message === "redirect") {
-        return { success: false, failureCategory: "VALIDATION", failureCode: "UNEXPECTED_REDIRECT", message: "Meta returned unexpected redirect" };
+        return {
+          success: false,
+          failureCategory: "VALIDATION",
+          failureCode: "UNEXPECTED_REDIRECT",
+          message: "Meta returned unexpected redirect",
+        };
       }
-      return { success: false, failureCategory: "TRANSIENT", failureCode: "NETWORK_ERROR", message: this.sanitizeErrorMessage(err.message, credentials.accessToken) };
+      return {
+        success: false,
+        failureCategory: "TRANSIENT",
+        failureCode: "NETWORK_ERROR",
+        message: this.sanitizeErrorMessage(
+          err.message,
+          credentials.accessToken,
+        ),
+      };
     }
   }
 
   private handleGraphError(
-
     status: number,
     data: any,
     token: string,
