@@ -222,4 +222,168 @@ describe("Instagram Carousel Publishing", () => {
       await expect(provider.checkStatus!(credentials, undefined, { providerState: state })).rejects.toThrow();
     });
   });
+
+  describe("continuePreparation", () => {
+    it("creates parent after PREPARATION_READY and returns PARENT_PROCESSING", async () => {
+      const state = {
+        kind: "INSTAGRAM_CAROUSEL",
+        step: "CHILD_PROCESSING",
+        completedChildren: [
+          { sortOrder: 1, containerId: "c2", mediaType: "VIDEO" },
+          { sortOrder: 0, containerId: "c1", mediaType: "IMAGE" },
+        ],
+        pendingChildrenIndices: [],
+      };
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ id: "parent-container-id" }),
+      });
+
+      const res = await provider.continuePreparation!(
+        credentials,
+        { externalAccountId: "ig_id", content: "Test caption", media: [{} as any, {} as any] },
+        { providerState: state, onRemotePrepared: vi.fn(), beforeFinalMutation: vi.fn() }
+      );
+
+      expect(res.status).toBe("PROCESSING");
+      expect((res as any).providerState.step).toBe("PARENT_PROCESSING");
+      expect((res as any).providerState.parentContainerId).toBe("parent-container-id");
+
+      // Verify POST media exact shape
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      const url = mockFetch.mock.calls[0][0];
+      const opts = mockFetch.mock.calls[0][1];
+      expect(opts.method).toBe("POST");
+      
+      const searchParams = new URLSearchParams(url.split("?")[1]);
+      expect(searchParams.get("media_type")).toBe("CAROUSEL");
+      // Ordering proof: sortOrder 0 -> c1, sortOrder 1 -> c2
+      expect(searchParams.get("children")).toBe("c1,c2");
+      // Caption on parent
+      expect(searchParams.get("caption")).toBe("Test caption");
+    });
+
+    it("prevents duplicate parent creation if already PARENT_PROCESSING", async () => {
+      const state = {
+        kind: "INSTAGRAM_CAROUSEL",
+        step: "PARENT_PROCESSING",
+        completedChildren: [
+          { sortOrder: 0, containerId: "c1", mediaType: "IMAGE" },
+        ],
+        pendingChildrenIndices: [],
+        parentContainerId: "parent-existing",
+      };
+
+      const res = await provider.continuePreparation!(
+        credentials,
+        { externalAccountId: "ig_id", media: [{}] as any },
+        { providerState: state, onRemotePrepared: vi.fn(), beforeFinalMutation: vi.fn() }
+      );
+
+      expect(mockFetch).not.toHaveBeenCalled();
+      expect(res.status).toBe("PROCESSING");
+      expect((res as any).providerState.parentContainerId).toBe("parent-existing");
+    });
+
+    it("fails early if pendingChildrenIndices is not empty", async () => {
+      const state = {
+        kind: "INSTAGRAM_CAROUSEL",
+        step: "CHILD_PROCESSING",
+        completedChildren: [],
+        pendingChildrenIndices: [0],
+      };
+
+      const res = await provider.continuePreparation!(
+        credentials,
+        { externalAccountId: "ig_id", media: [{}] as any },
+        { providerState: state, onRemotePrepared: vi.fn(), beforeFinalMutation: vi.fn() }
+      );
+
+      expect(res.status).toBe("FAILED");
+      expect((res as any).failureCode).toBe("INCOMPLETE_CHILDREN");
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it("throws ProviderApiError on network failure during parent POST", async () => {
+      const state = {
+        kind: "INSTAGRAM_CAROUSEL",
+        step: "CHILD_PROCESSING",
+        completedChildren: [{ sortOrder: 0, containerId: "c1", mediaType: "IMAGE" }],
+        pendingChildrenIndices: [],
+      };
+      
+      mockFetch.mockRejectedValueOnce(new Error("Network timeout"));
+
+      await expect(
+        provider.continuePreparation!(
+          credentials,
+          { externalAccountId: "ig_id", media: [{}] as any },
+          { providerState: state, onRemotePrepared: vi.fn(), beforeFinalMutation: vi.fn() }
+        )
+      ).rejects.toThrow("Network or timeout error");
+    });
+
+    it("throws ProviderApiError on HTTP 5xx during parent POST", async () => {
+      const state = {
+        kind: "INSTAGRAM_CAROUSEL",
+        step: "CHILD_PROCESSING",
+        completedChildren: [{ sortOrder: 0, containerId: "c1", mediaType: "IMAGE" }],
+        pendingChildrenIndices: [],
+      };
+      
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 502,
+        json: async () => ({}),
+      });
+
+      await expect(
+        provider.continuePreparation!(
+          credentials,
+          { externalAccountId: "ig_id", media: [{}] as any },
+          { providerState: state, onRemotePrepared: vi.fn(), beforeFinalMutation: vi.fn() }
+        )
+      ).rejects.toThrow("Meta server error");
+    });
+  });
+
+  describe("checkStatus for PARENT_PROCESSING", () => {
+    it("fails if parentContainerId is missing", async () => {
+      const state = {
+        kind: "INSTAGRAM_CAROUSEL",
+        step: "PARENT_PROCESSING",
+        completedChildren: [],
+        pendingChildrenIndices: [],
+      };
+      const res = await provider.checkStatus!(credentials, undefined, { providerState: state });
+      expect(res.status).toBe("FAILED");
+      expect((res as any).failureCode).toBe("MISSING_PARENT_ID");
+    });
+
+    it("returns PROCESSING if parent is IN_PROGRESS", async () => {
+      const state = {
+        kind: "INSTAGRAM_CAROUSEL",
+        step: "PARENT_PROCESSING",
+        completedChildren: [],
+        pendingChildrenIndices: [],
+        parentContainerId: "p1",
+      };
+      mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status_code: "IN_PROGRESS" }) });
+      const res = await provider.checkStatus!(credentials, undefined, { providerState: state });
+      expect(res.status).toBe("PROCESSING");
+    });
+
+    it("returns READY if parent is FINISHED", async () => {
+      const state = {
+        kind: "INSTAGRAM_CAROUSEL",
+        step: "PARENT_PROCESSING",
+        completedChildren: [],
+        pendingChildrenIndices: [],
+        parentContainerId: "p1",
+      };
+      mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status_code: "FINISHED" }) });
+      const res = await provider.checkStatus!(credentials, undefined, { providerState: state });
+      expect(res.status).toBe("READY");
+    });
+  });
 });

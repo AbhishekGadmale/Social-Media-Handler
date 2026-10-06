@@ -965,4 +965,73 @@ describe('REAL REDIS/BULLMQ: Publishing Architecture Continuation', () => {
     expect(meta.preparationState.kind).toBe('INSTAGRAM_CAROUSEL');
     expect(meta.preparationState.step).toBe('CHILD_PROCESSING');
   });
+
+  it('17. Task C Instagram Carousel Parent Checkpoints: CHILD_PROCESSING -> PREPARATION_READY -> continuePreparation -> PARENT_PROCESSING (PROCESSING_REMOTE CAS)', async () => {
+    mockAdapter.publish.mockReset();
+    mockAdapter.checkStatus.mockReset();
+    mockAdapter.continuePreparation.mockReset();
+    mockAdapter.finalizePublish.mockReset();
+
+    const initialState = {
+      kind: 'INSTAGRAM_CAROUSEL',
+      step: 'CHILD_PROCESSING',
+      completedChildren: [
+        { sortOrder: 0, containerId: 'c1', mediaType: 'IMAGE' },
+        { sortOrder: 1, containerId: 'c2', mediaType: 'VIDEO' },
+      ],
+      pendingChildrenIndices: [],
+    };
+
+    const { variant: v } = await createTestVariant('PROCESSING_REMOTE', -1000, {
+      provider: 'YOUTUBE', // or META, providerAlias is what matters for checkStatus in real provider, here mocked
+      preparationState: initialState,
+    });
+
+    const variantId = v.id;
+    const jobId = 'job-carousel-parent-' + variantId;
+
+    mockAdapter.checkStatus.mockResolvedValueOnce({
+      status: 'PREPARATION_READY',
+    });
+
+    mockAdapter.continuePreparation.mockResolvedValueOnce({
+      status: 'PROCESSING',
+      delayMs: 15000,
+      providerState: {
+        ...initialState,
+        step: 'PARENT_PROCESSING',
+        parentContainerId: 'parent-123',
+      },
+    });
+
+    await queue.add(
+      'publish-job',
+      {
+        workspaceId: v.workspaceId,
+        publicationId: variantId,
+        dispatchVersion: v.dispatchVersion,
+        operationId: (v.executionMetadata as any).operationId,
+      },
+      { jobId },
+    );
+
+    await sleep(600);
+
+    const finalVariant = await prisma.postPlatformVariant.findUniqueOrThrow({
+      where: { id: variantId },
+    });
+
+    expect(finalVariant.status).toBe('PUBLISHING');
+    const meta =
+      typeof finalVariant.executionMetadata === 'string'
+        ? JSON.parse(finalVariant.executionMetadata)
+        : finalVariant.executionMetadata;
+    expect(meta.phase).toBe('PROCESSING_REMOTE');
+    expect(meta.preparationState.step).toBe('PARENT_PROCESSING');
+    expect(meta.preparationState.parentContainerId).toBe('parent-123');
+    expect(meta.preparationState.completedChildren).toHaveLength(2);
+
+    // Finalization should not be called yet
+    expect(mockAdapter.finalizePublish).not.toHaveBeenCalled();
+  });
 });

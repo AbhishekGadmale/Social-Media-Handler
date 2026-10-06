@@ -28,7 +28,7 @@ import sizeOf from "image-size";
 
 const InstagramCarouselProviderStateSchema = z.object({
   kind: z.literal("INSTAGRAM_CAROUSEL"),
-  step: z.enum(["CHILD_CREATION", "CHILD_PROCESSING"]),
+  step: z.enum(["CHILD_CREATION", "CHILD_PROCESSING", "PARENT_PROCESSING"]),
   completedChildren: z.array(
     z.object({
       sortOrder: z.number(),
@@ -37,6 +37,7 @@ const InstagramCarouselProviderStateSchema = z.object({
     }),
   ),
   pendingChildrenIndices: z.array(z.number()),
+  parentContainerId: z.string().optional(),
 });
 type InstagramCarouselProviderState = z.infer<
   typeof InstagramCarouselProviderStateSchema
@@ -1142,6 +1143,123 @@ export class MetaProvider implements ISocialProvider, IPublishingProvider {
     }
   }
 
+  async continuePreparation(
+    credentials: ProviderExecutionCredentials,
+    input: ProviderPublicationInput,
+    context: ProviderPreparationContext,
+  ): Promise<import("../core/interfaces/IPublishingProvider").ProviderPreparationResult> {
+    if (!context.providerState) {
+      return {
+        status: "FAILED",
+        failureCategory: "PERMANENT",
+        failureCode: "MISSING_STATE",
+        message: "Missing providerState for continuePreparation",
+      };
+    }
+    const parsed = InstagramCarouselProviderStateSchema.safeParse(
+      context.providerState,
+    );
+    if (!parsed.success || parsed.data.kind !== "INSTAGRAM_CAROUSEL") {
+      return {
+        status: "FAILED",
+        failureCategory: "PERMANENT",
+        failureCode: "INVALID_STATE",
+        message: "Invalid providerState for continuePreparation",
+      };
+    }
+
+    const state = parsed.data;
+
+    if (state.step !== "CHILD_PROCESSING") {
+      if (state.step === "PARENT_PROCESSING" && state.parentContainerId) {
+        return { status: "PROCESSING", providerState: state, delayMs: 15000 };
+      }
+      return {
+        status: "FAILED",
+        failureCategory: "PERMANENT",
+        failureCode: "INVALID_STEP",
+        message: `Cannot continuePreparation from step ${state.step}`,
+      };
+    }
+
+    if (state.pendingChildrenIndices.length > 0) {
+      return {
+        status: "FAILED",
+        failureCategory: "PERMANENT",
+        failureCode: "INCOMPLETE_CHILDREN",
+        message: "Cannot continuePreparation while children are pending",
+      };
+    }
+
+    if (!input.media || state.completedChildren.length !== input.media.length) {
+      return {
+        status: "FAILED",
+        failureCategory: "PERMANENT",
+        failureCode: "INCOMPLETE_CHILDREN",
+        message: "Completed children count does not match input media count",
+      };
+    }
+
+    const sortedChildren = [...state.completedChildren].sort((a, b) => a.sortOrder - b.sortOrder);
+    const childIds = sortedChildren.map(c => c.containerId);
+
+    const igId = encodeURIComponent(input.externalAccountId);
+    const postUrl = `${this.baseUrl}/${this.version}/${igId}/media`;
+
+    const createParams = new URLSearchParams();
+    createParams.append("access_token", credentials.accessToken);
+    createParams.append("media_type", "CAROUSEL");
+    createParams.append("children", childIds.join(","));
+    if (input.content) {
+      createParams.append("caption", input.content);
+    }
+
+    let res: Response;
+    try {
+      res = await this.fetchWithTimeout(`${postUrl}?${createParams.toString()}`, {
+        method: "POST",
+        redirect: "error",
+      });
+    } catch (e: any) {
+      throw new ProviderApiError(`Network or timeout error: ${e.message}`, 500, "meta");
+    }
+
+    const data = await res.json();
+    if (!res.ok) {
+      if (res.status >= 500) {
+        throw new ProviderApiError(`Meta server error: ${res.status}`, 500, "meta");
+      }
+      const fail = this.handleGraphError(res.status, data, credentials.accessToken);
+      return {
+        status: "FAILED",
+        failureCategory: fail.failureCategory,
+        failureCode: fail.failureCode,
+        message: fail.message,
+      };
+    }
+
+    if (!data.id) {
+      return {
+        status: "FAILED",
+        failureCategory: "UNKNOWN_RESULT",
+        failureCode: "NO_ID_RETURNED",
+        message: "Meta returned success but no container ID",
+      };
+    }
+
+    const newState: InstagramCarouselProviderState = {
+      ...state,
+      step: "PARENT_PROCESSING",
+      parentContainerId: data.id,
+    };
+
+    return {
+      status: "PROCESSING",
+      providerState: newState,
+      delayMs: 15000,
+    };
+  }
+
   async checkStatus(
     credentials: ProviderExecutionCredentials,
     remoteResourceId: string | undefined,
@@ -1176,8 +1294,87 @@ export class MetaProvider implements ISocialProvider, IPublishingProvider {
       }
 
       const state = parsed.data;
-      if (state.step !== "CHILD_PROCESSING") {
+      if (state.step === "CHILD_CREATION") {
         return { status: "PROCESSING" };
+      }
+
+      if (state.step === "PARENT_PROCESSING") {
+        if (!state.parentContainerId) {
+          return {
+            status: "FAILED",
+            failureCategory: "PERMANENT",
+            failureCode: "MISSING_PARENT_ID",
+            message: "Missing parentContainerId in PARENT_PROCESSING step",
+          };
+        }
+
+        try {
+          const params = new URLSearchParams();
+          params.append("access_token", credentials.accessToken);
+          params.append("fields", "status_code");
+          const url = `${this.baseUrl}/${this.version}/${state.parentContainerId}?${params.toString()}`;
+          const res = await this.fetchWithTimeout(url, {
+            method: "GET",
+            redirect: "error",
+          });
+          const data = await res.json();
+
+          if (!res.ok) {
+            const errCode = data?.error?.code;
+            if (errCode === 100) {
+              return {
+                status: "FAILED",
+                failureCategory: "PERMANENT",
+                failureCode: "NOT_FOUND",
+                message: `Parent container ${state.parentContainerId} not found`,
+              };
+            }
+            return {
+              status: "UNKNOWN",
+              failureCategory: "UNKNOWN_RESULT",
+              failureCode: "GRAPH_ERROR",
+              message: data?.error?.message || "Error checking parent status",
+            };
+          }
+
+          const statusCode = data.status_code;
+          if (statusCode === "ERROR") {
+            return {
+              status: "FAILED",
+              failureCategory: "PERMANENT",
+              failureCode: "PROCESSING_FAILED",
+              message: `Parent ${state.parentContainerId} failed`,
+            };
+          }
+          if (statusCode === "EXPIRED") {
+            return {
+              status: "FAILED",
+              failureCategory: "PERMANENT",
+              failureCode: "EXPIRED",
+              message: `Parent ${state.parentContainerId} expired`,
+            };
+          }
+          if (statusCode === "IN_PROGRESS") {
+            return { status: "PROCESSING" };
+          }
+          if (statusCode === "FINISHED") {
+            return { status: "READY" };
+          }
+
+          return {
+            status: "UNKNOWN",
+            failureCategory: "UNKNOWN_RESULT",
+            failureCode: "UNRECOGNIZED_STATUS",
+            message: "Unrecognized status: " + statusCode,
+          };
+        } catch (err: any) {
+          if (err.name === "ProviderApiError") throw err;
+          throw new ProviderApiError(
+            "Network error during parent status check: " +
+              this.sanitizeErrorMessage(err.message, credentials.accessToken),
+            500,
+          );
+        }
       }
 
       let allFinished = true;
