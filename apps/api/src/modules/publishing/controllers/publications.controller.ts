@@ -192,7 +192,7 @@ export class PublicationsController {
   }
 
   @Post('publications/:publicationId/reconcile')
-  @RequirePermission('publishing.publish')
+  @RequirePermission('publishing.reconcile')
   @HttpCode(200)
   async reconcileTarget(
     @Param('workspaceId') workspaceId: string,

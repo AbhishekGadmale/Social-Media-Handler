@@ -32,6 +32,7 @@ export const PermissionMatrix: Record<string, string[]> = {
   'publishing.schedule': ['OWNER', 'MANAGER', 'EDITOR'],
   'publishing.cancel': ['OWNER', 'MANAGER', 'EDITOR'],
   'publishing.retry': ['OWNER', 'MANAGER', 'EDITOR'],
+  'publishing.reconcile': ['OWNER', 'MANAGER'],
   'audit.view': ['OWNER', 'MANAGER'],
 };
 

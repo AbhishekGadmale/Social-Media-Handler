@@ -12,6 +12,7 @@ import { PublishabilityValidator } from '../domain/PublishabilityValidator';
 import { PublishingRepository, AuditAction } from '@agency-os/database';
 import { generateId } from '@agency-os/database';
 import { PostStatus, Prisma } from '@agency-os/database';
+import { ExecutionMetadata, ExecutionPhase } from '@agency-os/shared';
 import { CreatePostDto, UpdatePostDto } from '../dto/post.dto';
 import {
   AddPublicationTargetDto,
@@ -502,7 +503,7 @@ export class PublishingApplicationService {
     },
   ) {
     const repo = this.getRepo(workspaceId);
-    const variant = (await repo.variants.findById(variantId)) as any;
+    const variant = await repo.variants.findById(variantId);
     if (!variant) throw new NotFoundException('Publication not found');
 
     if (variant.status !== PostStatus.UNKNOWN) {
@@ -524,46 +525,102 @@ export class PublishingApplicationService {
     }
 
     const now = new Date();
-    const updateData: any = {
+    const updateData: Prisma.PostPlatformVariantUpdateInput = {
       reconciledAt: now,
       reconciledBy: authorId,
       reconciliationReason: dto.reason,
+      status: dto.decision === 'CONFIRM_PUBLISHED' ? PostStatus.PUBLISHED : PostStatus.FAILED,
     };
 
-    let targetStatus: PostStatus;
+    const execMeta = variant.executionMetadata as ExecutionMetadata | null;
+    if (!execMeta || execMeta.phase !== 'AMBIGUOUS') {
+      throw new ConflictException('Reconciliation requires executionMetadata in AMBIGUOUS phase');
+    }
+
+    let nextExecMeta: ExecutionMetadata;
+    const { phase, ...rest } = execMeta;
+
     if (dto.decision === 'CONFIRM_PUBLISHED') {
-      targetStatus = PostStatus.PUBLISHED;
       updateData.publishedAt = now;
       if (dto.externalPostId) updateData.externalPostId = dto.externalPostId;
       if (dto.canonicalUrl) updateData.canonicalUrl = dto.canonicalUrl;
+
+      nextExecMeta = {
+        ...rest,
+        phase: 'COMPLETED',
+        finalRemoteId: dto.externalPostId || 'unknown_reconciled',
+      };
     } else {
-      targetStatus = PostStatus.FAILED;
+      nextExecMeta = {
+        ...rest,
+        phase: 'FAILED',
+      };
     }
 
-    const success = await repo.transitionVariantState(
-      variantId,
-      PostStatus.UNKNOWN,
-      targetStatus,
-      updateData,
-    );
+    try {
+      await this.prisma.$transaction(async (tx) => {
+        // 1. Variant CAS
+        const updated = await tx.postPlatformVariant.updateMany({
+          where: {
+            id: variantId,
+            status: PostStatus.UNKNOWN,
+          },
+          data: {
+            ...updateData,
+            executionMetadata: nextExecMeta as Prisma.InputJsonValue
+          }
+        });
 
-    if (!success) {
-      throw new ConflictException(
-        'Reconciliation failed due to concurrent modification',
-      );
+        if (updated.count === 0) {
+          throw new ConflictException('Reconciliation failed due to concurrent modification');
+        }
+
+        // 2. Publication Attempt sync
+        const attempts = await tx.publicationAttempt.findMany({
+          where: {
+            variantId,
+            status: 'FAILED',
+            failureCategory: 'UNKNOWN_RESULT'
+          }
+        });
+
+        if (attempts.length !== 1) {
+          throw new ConflictException(`Expected exactly 1 eligible publication attempt, found ${attempts.length}`);
+        }
+
+        const attempt = attempts[0];
+
+        await tx.publicationAttempt.update({
+          where: { id: attempt.id },
+          data: {
+            status: dto.decision === 'CONFIRM_PUBLISHED' ? 'SUCCESS' : 'FAILED',
+            failureCategory: dto.decision === 'CONFIRM_PUBLISHED' ? null : 'PERMANENT',
+            completedAt: now,
+          }
+        });
+
+        // 3. Audit Log
+        const { generateId } = require('@agency-os/database');
+        await tx.auditLog.create({
+          data: {
+            id: generateId(),
+            workspaceId,
+            action:
+              dto.decision === 'CONFIRM_PUBLISHED'
+                ? AuditAction.PUBLICATION_RECONCILED_PUBLISHED
+                : AuditAction.PUBLICATION_RECONCILED_FAILED,
+            metadata: { variantId, decision: dto.decision, reason: dto.reason },
+            actorId: authorId,
+            targetType: 'PUBLICATION_TARGET',
+            targetId: variantId,
+            createdAt: now,
+          }
+        });
+      });
+    } catch (err) {
+      if (err instanceof ConflictException) throw err;
+      throw new UnprocessableEntityException('Failed to execute reconciliation transaction');
     }
-
-    await this.audit.logAction({
-      workspaceId,
-      action:
-        dto.decision === 'CONFIRM_PUBLISHED'
-          ? AuditAction.PUBLICATION_RECONCILED_PUBLISHED
-          : AuditAction.PUBLICATION_RECONCILED_FAILED,
-      metadata: { variantId, decision: dto.decision, reason: dto.reason },
-      actorId: authorId,
-      targetType: 'PUBLICATION_TARGET',
-      targetId: variantId,
-    });
 
     return repo.variants.findById(variantId, {
       include: { socialAccount: true },
