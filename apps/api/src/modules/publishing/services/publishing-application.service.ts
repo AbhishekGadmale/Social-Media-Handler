@@ -507,18 +507,6 @@ export class PublishingApplicationService {
     if (!variant) throw new NotFoundException('Publication not found');
 
     if (variant.status !== PostStatus.UNKNOWN) {
-      if (
-        variant.status === PostStatus.PUBLISHED &&
-        dto.decision === 'CONFIRM_PUBLISHED'
-      ) {
-        return variant; // Idempotent
-      }
-      if (
-        variant.status === PostStatus.FAILED &&
-        dto.decision === 'CONFIRM_FAILED'
-      ) {
-        return variant; // Idempotent
-      }
       throw new ConflictException(
         `Cannot reconcile target in ${variant.status} state`,
       );
@@ -541,14 +529,17 @@ export class PublishingApplicationService {
     const { phase, ...rest } = execMeta;
 
     if (dto.decision === 'CONFIRM_PUBLISHED') {
+      if (!dto.externalPostId || dto.externalPostId.trim() === '') {
+        throw new UnprocessableEntityException('externalPostId is required for CONFIRM_PUBLISHED');
+      }
       updateData.publishedAt = now;
-      if (dto.externalPostId) updateData.externalPostId = dto.externalPostId;
+      updateData.externalPostId = dto.externalPostId;
       if (dto.canonicalUrl) updateData.canonicalUrl = dto.canonicalUrl;
 
       nextExecMeta = {
         ...rest,
         phase: 'COMPLETED',
-        finalRemoteId: dto.externalPostId || 'unknown_reconciled',
+        finalRemoteId: dto.externalPostId,
       };
     } else {
       nextExecMeta = {
@@ -627,3 +618,5 @@ export class PublishingApplicationService {
     });
   }
 }
+
+

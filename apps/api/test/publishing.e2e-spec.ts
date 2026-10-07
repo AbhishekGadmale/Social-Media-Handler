@@ -795,7 +795,7 @@ describe('Publishing API (e2e)', () => {
       expect(rolledBackVariant!.dispatchVersion).toBe(1);
     });
 
-    it('handles truly concurrent race condition test correctly (Promise.all)', async () => {
+    it('handles truly concurrent race condition test correctly (Promise.all) - opposing decisions', async () => {
       const variantId3 = generateId();
       const post3Id = generateId();
       await prisma.post.create({ data: { id: post3Id, workspaceId: ws1, authorId: testUser.id, content: 'test 3', status: PostStatus.DRAFT } });
@@ -820,7 +820,7 @@ describe('Publishing API (e2e)', () => {
         }
       });
 
-      // Fire two identical reconcile requests at the exact same time
+      // Fire two opposing reconcile requests at the exact same time
       const req1 = request(app.getHttpServer())
         .post(`/api/v1/workspaces/${ws1}/publications/${variantId3}/reconcile`)
         .set('Cookie', session1.combinedCookie)
@@ -831,32 +831,84 @@ describe('Publishing API (e2e)', () => {
         .post(`/api/v1/workspaces/${ws1}/publications/${variantId3}/reconcile`)
         .set('Cookie', session1.combinedCookie)
         .set('x-csrf-token', session1.csrfToken)
-        .send({ decision: 'CONFIRM_FAILED', reason: 'race test 2' });
+        .send({ decision: 'CONFIRM_PUBLISHED', externalPostId: 'ext-999', reason: 'race test 2' });
 
       const [res1, res2] = await Promise.all([req1, req2]);
 
-      // Exactly one should succeed (200 or 201), the other should fail with 409
-      const statuses = [res1.status, res2.status].sort();
-      expect(statuses[0]).toBe(200); // One idempotent or success? Wait, if they are exactly identical timing, one hits CAS 0 count
-      // Actually, if they are for CONFIRM_FAILED, the second one might get 200 because it's idempotent if it checks variant.status === FAILED
-      // BUT if the second read reads UNKNOWN, its updateMany CAS might fail with count 0.
-      // Wait, if CAS fails, it throws ConflictException 'Reconciliation failed due to concurrent modification'
-      // BUT if it reads it AFTER the first one commits, it sees status === FAILED, and returns 200 (idempotent)!
-      // So either 200/200 or 200/409 is acceptable for a race condition, depending on timing.
-      // Let's assert that at least one is 200.
-      expect(statuses).toContain(200);
+      // The loser MUST always return 409. The winner MUST return 200.
+      const statuses = [res1.status, res2.status].sort((a, b) => a - b);
+      expect(statuses[0]).toBe(200);
+      expect(statuses[1]).toBe(409);
 
       // Verify final state is correct exactly once
       const finalVariant = await prisma.postPlatformVariant.findUnique({ where: { id: variantId3 } });
-      expect(finalVariant!.status).toBe('FAILED');
+      expect(['FAILED', 'PUBLISHED']).toContain(finalVariant!.status);
 
       const attempts = await prisma.publicationAttempt.findMany({ where: { variantId: variantId3 } });
       expect(attempts.length).toBe(1);
-      expect(attempts[0].status).toBe('FAILED');
-      expect(attempts[0].failureCategory).toBe('PERMANENT');
+      expect(['FAILED', 'SUCCESS']).toContain(attempts[0].status);
 
       const audits = await prisma.auditLog.findMany({ where: { targetId: variantId3 } });
       expect(audits.length).toBe(1); // Only 1 audit log should have been created!
     });
+
+    it('handles truly concurrent race condition test correctly (Promise.all) - same decision', async () => {
+      const variantId4 = generateId();
+      const post4Id = generateId();
+      await prisma.post.create({ data: { id: post4Id, workspaceId: ws1, authorId: testUser.id, content: 'test 4', status: PostStatus.DRAFT } });
+      await prisma.postPlatformVariant.create({
+        data: {
+          id: variantId4,
+          postId: post4Id,
+          socialAccountId: account1,
+          workspaceId: ws1,
+          status: 'UNKNOWN',
+          executionMetadata: { phase: 'AMBIGUOUS', operationId: 'op-123' },
+          dispatchVersion: 1
+        }
+      });
+      await prisma.publicationAttempt.create({
+        data: {
+          id: generateId(),
+          variantId: variantId4,
+          attemptNumber: 1,
+          status: 'FAILED',
+          failureCategory: 'UNKNOWN_RESULT',
+        }
+      });
+
+      // Fire two identical reconcile requests at the exact same time
+      const req1 = request(app.getHttpServer())
+        .post(`/api/v1/workspaces/${ws1}/publications/${variantId4}/reconcile`)
+        .set('Cookie', session1.combinedCookie)
+        .set('x-csrf-token', session1.csrfToken)
+        .send({ decision: 'CONFIRM_FAILED', reason: 'race test 1' });
+
+      const req2 = request(app.getHttpServer())
+        .post(`/api/v1/workspaces/${ws1}/publications/${variantId4}/reconcile`)
+        .set('Cookie', session1.combinedCookie)
+        .set('x-csrf-token', session1.csrfToken)
+        .send({ decision: 'CONFIRM_FAILED', reason: 'race test 2' });
+
+      const [res1, res2] = await Promise.all([req1, req2]);
+
+      // The loser MUST always return 409. The winner MUST return 200.
+      const statuses = [res1.status, res2.status].sort((a, b) => a - b);
+      expect(statuses[0]).toBe(200);
+      expect(statuses[1]).toBe(409);
+
+      // Verify final state is correct exactly once
+      const finalVariant = await prisma.postPlatformVariant.findUnique({ where: { id: variantId4 } });
+      expect(finalVariant!.status).toBe('FAILED');
+
+      const attempts = await prisma.publicationAttempt.findMany({ where: { variantId: variantId4 } });
+      expect(attempts.length).toBe(1);
+      expect(attempts[0].status).toBe('FAILED');
+      expect(attempts[0].failureCategory).toBe('PERMANENT');
+
+      const audits = await prisma.auditLog.findMany({ where: { targetId: variantId4 } });
+      expect(audits.length).toBe(1); // Only 1 audit log should have been created!
+    });
   });
 });
+
