@@ -5,6 +5,8 @@ import {
   ConflictException,
   UnprocessableEntityException,
   ForbiddenException,
+  HttpException,
+  InternalServerErrorException,
 } from '@nestjs/common';
 import { PrismaClient } from '@agency-os/database';
 import { AuditService } from '../../core/audit.service';
@@ -609,8 +611,9 @@ export class PublishingApplicationService {
         });
       });
     } catch (err) {
-      if (err instanceof ConflictException) throw err;
-      throw new UnprocessableEntityException('Failed to execute reconciliation transaction');
+      if (err instanceof HttpException) throw err;
+      if (err?.code === 'P2002' || err?.code === 'P2034') throw new ConflictException('Concurrent transaction conflict');
+      throw new InternalServerErrorException('Failed to execute reconciliation transaction');
     }
 
     return repo.variants.findById(variantId, {
@@ -618,5 +621,6 @@ export class PublishingApplicationService {
     });
   }
 }
+
 
 

@@ -731,7 +731,7 @@ describe('Publishing API (e2e)', () => {
         .send({ decision: 'CONFIRM_PUBLISHED', reason: 'SIMULATE_AUDITLOG_FAILURE', externalPostId: 'ext-999' });
 
       // The simulated error is caught by our AllExceptionsFilter or bubbling up as 500
-      expect(resolveRes.status).toBe(422);
+      expect(resolveRes.status).toBe(500);
 
       spy.mockRestore();
 
@@ -911,4 +911,5 @@ describe('Publishing API (e2e)', () => {
     });
   });
 });
+
 
