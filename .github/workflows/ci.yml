@@ -155,6 +155,7 @@ jobs:
       - name: Smoke test Compose stack
         env:
           DATABASE_URL: postgresql://postgres:password@postgres:5432/agency_os?schema=public
+          TEST_DATABASE_URL: postgresql://postgresql:passord@localhost:5432/agency_os_test?schema=public
           REDIS_URL: redis://redis:6379
           JWT_SECRET: super-secret-test-jwt-key
           COOKIE_SECRET: super-secret-test-cookie-key
