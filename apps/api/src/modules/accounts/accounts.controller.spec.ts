@@ -12,11 +12,19 @@ import { AuditService } from '../core/audit.service';
 describe('AccountsController', () => {
   let controller: AccountsController;
   let queueMock: any;
+  let accountsServiceMock: any;
 
   beforeEach(async () => {
     queueMock = {
       add: vi.fn().mockResolvedValue({ id: 'job-123' }),
     } as any;
+
+    accountsServiceMock = {
+      listWorkspaceAccounts: vi.fn(),
+      getWorkspaceAccount: vi
+        .fn()
+        .mockResolvedValue({ id: 'acc-1', workspaceId: 'ws-1' }),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       controllers: [AccountsController],
@@ -27,7 +35,7 @@ describe('AccountsController', () => {
         },
         {
           provide: AccountsService,
-          useValue: { listWorkspaceAccounts: vi.fn() },
+          useValue: accountsServiceMock,
         },
         {
           provide: AuditService,
@@ -46,11 +54,16 @@ describe('AccountsController', () => {
     controller = module.get<AccountsController>(AccountsController);
   });
 
-  it('Manual trigger endpoint enqueues correctly and returns a jobId', async () => {
+  it('Manual trigger endpoint enqueues correctly and returns a jobId when account belongs to workspace', async () => {
     const res = await controller.triggerSync('ws-1', 'acc-1', {
       id: 'req-1',
       user: { id: 'u-1' },
     } as any);
+
+    expect(accountsServiceMock.getWorkspaceAccount).toHaveBeenCalledWith(
+      'ws-1',
+      'acc-1',
+    );
     expect(queueMock.add).toHaveBeenCalledWith(
       'sync-account',
       {
@@ -60,5 +73,25 @@ describe('AccountsController', () => {
       expect.any(Object),
     );
     expect(res).toEqual({ queued: true, jobId: 'job-123' });
+  });
+
+  it('Manual trigger endpoint rejects and does NOT enqueue job when account does not belong to workspace', async () => {
+    const { NotFoundException } = await import('@nestjs/common');
+    accountsServiceMock.getWorkspaceAccount.mockRejectedValueOnce(
+      new NotFoundException('Account not found in workspace'),
+    );
+
+    await expect(
+      controller.triggerSync('ws-1', 'acc-foreign', {
+        id: 'req-2',
+        user: { id: 'u-1' },
+      } as any),
+    ).rejects.toThrow('Account not found in workspace');
+
+    expect(accountsServiceMock.getWorkspaceAccount).toHaveBeenCalledWith(
+      'ws-1',
+      'acc-foreign',
+    );
+    expect(queueMock.add).not.toHaveBeenCalled();
   });
 });

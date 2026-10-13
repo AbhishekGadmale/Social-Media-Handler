@@ -255,4 +255,59 @@ describe('SyncProcessor', () => {
     expect(syncRun!.status).toBe(SyncRunStatus.FAILED);
     expect((syncRun!.counts as any).reason).toBe('unauthorized_401');
   });
+
+  it('Worker rejects job when socialAccountId belongs to a different workspaceId', async () => {
+    const { workspace: workspaceA, account: accountA } =
+      await createMockData('YOUTUBE');
+    const { workspace: workspaceB } = await createMockData('YOUTUBE');
+
+    // Job with accountA belonging to workspaceA, but job specifies workspaceB
+    const job = {
+      id: 'job-mismatch',
+      data: { socialAccountId: accountA.id, workspaceId: workspaceB.id },
+    } as unknown as Job<any>;
+
+    (invokeMod.invokeCapability as jest.Mock).mockClear();
+
+    await expect(processor.process(job)).rejects.toThrow(
+      `Account or connection not found for id: ${accountA.id} in workspace: ${workspaceB.id}`,
+    );
+
+    // Verify provider API was NEVER called
+    expect(invokeMod.invokeCapability).not.toHaveBeenCalled();
+
+    // Verify metrics were NOT written
+    const metrics = await prisma.accountMetricDaily.findFirst({
+      where: { socialAccountId: accountA.id },
+    });
+    expect(metrics).toBeNull();
+
+    // Verify SocialAccount status was NOT modified
+    const accountCheck = await prisma.socialAccount.findUnique({
+      where: { id: accountA.id },
+    });
+    expect(accountCheck!.status).toBe(SocialAccountStatus.ACTIVE);
+
+    // Verify syncRun is marked FAILED
+    const syncRun = await prisma.syncRun.findFirst({
+      orderBy: { startedAt: 'desc' },
+    });
+    expect(syncRun!.status).toBe(SyncRunStatus.FAILED);
+  });
+
+  it('Worker rejects job with missing workspaceId in job data', async () => {
+    const { account } = await createMockData('YOUTUBE');
+
+    const job = {
+      id: 'job-no-ws',
+      data: { socialAccountId: account.id },
+    } as unknown as Job<any>;
+
+    (invokeMod.invokeCapability as jest.Mock).mockClear();
+
+    await expect(processor.process(job)).rejects.toThrow(
+      'Missing required socialAccountId or workspaceId in job data',
+    );
+    expect(invokeMod.invokeCapability).not.toHaveBeenCalled();
+  });
 });

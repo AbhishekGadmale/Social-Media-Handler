@@ -44,7 +44,12 @@ export class SyncProcessor extends WorkerHost implements OnModuleInit {
     const { socialAccountId, workspaceId } = job.data;
 
     this.logger.log(
-      { jobId: job.id, socialAccountId, action: 'sync_job_started' },
+      {
+        jobId: job.id,
+        socialAccountId,
+        workspaceId,
+        action: 'sync_job_started',
+      },
       'Processing sync job',
     );
 
@@ -56,14 +61,23 @@ export class SyncProcessor extends WorkerHost implements OnModuleInit {
     });
 
     try {
-      const account = await this.prisma.socialAccount.findUnique({
-        where: { id: socialAccountId },
+      if (!socialAccountId || !workspaceId) {
+        throw new Error(
+          `Missing required socialAccountId or workspaceId in job data (received socialAccountId: ${socialAccountId}, workspaceId: ${workspaceId})`,
+        );
+      }
+
+      const account = await this.prisma.socialAccount.findFirst({
+        where: {
+          id: socialAccountId,
+          workspaceId,
+        },
         include: { connection: true },
       });
 
       if (!account || !account.connection) {
         throw new Error(
-          `Account or connection not found for id: ${socialAccountId}`,
+          `Account or connection not found for id: ${socialAccountId} in workspace: ${workspaceId}`,
         );
       }
 

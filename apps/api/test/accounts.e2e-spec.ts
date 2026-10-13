@@ -13,6 +13,8 @@ import { AllExceptionsFilter } from '../src/filters/all-exceptions.filter';
 import * as argon2 from '@node-rs/argon2';
 import Redis from 'ioredis';
 import { encrypt } from '@agency-os/database/src/crypto/encryption';
+import { getQueueToken } from '@nestjs/bullmq';
+import { Queue } from 'bullmq';
 
 describe('AccountsController (e2e)', () => {
   let app: INestApplication;
@@ -242,5 +244,70 @@ describe('AccountsController (e2e)', () => {
     expect(account.accessTokenIv).toBeUndefined();
     expect(account.accessTokenAuthTag).toBeUndefined();
     expect(account.connection).toBeUndefined();
+  });
+
+  it('POST /api/v1/workspaces/:workspaceId/accounts/:accountId/sync - fails with 404 and does NOT queue job for cross-workspace account', async () => {
+    const syncQueue = app.get<Queue>(getQueueToken('sync'));
+    const addSpy = jest.spyOn(syncQueue, 'add');
+
+    const res = await request(app.getHttpServer())
+      .post(
+        `/api/v1/workspaces/${testWorkspaceEditor}/accounts/${accountWorkspaceOther}/sync`,
+      )
+      .set('Cookie', sessionData.combinedCookie)
+      .set('x-csrf-token', sessionData.csrfToken);
+
+    expect(res.status).toBe(404);
+    expect(res.body.error.message).toContain('Account not found in workspace');
+    expect(addSpy).not.toHaveBeenCalled();
+
+    addSpy.mockRestore();
+  });
+
+  it('POST /api/v1/workspaces/:workspaceId/accounts/:accountId/sync - fails with 404 and does NOT queue job for non-existent account', async () => {
+    const syncQueue = app.get<Queue>(getQueueToken('sync'));
+    const addSpy = jest.spyOn(syncQueue, 'add');
+    const nonExistentAccountId = generateId();
+
+    const res = await request(app.getHttpServer())
+      .post(
+        `/api/v1/workspaces/${testWorkspaceEditor}/accounts/${nonExistentAccountId}/sync`,
+      )
+      .set('Cookie', sessionData.combinedCookie)
+      .set('x-csrf-token', sessionData.csrfToken);
+
+    expect(res.status).toBe(404);
+    expect(res.body.error.message).toContain('Account not found in workspace');
+    expect(addSpy).not.toHaveBeenCalled();
+
+    addSpy.mockRestore();
+  });
+
+  it('POST /api/v1/workspaces/:workspaceId/accounts/:accountId/sync - succeeds for valid same-workspace account and queues job', async () => {
+    const syncQueue = app.get<Queue>(getQueueToken('sync'));
+    const addSpy = jest.spyOn(syncQueue, 'add');
+
+    const res = await request(app.getHttpServer())
+      .post(
+        `/api/v1/workspaces/${testWorkspaceEditor}/accounts/${accountWorkspaceEditor}/sync`,
+      )
+      .set('Cookie', sessionData.combinedCookie)
+      .set('x-csrf-token', sessionData.csrfToken);
+
+    expect(res.status).toBe(201);
+    expect(res.body).toEqual({
+      queued: true,
+      jobId: expect.any(String),
+    });
+    expect(addSpy).toHaveBeenCalledWith(
+      'sync-account',
+      {
+        socialAccountId: accountWorkspaceEditor,
+        workspaceId: testWorkspaceEditor,
+      },
+      expect.any(Object),
+    );
+
+    addSpy.mockRestore();
   });
 });
