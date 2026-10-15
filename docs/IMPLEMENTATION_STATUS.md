@@ -79,3 +79,36 @@ TOKEN_ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789
 - **Local Verification**: 5/5 monorepo packages passed (`@agency-os/database`, `@agency-os/providers`, `@agency-os/api`, `@agency-os/web`, `@agency-os/worker`), 82/82 worker tests passed, 73/73 database tests passed, 225/225 provider tests passed, 54/54 web tests passed.
 - **GitHub PR Tests Check**: Verified green via GitHub Actions check-runs API.
 
+---
+
+## Web Build Failures & Vitest Jest-DOM Fix on Branch `fix/sync-idor`
+
+### 1. Root Cause of Build Failures
+- **Root Cause**: Next.js executes TypeScript compilation (`tsc --noEmit`) across all files matched by `apps/web/tsconfig.json` during `next build`. Because `apps/web/test-setup.ts` imported `@testing-library/jest-dom` instead of `@testing-library/jest-dom/vitest`, Vitest's `Assertion` interface was not augmented with Testing Library DOM matchers (e.g., `toBeInTheDocument`, `toBeDisabled`, `toBeChecked`, `toHaveTextContent`, `toHaveAccessibleName`, `toHaveClass`).
+- **Blast Radius**: This caused over 50 TypeScript compilation errors TS2339 in web spec files during `next build`, failing both `CI / Application Builds` (`pnpm turbo run build`) and `CI / Docker Build & Smoke Test` (`docker compose build web`).
+- **Pre-existing Issue**: This was an existing CI/build issue present on `main` and across all historical runs, completely independent from and not introduced by the Sync IDOR fix.
+
+### 2. Applied Fix
+In `apps/web/test-setup.ts`, changed line 1 from:
+```typescript
+import '@testing-library/jest-dom';
+```
+to:
+```typescript
+import '@testing-library/jest-dom/vitest';
+```
+Additionally deleted unneeded scratch files (`last_user_prompt.txt`, `prompt.txt`, `patch.py`, `patch_tests.py`, `patch_status.js`, `patch_tests.js`).
+
+### 3. Verification & CI Status
+- **Jest-DOM Matcher Resolution**: Verified that 100% of the `toBeInTheDocument`, `toBeDisabled`, `toBeChecked`, `toHaveTextContent`, and related matcher type errors were eliminated.
+- **Web Tests**: `pnpm --filter @agency-os/web test` passed completely (4/4 test files, 54/54 tests passing).
+- **GitHub PR Checks (Commit b2bc2c8 / Run 38736592843)**:
+  - `CI / Tests`: **SUCCESS** (Green)
+  - `CI / Code Quality (Lint & Typecheck)`: **SUCCESS** (Green)
+  - `CI / Application Builds`: **FAILED** (Blocked by separate pre-existing type errors in `page.spec.tsx`, `page.tsx`, and `media-uploader.spec.tsx`)
+  - `CI / Docker Build & Smoke Test`: **FAILED** (Blocked by the same pre-existing type errors in web)
+- **Pre-existing Web Typecheck Blockers**:
+  1. `apps/web/src/app/[workspaceId]/publishing/[postId]/page.spec.tsx(14,17)`: Parameters `status`, `data`, `message` in `MockApiError` constructor implicitly have `any` type (`TS7006`), and properties `status` and `data` do not exist on `MockApiError` (`TS2339`).
+  2. `apps/web/src/app/[workspaceId]/publishing/[postId]/page.tsx(391,15)`: `onBlur={handleUpdate}` is incompatible with `FocusEventHandler<HTMLInputElement>` (`TS2322`) because `handleUpdate` expects `overrides?: Record<string, unknown>`.
+  3. `apps/web/src/components/media-uploader.spec.tsx(123,12)`: Cannot assign to read-only property `status` on `XMLHttpRequest` (`TS2540`), and `this.onload()` called without required argument (`TS2554`).
+
