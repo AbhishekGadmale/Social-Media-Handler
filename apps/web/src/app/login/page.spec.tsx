@@ -128,6 +128,7 @@ describe('LoginPage post-login redirects', () => {
       ['http://evil.example.com', 'absolute http URL'],
       ['//evil.example.com', 'protocol-relative URL'],
       ['/\\evil.example.com', 'slash-backslash bypass'],
+      ['/%2f%2fevil.com', 'encoded protocol-relative URL'],
       ['javascript:alert(1)', 'javascript scheme'],
       ['data:text/html,test', 'data scheme'],
       ['evil.example.com', 'domain without leading slash'],

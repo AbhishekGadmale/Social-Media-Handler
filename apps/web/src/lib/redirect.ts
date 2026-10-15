@@ -29,6 +29,26 @@ export function getValidRedirect(redirect: string | null | undefined): string | 
     return null;
   }
 
+  // Extract ONLY the path portion (substring before first '?' or '#')
+  const pathPortion = redirect.split(/[?#]/)[0];
+
+  // Decode path portion once, failing closed on invalid percent-encoding
+  let decodedPath: string;
+  try {
+    decodedPath = decodeURIComponent(pathPortion);
+  } catch {
+    return null;
+  }
+
+  // Reject encoded protocol-relative or backslash bypasses in the decoded path
+  if (
+    decodedPath.startsWith('//') ||
+    decodedPath.startsWith('/\\') ||
+    decodedPath.includes('\\')
+  ) {
+    return null;
+  }
+
   // Validate using the WHATWG URL parser against a dummy local base
   try {
     const parsed = new URL(redirect, 'http://localhost');

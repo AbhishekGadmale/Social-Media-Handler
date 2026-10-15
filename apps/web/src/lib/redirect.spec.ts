@@ -35,6 +35,11 @@ describe('getValidRedirect & isValidRedirect', () => {
       expect(getValidRedirect('/dashboard')).toBe('/dashboard');
       expect(isValidRedirect('/dashboard')).toBe(true);
     });
+
+    it('accepts internal paths with encoded characters in query string', () => {
+      expect(getValidRedirect('/search?q=a%2fb')).toBe('/search?q=a%2fb');
+      expect(isValidRedirect('/search?q=a%2fb')).toBe(true);
+    });
   });
 
   describe('Invalid external and malformed redirects', () => {
@@ -97,6 +102,38 @@ describe('getValidRedirect & isValidRedirect', () => {
       expect(isValidRedirect('/test\r\nevil.com')).toBe(false);
       expect(getValidRedirect('/test\tevil.com')).toBeNull();
       expect(isValidRedirect('/test\tevil.com')).toBe(false);
+    });
+
+    it('rejects encoded protocol-relative URLs and slashes', () => {
+      expect(getValidRedirect('/%2f%2fevil.com')).toBeNull();
+      expect(isValidRedirect('/%2f%2fevil.com')).toBe(false);
+
+      expect(getValidRedirect('/%2F%2FEvil.com')).toBeNull();
+      expect(isValidRedirect('/%2F%2FEvil.com')).toBe(false);
+
+      expect(getValidRedirect('/%2f/evil.com')).toBeNull();
+      expect(isValidRedirect('/%2f/evil.com')).toBe(false);
+    });
+
+    it('rejects encoded backslashes', () => {
+      expect(getValidRedirect('/%5cevil.com')).toBeNull();
+      expect(isValidRedirect('/%5cevil.com')).toBe(false);
+
+      expect(getValidRedirect('/%5Cevil.com')).toBeNull();
+      expect(isValidRedirect('/%5Cevil.com')).toBe(false);
+    });
+
+    it('rejects malformed percent-encoded sequences in path', () => {
+      expect(getValidRedirect('/%zz')).toBeNull();
+      expect(isValidRedirect('/%zz')).toBe(false);
+
+      expect(getValidRedirect('/%2')).toBeNull();
+      expect(isValidRedirect('/%2')).toBe(false);
+    });
+
+    it('rejects non-http/https URL schemes like file://', () => {
+      expect(getValidRedirect('file:///etc/passwd')).toBeNull();
+      expect(isValidRedirect('file:///etc/passwd')).toBe(false);
     });
   });
 });
