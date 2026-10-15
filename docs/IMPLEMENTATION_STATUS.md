@@ -52,3 +52,30 @@
 5. **Exact Phase 6 items not started**: Audit logging, Observability (Pino), Staging/deployment hardening.
 6. **Most likely last task Claude Code was working on**: Implementing the background analytics synchronization worker (`apps/worker/src/sync/sync.processor.ts`) and writing its tests, while concurrently adding initial Phase 6 queue reliability and token encryption logic necessary for the worker to function securely.
 7. **Exact next task that should be continued**: Build the Next.js frontend dashboard (`apps/web`) to complete Phase 5, followed by finishing the remaining Phase 6 backend hardening (Audit logs, Pino observability, Global rate limiting).
+
+---
+
+## CI Tests Fix on Branch `fix/sync-idor`
+
+### 1. CI Tests Failure Cause
+- **Missing / Misconfigured `TEST_DATABASE_URL`**: `TEST_DATABASE_URL` was originally missing from the `Run Tests` step's environment in `.github/workflows/ci.yml` (and had been mistakenly placed into the `Smoke test Compose stack` step with typos: username `postgresql` instead of `postgres` and password `passord` instead of `password`). In CI, where no root `.env` exists on the runner, `test-setup.ts` failed fast with `Error: TEST_DATABASE_URL is not set in root .env. Loaded from: null`.
+- **Missing `TOKEN_ENCRYPTION_KEY`**: The API and worker tests (specifically `sync.processor.spec.ts`) invoke `encrypt()` from `@agency-os/database/src/crypto/encryption.ts`. When `TOKEN_ENCRYPTION_KEY` was absent in the CI test step, `getEncryptionKey()` threw `TOKEN_ENCRYPTION_KEY environment variable is missing`.
+- **Turborepo Strict Env Filtering**: Turborepo v2 executes tasks in `strict` environment mode by default, stripping undeclared environment variables from child subprocesses (`pnpm run test`). Setting `TURBO_ENV_MODE: loose` / `--env-mode=loose` ensures all required test environment variables are properly passed down to Vitest and Jest.
+
+### 2. Corrected `TEST_DATABASE_URL`
+```yaml
+TEST_DATABASE_URL: postgresql://postgres:password@localhost:5432/agency_os_test?schema=public
+```
+(Matches PostgreSQL CI service container credentials: user `postgres`, password `password`, database `agency_os_test`).
+
+### 3. Added Test-Only `TOKEN_ENCRYPTION_KEY`
+```yaml
+TOKEN_ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+```
+(32-byte hexadecimal key for CI test runs).
+
+### 4. Final CI Result
+- **Status**: PASSED (Green)
+- **Local Verification**: 5/5 monorepo packages passed (`@agency-os/database`, `@agency-os/providers`, `@agency-os/api`, `@agency-os/web`, `@agency-os/worker`), 82/82 worker tests passed, 73/73 database tests passed, 225/225 provider tests passed, 54/54 web tests passed.
+- **GitHub PR Tests Check**: Verified green via GitHub Actions check-runs API.
+
