@@ -148,3 +148,35 @@ Additionally deleted unneeded scratch files (`last_user_prompt.txt`, `prompt.txt
 
 **PR Status**: All CI checks are green. The branch is now fully verified and merge-ready.
 
+---
+
+## Login Redirect Validation Hardening on Branch `fix/login-open-redirect` (Commit 6c8ad6b)
+
+### 1. Root Cause of Encoded-Separator Bypass
+- **Vulnerability**: Post-login redirection in `apps/web/src/app/login/page.tsx` was vulnerable to open redirection if an attacker supplied URL-encoded path separators (e.g. `/%2f%2fevil.com`, `/%2F%2FEvil.com`, `/%5cevil.com`, `/%5Cevil.com`, `/%2f/evil.com`).
+- **Bypass Mechanism**: When decoded by downstream browser navigation or URL resolvers, `/%2f%2fevil.com` becomes `//evil.com` (a protocol-relative redirect), and `/%5cevil.com` becomes `/\evil.com` (which certain browsers resolve to `//evil.com`). Literal string checks matching only raw characters (`//` and `/\`) failed to intercept these percent-encoded sequences.
+- **Fail-Closed on Malformed Encodings**: Sequences like `/%zz` or truncated sequences like `/%2` trigger `URIError` during percent-decoding and must fail closed (return `null`).
+- **Query Parameter Preservation**: Legitimate URLs may contain encoded slashes within the query string (e.g. `/search?q=a%2fb`). Decoding the entire redirect string would corrupt query parameters or trigger false-positive rejections. Therefore, only the path portion (substring before the first `?` or `#`) must be decoded and inspected.
+
+### 2. Exact Validation Logic Added
+In `apps/web/src/lib/redirect.ts`:
+1. **Path-only extraction**: Extracted the path portion prior to any query string (`?`) or hash fragment (`#`) using `redirect.split(/[?#]/)[0]`.
+2. **Safe Decoding with Fail-Closed Error Handling**: Attempted `decodeURIComponent(pathPortion)`. If a `URIError` is thrown (e.g. malformed percent sequence), immediately return `null`.
+3. **Decoded Separator Rejection**: Rejected the redirect if `decodedPath` starts with `//`, starts with `/\`, or contains any backslash `\`.
+4. **Preserve Valid Routing & WHATWG Parsing**: Retained the existing WHATWG `URL` parse check with a local dummy base (`http://localhost`) to ensure origin and protocol remain local while preserving valid query strings and fragments.
+
+### 3. Local Verification Results
+- `pnpm --filter @agency-os/web test`: **PASS** (6/6 test files, 91/91 tests passed, including 21 redirect unit tests and 16 login page tests).
+- `pnpm --filter @agency-os/web build`: **PASS** (Exit code 0, TypeScript compiled in 3.5s, all static and dynamic pages generated).
+- `pnpm turbo run typecheck`: **PASS** (Exit code 0, 5/5 packages successful).
+- `pnpm turbo run lint`: **PASS** (Exit code 0, 0 errors across all packages).
+
+### 4. Final GitHub CI Status (Commit 6c8ad6b / Run 38746197037)
+- `GitGuardian Security Checks`: **SUCCESS** (Green)
+- `CI / Application Builds`: **SUCCESS** (Green)
+- `CI / Docker Build & Smoke Test`: **SUCCESS** (Green)
+- `CI / Tests`: **SUCCESS** (Green)
+- `CI / Code Quality (Lint & Typecheck)`: **SUCCESS** (Green)
+
+**PR Status**: PR #2 is fully hardened, verified, all CI checks are green, and it is ready for Muse re-review.
+
