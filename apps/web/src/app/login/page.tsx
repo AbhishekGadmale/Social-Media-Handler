@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { useQueryClient } from '@tanstack/react-query';
 import { api, ApiError } from '../../lib/api/client';
 import { authQueries } from '../../lib/query/auth';
+import { getValidRedirect } from '../../lib/redirect';
 
 export default function LoginPage() {
   const router = useRouter();
@@ -32,8 +33,9 @@ export default function LoginPage() {
       
       // Redirect logic
       const redirectTo = searchParams.get('redirect');
-      if (redirectTo) {
-        router.push(redirectTo);
+      const validRedirect = getValidRedirect(redirectTo);
+      if (validRedirect) {
+        router.push(validRedirect);
       } else if (authData.memberships.length > 0) {
         router.push(`/${authData.memberships[0].workspaceId}/analytics`);
       } else {
