@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import express, { Request, Response } from 'express';
+import { ExpressAdapter } from '@nestjs/platform-express';
+import type { Express, Request, Response } from 'express';
 import request from 'supertest';
 import { parseTrustProxy, configureTrustProxy } from './trust-proxy';
 
@@ -50,7 +51,8 @@ describe('Trust Proxy Configuration', () => {
 
   describe('Express integration tests with real requests', () => {
     const createTestApp = (trustProxyEnv?: string, isProduction = false) => {
-      const app = express();
+      const adapter = new ExpressAdapter();
+      const app: Express = adapter.getInstance<Express>();
       configureTrustProxy(app, trustProxyEnv, isProduction);
       app.get('/test-proxy', (req: Request, res: Response) => {
         res.json({
