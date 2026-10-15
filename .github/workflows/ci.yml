@@ -103,12 +103,15 @@ jobs:
         env:
           NODE_ENV: test
           DATABASE_URL: postgresql://postgres:password@localhost:5432/agency_os_test?schema=public
+          TEST_DATABASE_URL: postgresql://postgres:password@localhost:5432/agency_os_test?schema=public
+          TOKEN_ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
           REDIS_URL: redis://localhost:6379
           JWT_SECRET: super-secret-test-jwt-key
           COOKIE_SECRET: super-secret-test-cookie-key
           YOUTUBE_CLIENT_ID: dummy-client-id
           YOUTUBE_CLIENT_SECRET: dummy-client-secret
-        run: pnpm turbo run test
+          TURBO_ENV_MODE: loose
+        run: pnpm turbo run test --env-mode=loose
 
   build:
     name: Application Builds
@@ -155,6 +158,7 @@ jobs:
       - name: Smoke test Compose stack
         env:
           DATABASE_URL: postgresql://postgres:password@postgres:5432/agency_os?schema=public
+          TEST_DATABASE_URL: postgresql://postgres:password@localhost:5432/agency_os_test?schema=public
           REDIS_URL: redis://redis:6379
           JWT_SECRET: super-secret-test-jwt-key
           COOKIE_SECRET: super-secret-test-cookie-key

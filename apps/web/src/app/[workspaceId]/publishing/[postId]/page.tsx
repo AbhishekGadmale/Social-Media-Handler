@@ -7,7 +7,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { publishingQueries, PostPlatformVariant, Post } from '../../../../lib/query/publishing';
 import { getTargetMediaValidationError } from '../../../../lib/publishing/validation';
 import { accountQueries } from '../../../../lib/query/accounts';
-import { api } from '../../../../lib/api/client';
+import { api, ApiError } from '../../../../lib/api/client';
 import { Button } from '../../../../components/ui/button';
 import {
   ArrowLeft, Loader2, Save, Play, X, AlertCircle, Calendar
@@ -256,17 +256,32 @@ function TargetCard({ variant, workspaceId, post }: { variant: PostPlatformVaria
   const [reconcileExternalId, setReconcileExternalId] = useState('');
   const [reconcileUrl, setReconcileUrl] = useState('');
   const [reconcileOutcome, setReconcileOutcome] = useState<'CONFIRM_PUBLISHED' | 'CONFIRM_FAILED' | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const handleAction = async (action: 'publish' | 'schedule' | 'cancel' | 'retry' | 'unschedule' | 'reschedule' | 'reconcile' | 'remote', payload?: unknown, method: 'POST' | 'DELETE' = 'POST') => {
     try {
       setIsActioning(true);
+      setActionError(null);
       if (method === 'DELETE') { await api.delete(`workspaces/${workspaceId}/publications/${variant.id}/${action}`); } else { await api.post(`workspaces/${workspaceId}/publications/${variant.id}/${action}`, payload); }
       queryClient.invalidateQueries({ queryKey: ['workspaces', workspaceId, 'posts', variant.postId] });
       setIsPublishing(false);
       setIsReconciling(false);
     } catch (err: unknown) {
-      const errorObj = err instanceof Error ? err : new Error('Unknown error');
-      alert(errorObj.message);
+      let msg = 'An unknown error occurred.';
+      if (err instanceof ApiError) {
+        if (action === 'reconcile') {
+          if (err.status === 403) msg = 'You do not have permission to reconcile publications.';
+          else if (err.status === 409) { msg = 'Publication state has changed. Please refresh the page.'; queryClient.invalidateQueries({ queryKey: ['workspaces', workspaceId, 'posts', variant.postId] }); }
+          else if (err.status === 422) msg = 'Invalid data provided. Please check the fields and try again.';
+          else if (err.status === 500) msg = 'An internal system error occurred. Please try again later.';
+          else msg = err.message || 'Reconciliation failed.';
+        } else {
+          msg = err.message || 'Action failed.';
+        }
+      } else if (err instanceof Error) {
+        msg = err.message;
+      }
+      setActionError(msg);
     } finally {
       setIsActioning(false);
     }
@@ -323,12 +338,18 @@ function TargetCard({ variant, workspaceId, post }: { variant: PostPlatformVaria
           variant.status === 'QUEUED' || variant.status === 'PUBLISHING' ? 'bg-blue-200 text-blue-800 animate-pulse' :
           variant.status === 'DELETING' ? 'bg-orange-200 text-orange-800 animate-pulse' :
           variant.status === 'DELETED' ? 'bg-gray-100 text-gray-500 line-through' :
-          variant.status === 'UNKNOWN' ? 'bg-gray-300 text-gray-800' :
+          variant.status === 'UNKNOWN' ? 'bg-yellow-200 text-yellow-800' :
           'bg-gray-200 text-gray-700'
         }`}>
-          {variant.status}
+          {variant.status === 'UNKNOWN' ? 'Needs review (UNKNOWN)' : variant.status}
         </span>
       </div>
+
+      {actionError && (
+        <div className="mb-3 p-2 bg-red-50 text-red-700 text-xs rounded border border-red-200">
+          {actionError}
+        </div>
+      )}
 
       {variant.status === 'UNKNOWN' && (
         <div className="mb-3 p-2 bg-gray-100 text-gray-700 text-xs rounded flex flex-col items-start gap-2">
@@ -337,7 +358,7 @@ function TargetCard({ variant, workspaceId, post }: { variant: PostPlatformVaria
             <span>Publishing result could not be confirmed. Check the destination platform before taking further action.</span>
           </div>
           <Button size="sm" variant="outline" onClick={() => setIsReconciling(true)}>
-            Resolve status
+            Resolve publication
           </Button>
         </div>
       )}
@@ -367,7 +388,7 @@ function TargetCard({ variant, workspaceId, post }: { variant: PostPlatformVaria
               className="mt-1 block w-full border-gray-300 rounded-md shadow-sm sm:text-sm border p-1"
               value={title as string}
               onChange={e => setTitle(e.target.value)}
-              onBlur={handleUpdate}
+              onBlur={() => handleUpdate()}
             />
           </div>
           <div>
@@ -395,7 +416,7 @@ function TargetCard({ variant, workspaceId, post }: { variant: PostPlatformVaria
                   className="mt-1 block w-full border-gray-300 rounded-md shadow-sm sm:text-sm border p-1"
                   value={categoryId}
                   onChange={e => setCategoryId(e.target.value)}
-                  onBlur={handleUpdate}
+                  onBlur={() => handleUpdate()}
                   placeholder="e.g. 22"
                 />
               </div>
@@ -406,7 +427,7 @@ function TargetCard({ variant, workspaceId, post }: { variant: PostPlatformVaria
                   className="mt-1 block w-full border-gray-300 rounded-md shadow-sm sm:text-sm border p-1"
                   value={tags}
                   onChange={e => setTags(e.target.value)}
-                  onBlur={handleUpdate}
+                  onBlur={() => handleUpdate()}
                   placeholder="e.g. tag1, tag2, tag3"
                 />
                 <p className="text-[10px] text-gray-500 mt-1">Separate multiple tags with commas.</p>
@@ -526,7 +547,7 @@ function TargetCard({ variant, workspaceId, post }: { variant: PostPlatformVaria
               {reconcileOutcome === 'CONFIRM_PUBLISHED' && (
                 <>
                   <div>
-                    <label className="block text-xs font-medium text-gray-700">External Post ID (Optional)</label>
+                    <label className="block text-xs font-medium text-gray-700">External Post ID *</label>
                     <input
                       type="text"
                       className="mt-1 block w-full border-gray-300 rounded-md shadow-sm sm:text-sm border p-1"
@@ -549,13 +570,20 @@ function TargetCard({ variant, workspaceId, post }: { variant: PostPlatformVaria
                 <Button size="sm" variant="ghost" onClick={() => setReconcileOutcome(null)}>Back</Button>
                 <Button
                   size="sm"
-                  disabled={isActioning || !reconcileReason.trim()}
-                  onClick={() => handleAction('reconcile', {
-                    decision: reconcileOutcome,
-                    reason: reconcileReason,
-                    externalPostId: reconcileExternalId || undefined,
-                    canonicalUrl: reconcileUrl || undefined,
-                  })}
+                  disabled={isActioning || !reconcileReason.trim() || (reconcileOutcome === 'CONFIRM_PUBLISHED' && !reconcileExternalId.trim())}
+                  onClick={() => {
+                    const payload: Record<string, string> = {
+                      decision: reconcileOutcome,
+                      reason: reconcileReason.trim(),
+                    };
+                    if (reconcileOutcome === 'CONFIRM_PUBLISHED') {
+                      payload.externalPostId = reconcileExternalId.trim();
+                      if (reconcileUrl.trim()) {
+                        payload.canonicalUrl = reconcileUrl.trim();
+                      }
+                    }
+                    handleAction('reconcile', payload);
+                  }}
                 >
                   Submit
                 </Button>

@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaClient, Prisma } from '@agency-os/database';
 import { WorkspaceScopedRepository } from '@agency-os/database';
 
@@ -33,5 +33,22 @@ export class AccountsService {
     });
 
     return accounts;
+  }
+
+  async getWorkspaceAccount(workspaceId: string, accountId: string) {
+    const repo = new WorkspaceScopedRepository<
+      Prisma.SocialAccountDelegate,
+      any,
+      Prisma.SocialAccountWhereInput,
+      Prisma.SocialAccountCreateInput,
+      Prisma.SocialAccountUpdateInput
+    >(this.prisma, this.prisma.socialAccount, workspaceId);
+
+    const account = await repo.findById(accountId);
+    if (!account) {
+      throw new NotFoundException('Account not found in workspace');
+    }
+
+    return account;
   }
 }

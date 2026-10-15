@@ -48,6 +48,8 @@ export class AccountsController {
     @Param('accountId', ParseUUIDPipe) accountId: string,
     @Req() req: Request,
   ) {
+    await this.accountsService.getWorkspaceAccount(workspaceId, accountId);
+
     const job = await this.syncQueue.add(
       'sync-account',
       {

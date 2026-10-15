@@ -1,22 +1,36 @@
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react';
 import { expect, test, vi, beforeEach } from 'vitest';
 import PostDetailPage from './page';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { api } from '../../../../lib/api/client';
+import { api, ApiError } from '../../../../lib/api/client';
 
 vi.mock('next/navigation', () => ({
   useParams: () => ({ workspaceId: 'ws-1', postId: 'post-1' }),
   useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
 }));
 
-vi.mock('../../../../lib/api/client', () => ({
-  api: {
+vi.mock('../../../../lib/api/client', () => {
+  class MockApiError extends Error {
+    public status: number;
+    public data: unknown;
+    public headers: Record<string, string> = {};
+    constructor(status: number, data: unknown, message: string) {
+      super(message);
+      this.status = status;
+      this.data = data;
+      this.name = 'ApiError';
+    }
+  }
+  return {
+    ApiError: MockApiError,
+    api: {
     get: vi.fn(),
     post: vi.fn(),
     delete: vi.fn(),
     patch: vi.fn(),
-  },
-}));
+    },
+  };
+});
 
 let queryClient: QueryClient;
 
@@ -101,13 +115,13 @@ test('H. API failure does not falsely display DELETED and shows error', async ()
   (api.delete as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('Network Error'));
 
   // Mock window alert
-  const alertMock = vi.spyOn(window, 'alert').mockImplementation(() => {});
+
 
   fireEvent.click(await screen.findByRole('button', { name: /Delete Post/i }));
   fireEvent.click(screen.getByRole('button', { name: /Confirm Delete/i }));
 
   await waitFor(() => {
-    expect(alertMock).toHaveBeenCalledWith('Network Error');
+    expect(screen.getByText('Network Error')).toBeInTheDocument();
   });
 
   // Shouldn't mutate cache directly to DELETED if API failed
@@ -373,4 +387,217 @@ test('12. replacing incompatible media with valid video clears the error', async
   expect(screen.queryByText(/published to YouTube/)).not.toBeInTheDocument();
   const publishBtn = screen.getByRole('button', { name: /Publish/i });
   expect(publishBtn).not.toBeDisabled();
+});
+
+// === E2: AMBIGUOUS PUBLICATION RECONCILIATION TESTS ===
+
+const renderE2Test = (variantStatus = 'UNKNOWN', overrideVariant = {}) => {
+  queryClient.setQueryData(['workspaces', 'ws-1', 'posts', 'post-1'], {
+    id: 'post-1',
+    workspaceId: 'ws-1',
+    content: 'Hello World',
+    status: 'DRAFT',
+    media: [],
+    variants: [
+      {
+        id: 'var-1',
+        postId: 'post-1',
+        socialAccountId: 'acc-1',
+        status: variantStatus,
+        ...overrideVariant,
+        socialAccount: { name: 'My LinkedIn', provider: 'LINKEDIN' }
+      }
+    ]
+  });
+
+  render(
+    <QueryClientProvider client={queryClient}>
+      <PostDetailPage />
+    </QueryClientProvider>
+  );
+};
+
+test('1, 3. UNKNOWN panel and correct CTA', async () => {
+  renderE2Test('UNKNOWN');
+  expect(screen.getByText('Needs review (UNKNOWN)')).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Resolve publication' })).toBeInTheDocument();
+});
+
+test('2. non-UNKNOWN panel absent', async () => {
+  renderE2Test('PUBLISHED');
+  expect(screen.queryByRole('button', { name: 'Resolve publication' })).not.toBeInTheDocument();
+});
+
+test('4, 5, 6, 7. PUBLISHED requires reason and externalPostId, whitespace rejected', async () => {
+  renderE2Test('UNKNOWN');
+  fireEvent.click(screen.getByRole('button', { name: 'Resolve publication' }));
+  
+  fireEvent.click(screen.getByRole('button', { name: 'Yes, it was published' }));
+
+  const submitBtn = screen.getByRole('button', { name: 'Submit' });
+  expect(submitBtn).toBeDisabled(); // Disabled initially
+
+  const reasonInput = screen.getByPlaceholderText('e.g. Verified video exists');
+  const externalIdInput = screen.getByText('External Post ID *').nextSibling as HTMLInputElement;
+
+  fireEvent.change(reasonInput, { target: { value: '   ' } });
+  fireEvent.change(externalIdInput, { target: { value: '   ' } });
+  expect(submitBtn).toBeDisabled(); // Whitespace rejected
+
+  fireEvent.change(reasonInput, { target: { value: 'Verified' } });
+  expect(submitBtn).toBeDisabled(); // Still disabled, needs external ID
+
+  fireEvent.change(externalIdInput, { target: { value: 'ext-123' } });
+  expect(submitBtn).not.toBeDisabled(); // Now enabled
+});
+
+test('8, 9. FAILED requires reason, whitespace rejected', async () => {
+  renderE2Test('UNKNOWN');
+  fireEvent.click(screen.getByRole('button', { name: 'Resolve publication' }));
+  
+  fireEvent.click(screen.getByRole('button', { name: 'No, it was not published' }));
+
+  const submitBtn = screen.getByRole('button', { name: 'Submit' });
+  const reasonInput = screen.getByPlaceholderText('e.g. Verified video exists');
+
+  expect(submitBtn).toBeDisabled();
+
+  fireEvent.change(reasonInput, { target: { value: '   ' } });
+  expect(submitBtn).toBeDisabled();
+
+  fireEvent.change(reasonInput, { target: { value: 'Failed to post' } });
+  expect(submitBtn).not.toBeDisabled();
+});
+
+test('10, 11, 13, 14, 15. decision switch removes stale externalPostId, exact HTTP body and URL', async () => {
+  renderE2Test('UNKNOWN');
+  fireEvent.click(screen.getByRole('button', { name: 'Resolve publication' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Yes, it was published' }));
+
+  const reasonInput = screen.getByPlaceholderText('e.g. Verified video exists');
+  const externalIdInput = screen.getByText('External Post ID *').nextSibling as HTMLInputElement;
+
+  fireEvent.change(reasonInput, { target: { value: 'Verified' } });
+  fireEvent.change(externalIdInput, { target: { value: 'ext-123' } });
+
+  // Now switch to FAILED
+  fireEvent.click(screen.getByRole('button', { name: 'Back' }));
+  fireEvent.click(screen.getByRole('button', { name: 'No, it was not published' }));
+
+  const submitBtn = screen.getByRole('button', { name: 'Submit' });
+  fireEvent.click(submitBtn);
+
+  expect(api.post).toHaveBeenCalledWith('workspaces/ws-1/publications/var-1/reconcile', {
+    decision: 'CONFIRM_FAILED',
+    reason: 'Verified',
+  }); // Note: externalPostId is NOT sent
+});
+
+test('12, 13. canonicalUrl omission when blank, exact published HTTP body', async () => {
+  renderE2Test('UNKNOWN');
+  fireEvent.click(screen.getByRole('button', { name: 'Resolve publication' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Yes, it was published' }));
+
+  const reasonInput = screen.getByPlaceholderText('e.g. Verified video exists');
+  const externalIdInput = screen.getByText('External Post ID *').nextSibling as HTMLInputElement;
+  const canonicalUrlInput = screen.getByText('Canonical URL (Optional)').nextSibling as HTMLInputElement;
+
+  fireEvent.change(reasonInput, { target: { value: 'Verified' } });
+  fireEvent.change(externalIdInput, { target: { value: 'ext-123' } });
+  fireEvent.change(canonicalUrlInput, { target: { value: '   ' } }); // Blank
+
+  fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
+
+  expect(api.post).toHaveBeenCalledWith('workspaces/ws-1/publications/var-1/reconcile', {
+    decision: 'CONFIRM_PUBLISHED',
+    reason: 'Verified',
+    externalPostId: 'ext-123',
+  }); // canonicalUrl is omitted
+});
+
+test('16. multi-variant correct ID', async () => {
+  renderWithMultipleVariants([
+    {
+      id: 'var-a',
+      postId: 'post-1',
+      socialAccountId: 'acc-1',
+      status: 'PUBLISHED',
+      socialAccount: { name: 'My YouTube', provider: 'YOUTUBE' }
+    },
+    {
+      id: 'var-b',
+      postId: 'post-1',
+      socialAccountId: 'acc-2',
+      status: 'UNKNOWN',
+      socialAccount: { name: 'My LinkedIn', provider: 'LINKEDIN' }
+    }
+  ]);
+
+  fireEvent.click(screen.getByRole('button', { name: 'Resolve publication' }));
+  fireEvent.click(screen.getByRole('button', { name: 'No, it was not published' }));
+  
+  fireEvent.change(screen.getByPlaceholderText('e.g. Verified video exists'), { target: { value: 'Failed' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
+
+  expect(api.post).toHaveBeenCalledWith('workspaces/ws-1/publications/var-b/reconcile', expect.any(Object));
+});
+
+test('17. double-submit', async () => {
+  renderE2Test('UNKNOWN');
+  fireEvent.click(screen.getByRole('button', { name: 'Resolve publication' }));
+  fireEvent.click(screen.getByRole('button', { name: 'No, it was not published' }));
+
+  fireEvent.change(screen.getByPlaceholderText('e.g. Verified video exists'), { target: { value: 'Failed' } });
+  
+  (api.post as ReturnType<typeof vi.fn>).mockImplementation(() => new Promise(resolve => setTimeout(resolve, 100)));
+  
+  const submitBtn = screen.getByRole('button', { name: 'Submit' });
+  fireEvent.click(submitBtn);
+  expect(submitBtn).toBeDisabled();
+});
+
+test('18. success revalidation', async () => {
+  renderE2Test('UNKNOWN');
+  const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+  
+  fireEvent.click(screen.getByRole('button', { name: 'Resolve publication' }));
+  fireEvent.click(screen.getByRole('button', { name: 'No, it was not published' }));
+  fireEvent.change(screen.getByPlaceholderText('e.g. Verified video exists'), { target: { value: 'Failed' } });
+  
+  (api.post as ReturnType<typeof vi.fn>).mockResolvedValueOnce({});
+  fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
+
+  await waitFor(() => {
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['workspaces', 'ws-1', 'posts', 'post-1'] });
+  });
+});
+
+test('19, 20, 21, 22. Error behaviors (403, 409, 422, 500)', async () => {
+  const checkError = async (status: number, expectedMsg: string, triggersRefetch = false) => {
+    cleanup();
+    vi.clearAllMocks();
+    renderE2Test('UNKNOWN');
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Resolve publication' }));
+    fireEvent.click(screen.getByRole('button', { name: 'No, it was not published' }));
+    fireEvent.change(screen.getByPlaceholderText('e.g. Verified video exists'), { target: { value: 'Failed' } });
+
+    (api.post as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new ApiError(status, {}, 'err'));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
+
+    await waitFor(() => {
+      expect(screen.getByText(expectedMsg)).toBeInTheDocument();
+    });
+
+    if (triggersRefetch) {
+      expect(invalidateSpy).toHaveBeenCalled();
+    }
+  };
+
+  await checkError(403, 'You do not have permission to reconcile publications.');
+  await checkError(409, 'Publication state has changed. Please refresh the page.', true);
+  await checkError(422, 'Invalid data provided. Please check the fields and try again.');
+  await checkError(500, 'An internal system error occurred. Please try again later.');
 });
