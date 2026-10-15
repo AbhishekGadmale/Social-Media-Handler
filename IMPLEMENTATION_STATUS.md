@@ -102,13 +102,49 @@ Additionally deleted unneeded scratch files (`last_user_prompt.txt`, `prompt.txt
 ### 3. Verification & CI Status
 - **Jest-DOM Matcher Resolution**: Verified that 100% of the `toBeInTheDocument`, `toBeDisabled`, `toBeChecked`, `toHaveTextContent`, and related matcher type errors were eliminated.
 - **Web Tests**: `pnpm --filter @agency-os/web test` passed completely (4/4 test files, 54/54 tests passing).
-- **GitHub PR Checks (Commit b2bc2c8 / Run 38736592843)**:
+- **GitHub PR Checks (Commit 2d4c9e3 / Run 38738718718)**:
+  - `CI / Application Builds`: **SUCCESS** (Green)
+  - `CI / Docker Build & Smoke Test`: **SUCCESS** (Green)
   - `CI / Tests`: **SUCCESS** (Green)
   - `CI / Code Quality (Lint & Typecheck)`: **SUCCESS** (Green)
-  - `CI / Application Builds`: **FAILED** (Blocked by separate pre-existing type errors in `page.spec.tsx`, `page.tsx`, and `media-uploader.spec.tsx`)
-  - `CI / Docker Build & Smoke Test`: **FAILED** (Blocked by the same pre-existing type errors in web)
-- **Pre-existing Web Typecheck Blockers**:
-  1. `apps/web/src/app/[workspaceId]/publishing/[postId]/page.spec.tsx(14,17)`: Parameters `status`, `data`, `message` in `MockApiError` constructor implicitly have `any` type (`TS7006`), and properties `status` and `data` do not exist on `MockApiError` (`TS2339`).
-  2. `apps/web/src/app/[workspaceId]/publishing/[postId]/page.tsx(391,15)`: `onBlur={handleUpdate}` is incompatible with `FocusEventHandler<HTMLInputElement>` (`TS2322`) because `handleUpdate` expects `overrides?: Record<string, unknown>`.
-  3. `apps/web/src/components/media-uploader.spec.tsx(123,12)`: Cannot assign to read-only property `status` on `XMLHttpRequest` (`TS2540`), and `this.onload()` called without required argument (`TS2554`).
+  - `GitGuardian Security Checks`: **SUCCESS** (Green)
+
+---
+
+## Resolution of Pre-Existing Web TypeScript Build Errors (Commit 2d4c9e3)
+
+### 1. Root Cause of Pre-Existing Errors
+1. **MockApiError in `page.spec.tsx` (TS7006, TS2339)**:
+   - Untyped constructor parameters `(status, data, message)` caused implicit `any` errors under TypeScript strict mode.
+   - Properties `status` and `data` were not declared on `MockApiError`, causing `Property does not exist on type 'MockApiError'`.
+2. **FocusEventHandler Mismatch in `page.tsx` (TS2322)**:
+   - `handleUpdate` has signature `(overrides?: Record<string, unknown>) => Promise<void>`.
+   - Wiring `onBlur={handleUpdate}` caused TypeScript to reject assigning a function expecting `Record<string, unknown>` to React's `FocusEventHandler<HTMLInputElement>` (`FocusEvent` lacks index signature). Passing the raw event as `overrides` would also incorrectly spread event internals into API update payloads.
+3. **XMLHttpRequest Mock in `media-uploader.spec.tsx` (TS2540, TS2554)**:
+   - `this.status = 200` attempted direct mutation on the DOM `XMLHttpRequest.status` property, which is typed as `readonly`.
+   - `this.onload()` was called with 0 arguments, but `onload` requires 1 argument (`ProgressEvent`).
+
+### 2. Exact Minimal Fixes Applied
+1. **`apps/web/src/app/[workspaceId]/publishing/[postId]/page.spec.tsx`**:
+   - Explicitly typed constructor parameters `status: number`, `data: unknown`, `message: string`, and declared `public status: number`, `public data: unknown`, and `public headers: Record<string, string> = {}` on `MockApiError`, accurately matching `ApiError`'s shape.
+2. **`apps/web/src/app/[workspaceId]/publishing/[postId]/page.tsx`**:
+   - Replaced `onBlur={handleUpdate}` with `onBlur={() => handleUpdate()}` across Title, Category ID, and Tags inputs (lines 391, 419, 430), correctly invoking the handler with current state and no arguments.
+3. **`apps/web/src/components/media-uploader.spec.tsx`**:
+   - Initialized `status = 200` on `XHRMock` and used `Object.defineProperty(this, 'status', { value: 200, configurable: true })` instead of directly assigning to readonly `this.status`.
+   - Invoked `this.onload(new ProgressEvent('load'))` with a valid `ProgressEvent`.
+
+### 3. Local Verification Results
+- `pnpm --filter @agency-os/web test`: **PASS** (4/4 test files, 54/54 tests passed).
+- `pnpm --filter @agency-os/web build`: **PASS** (Exit code 0, TypeScript compiled in 3.6s, all static and dynamic routes generated).
+- `pnpm turbo run typecheck`: **PASS** (Exit code 0, 5/5 tasks successful).
+- `pnpm turbo run lint`: **PASS** (Exit code 0, 0 errors).
+
+### 4. Final GitHub CI Status (Run 38738718718)
+- `CI / Application Builds`: **SUCCESS** (Green)
+- `CI / Docker Build & Smoke Test`: **SUCCESS** (Green)
+- `CI / Tests`: **SUCCESS** (Green)
+- `CI / Code Quality (Lint & Typecheck)`: **SUCCESS** (Green)
+- `GitGuardian Security Checks`: **SUCCESS** (Green)
+
+**PR Status**: All CI checks are green. The branch is now fully verified and merge-ready.
 
