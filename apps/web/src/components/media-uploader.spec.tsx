@@ -117,11 +117,12 @@ test('H. correct media completion/mediaId path is used', async () => {
   });
   
   class XHRMock {
+    status = 200;
     open = vi.fn();
     setRequestHeader = vi.fn();
     send = vi.fn(function(this: XMLHttpRequest) {
-      this.status = 200;
-      if (this.onload) this.onload();
+      Object.defineProperty(this, 'status', { value: 200, configurable: true });
+      if (this.onload) this.onload(new ProgressEvent('load'));
     });
     upload = { addEventListener: vi.fn() };
     abort = vi.fn();

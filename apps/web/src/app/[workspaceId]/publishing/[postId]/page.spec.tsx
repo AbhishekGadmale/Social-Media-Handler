@@ -11,7 +11,10 @@ vi.mock('next/navigation', () => ({
 
 vi.mock('../../../../lib/api/client', () => {
   class MockApiError extends Error {
-    constructor(status, data, message) {
+    public status: number;
+    public data: unknown;
+    public headers: Record<string, string> = {};
+    constructor(status: number, data: unknown, message: string) {
       super(message);
       this.status = status;
       this.data = data;

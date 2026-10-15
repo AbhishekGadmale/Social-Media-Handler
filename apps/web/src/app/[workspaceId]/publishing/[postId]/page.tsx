@@ -388,7 +388,7 @@ function TargetCard({ variant, workspaceId, post }: { variant: PostPlatformVaria
               className="mt-1 block w-full border-gray-300 rounded-md shadow-sm sm:text-sm border p-1"
               value={title as string}
               onChange={e => setTitle(e.target.value)}
-              onBlur={handleUpdate}
+              onBlur={() => handleUpdate()}
             />
           </div>
           <div>
@@ -416,7 +416,7 @@ function TargetCard({ variant, workspaceId, post }: { variant: PostPlatformVaria
                   className="mt-1 block w-full border-gray-300 rounded-md shadow-sm sm:text-sm border p-1"
                   value={categoryId}
                   onChange={e => setCategoryId(e.target.value)}
-                  onBlur={handleUpdate}
+                  onBlur={() => handleUpdate()}
                   placeholder="e.g. 22"
                 />
               </div>
@@ -427,7 +427,7 @@ function TargetCard({ variant, workspaceId, post }: { variant: PostPlatformVaria
                   className="mt-1 block w-full border-gray-300 rounded-md shadow-sm sm:text-sm border p-1"
                   value={tags}
                   onChange={e => setTags(e.target.value)}
-                  onBlur={handleUpdate}
+                  onBlur={() => handleUpdate()}
                   placeholder="e.g. tag1, tag2, tag3"
                 />
                 <p className="text-[10px] text-gray-500 mt-1">Separate multiple tags with commas.</p>
