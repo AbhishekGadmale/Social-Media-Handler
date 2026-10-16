@@ -180,3 +180,64 @@ In `apps/web/src/lib/redirect.ts`:
 
 **PR Status**: PR #2 is fully hardened, verified, all CI checks are green, and it is ready for Muse re-review.
 
+---
+
+## Trust Proxy Configuration on Branch `fix/trust-proxy`
+
+### 1. Confirmed Trust Proxy Root Cause
+- **Vulnerability**: Express defaults `trust proxy` to `false`. Behind a TLS-terminating reverse proxy, load balancer, or cloud PaaS (e.g., Render, Nginx, AWS ALB), Express evaluates `req.ip` as the direct TCP connection peer (`req.socket.remoteAddress`), which is the internal reverse proxy IP (e.g. `10.x.x.x` or `172.x.x.x`), while ignoring `X-Forwarded-For`.
+- **Global Rate-Limiting DoS**: Because NestJS `ThrottlerGuard` uses `req.ip` as its client tracker, all clients worldwide were grouped into a single rate-limiting bucket. In `RateLimitPolicies.auth`, 5 failed login attempts locked out all users globally for 15 minutes. In `RateLimitPolicies.baseline`, normal aggregate traffic across all users exceeded 100 req/min, causing global HTTP 429 throttling.
+- **Protocol Mismatch**: Without proxy trust, `req.protocol` resolved to `'http'`, which broke OAuth callback URL generation when TLS terminated upstream.
+
+### 2. Exact Environment Behavior & Supported Values
+Implemented `parseTrustProxy` and `configureTrustProxy` in `apps/api/src/config/trust-proxy.ts` and wired into `apps/api/src/main.ts`:
+- **Unset or Empty**:
+  - Production (`NODE_ENV === 'production'`): Defaults to `1` (trusts exactly 1 upstream ingress proxy hop).
+  - Non-production (local development/testing): Defaults to `false` (disabled, assumes direct connection; prevents header spoofing in local dev).
+- **Explicit Numeric Values** (e.g., `TRUST_PROXY=1`, `TRUST_PROXY=2`):
+  - Parsed as integer hop count. Express trusts that exact number of hops from the right of `X-Forwarded-For`.
+  - Spoofed leftmost client headers are ignored.
+- **Explicit Boolean Values**:
+  - `TRUST_PROXY=false` or `TRUST_PROXY=0`: Disables proxy trust explicitly.
+  - `TRUST_PROXY=true`: Enables full proxy trust.
+    - **WARNING**: `TRUST_PROXY=true` trusts ALL `X-Forwarded-For` entries, including attacker-controlled values. Only use it behind a proxy that strips/overwrites incoming `X-Forwarded-For`. Never use it when the API is directly reachable from the public internet. Using it incorrectly defeats rate limiting and IP-based audit/logging protections.
+- **Fail-Fast Validation**:
+  - Malformed strings (e.g. `invalid`, `-1`, `1.5`, `NaN`, `yes`) throw an Error during startup, preventing accidental misconfiguration.
+- **Deployment Requirement**:
+  - The API must only be reachable through the trusted ingress/proxy. Direct public exposure of the API can defeat X-Forwarded-For spoofing protections.
+- **`.env.example` Default**:
+  - `# TRUST_PROXY=1` is commented out by default so that local development and non-production environments direct-connect safely without enabling proxy trust by default.
+  - Comments provide guidance for local direct development (unset/false), standard single-ingress production (1), multi-hop proxy chains (exact hop count), and CDN additions like Cloudflare (e.g. increasing hop count from 1 to 2).
+  - Explicit danger warning documented for `TRUST_PROXY=true`.
+
+### 3. Tests Added
+In `apps/api/src/config/trust-proxy.spec.ts` (12 tests, all passing):
+- Proved development mode with no `TRUST_PROXY` defaults to `false` and does not trust forwarded IP headers.
+- Proved production mode with no `TRUST_PROXY` defaults to 1 hop.
+- Proved explicit numeric values (`1`, `2`, `5`) and booleans (`true`, `false`, `0`) are honored.
+- Proved malformed values fail fast with descriptive validation errors.
+- Proved forwarded client IP resolves correctly through one trusted hop in live Express request tests.
+- Proved spoofed leftmost `X-Forwarded-For` entries are not trusted over the proxy-appended IP.
+- Proved `X-Forwarded-Proto=https` resolves `req.protocol` to `https` and `req.secure` to `true`.
+- **3-Entry Spoof Chain (Test A)**: Sent `X-Forwarded-For: 1.1.1.1, 2.2.2.2, 203.0.113.50` with `trust proxy = 1`; asserted `req.ip === '203.0.113.50'` and explicitly `req.ip !== '1.1.1.1'` and `req.ip !== '2.2.2.2'`, proving only the rightmost upstream-appended address is trusted.
+- **Pinned Dangerous `true` Semantics (Test B)**: Sent `X-Forwarded-For: 1.1.1.1, 203.0.113.50` with `trust proxy = true`; asserted `req.ip === '1.1.1.1'`, intentionally documenting and pinning the dangerous semantics of trusting all proxy hops.
+
+### 4. Re-Verification Classifications
+- **Logout Cookie Clearing (FALSE POSITIVE)**: Re-evaluated and confirmed that RFC 6265/RFC 6265bis identifies cookies strictly by `[Name, Domain, Path]`. Because both `login` and `logout` use identical host-only domains and default `Path=/`, compliant browsers successfully evict the cookie when `Expires` is set to 1970. Server-side session invalidation in Redis also guarantees revocation.
+- **CSRF Split-Domain Compatibility (ARCHITECTURAL / DEPLOYMENT ITEM)**: The double-submit CSRF mechanism relies on frontend JavaScript accessing `document.cookie`. This is 100% compatible under same-origin gateways (e.g., reverse proxy mapping `/api`). Cross-subdomain deployments require configuring `COOKIE_DOMAIN` or returning `csrfToken` via response body. No code changes were made to CSRF or cookies in this task.
+- **OAuth Callback URL (FOLLOW-UP ITEM)**: Dynamically generating OAuth redirect URIs from `req.protocol` + `req.get('host')` remains functional with trust proxy enabled, but introducing an explicit `API_PUBLIC_URL` is recommended as a deterministic follow-up item.
+
+### 5. Local Verification Results
+- `pnpm --filter @agency-os/api test`: **PASS** (14/14 test files, 95/95 tests passing).
+- `pnpm turbo run typecheck`: **PASS** (Exit code 0, 5/5 tasks successful).
+- `pnpm turbo run lint`: **PASS** (Exit code 0, 0 errors, zero new warnings).
+- `pnpm turbo run build`: **PASS** (API, Web, Worker all compiled successfully).
+
+### 6. GitHub CI Checks Status (Commit e5665a6 / PR #3)
+- `GitGuardian Security Checks`: **SUCCESS** (Green)
+- `CI / Application Builds`: **SUCCESS** (Green)
+- `CI / Docker Build & Smoke Test`: **SUCCESS** (Green)
+- `CI / Tests`: **SUCCESS** (Green)
+- `CI / Code Quality (Lint & Typecheck)`: **SUCCESS** (Green)
+
+
