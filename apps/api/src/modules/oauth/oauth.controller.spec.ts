@@ -64,10 +64,131 @@ describe('OAuthController', () => {
     };
 
     process.env.FRONTEND_URL = 'http://localhost:3000';
+    delete process.env.API_PUBLIC_URL;
   });
 
   afterEach(() => {
     vi.clearAllMocks();
+    delete process.env.API_PUBLIC_URL;
+  });
+
+  describe('connectProvider', () => {
+    it('uses configured API_PUBLIC_URL for redirectUri and ignores Host headers', async () => {
+      process.env.API_PUBLIC_URL = 'https://api.agency-os.com';
+      mockReq.get.mockReturnValue('attacker.example.com');
+      mockOAuthService.generateAuthUrl.mockResolvedValue(
+        'https://accounts.google.com/auth',
+      );
+
+      const result = await controller.connectProvider(
+        'workspace-123',
+        SocialProvider.YOUTUBE,
+        undefined,
+        mockReq as Request,
+      );
+
+      expect(mockOAuthService.generateAuthUrl).toHaveBeenCalledWith(
+        SocialProvider.YOUTUBE,
+        'user-123',
+        'workspace-123',
+        'https://api.agency-os.com/api/v1/oauth/youtube/callback',
+        undefined,
+      );
+      expect(result).toEqual({ url: 'https://accounts.google.com/auth' });
+    });
+
+    it('normalizes trailing slashes in API_PUBLIC_URL', async () => {
+      process.env.API_PUBLIC_URL = 'https://api.agency-os.com///';
+      mockOAuthService.generateAuthUrl.mockResolvedValue(
+        'https://accounts.google.com/auth',
+      );
+
+      await controller.connectProvider(
+        'workspace-123',
+        SocialProvider.YOUTUBE,
+        undefined,
+        mockReq as Request,
+      );
+
+      expect(mockOAuthService.generateAuthUrl).toHaveBeenCalledWith(
+        SocialProvider.YOUTUBE,
+        'user-123',
+        'workspace-123',
+        'https://api.agency-os.com/api/v1/oauth/youtube/callback',
+        undefined,
+      );
+    });
+
+    it('falls back to local port in development when API_PUBLIC_URL is unset', async () => {
+      delete process.env.API_PUBLIC_URL;
+      mockOAuthService.generateAuthUrl.mockResolvedValue(
+        'https://accounts.google.com/auth',
+      );
+
+      await controller.connectProvider(
+        'workspace-123',
+        SocialProvider.YOUTUBE,
+        undefined,
+        mockReq as Request,
+      );
+
+      expect(mockOAuthService.generateAuthUrl).toHaveBeenCalledWith(
+        SocialProvider.YOUTUBE,
+        'user-123',
+        'workspace-123',
+        'http://localhost:3001/api/v1/oauth/youtube/callback',
+        undefined,
+      );
+    });
+
+    it('maintains consistent callback URI construction across all providers (LinkedIn, YouTube, Meta)', async () => {
+      process.env.API_PUBLIC_URL = 'https://api.agency-os.com';
+      mockOAuthService.generateAuthUrl.mockResolvedValue(
+        'https://provider.auth',
+      );
+
+      await controller.connectProvider(
+        'workspace-123',
+        SocialProvider.LINKEDIN,
+        undefined,
+        mockReq as Request,
+      );
+      expect(mockOAuthService.generateAuthUrl).toHaveBeenCalledWith(
+        SocialProvider.LINKEDIN,
+        'user-123',
+        'workspace-123',
+        'https://api.agency-os.com/api/v1/oauth/linkedin/callback',
+        undefined,
+      );
+
+      await controller.connectProvider(
+        'workspace-123',
+        SocialProvider.FACEBOOK,
+        undefined,
+        mockReq as Request,
+      );
+      expect(mockOAuthService.generateAuthUrl).toHaveBeenCalledWith(
+        SocialProvider.FACEBOOK,
+        'user-123',
+        'workspace-123',
+        'https://api.agency-os.com/api/v1/oauth/facebook/callback',
+        undefined,
+      );
+
+      await controller.connectProvider(
+        'workspace-123',
+        'META' as any,
+        undefined,
+        mockReq as Request,
+      );
+      expect(mockOAuthService.generateAuthUrl).toHaveBeenCalledWith(
+        'META',
+        'user-123',
+        'workspace-123',
+        'https://api.agency-os.com/api/v1/oauth/meta/callback',
+        undefined,
+      );
+    });
   });
 
   describe('callbackProvider', () => {
@@ -108,6 +229,111 @@ describe('OAuthController', () => {
         expect.objectContaining({
           action: 'OAUTH_CONNECTION_SUCCEEDED',
         }),
+      );
+    });
+
+    it('uses configured API_PUBLIC_URL for callback and ignores Host and X-Forwarded-Host', async () => {
+      process.env.API_PUBLIC_URL = 'https://api.agency-os.com';
+      mockReq.get.mockReturnValue('attacker.example.com');
+      mockReq.headers = {
+        host: 'attacker.example.com',
+        'x-forwarded-host': 'evil.example.com',
+      };
+
+      mockOAuthService.handleOAuthCallback.mockResolvedValue({
+        workspaceId: 'workspace-123',
+        socialAccountId: 'account-123',
+        isNew: true,
+      });
+
+      await controller.callbackProvider(
+        SocialProvider.YOUTUBE,
+        { code: 'auth-code', state: 'valid-state' },
+        mockReq as Request,
+        mockRes as Response,
+      );
+
+      expect(mockOAuthService.handleOAuthCallback).toHaveBeenCalledWith(
+        SocialProvider.YOUTUBE,
+        'user-123',
+        'valid-state',
+        'auth-code',
+        'https://api.agency-os.com/api/v1/oauth/youtube/callback',
+      );
+    });
+
+    it('normalizes trailing slashes in API_PUBLIC_URL during callback handling', async () => {
+      process.env.API_PUBLIC_URL = 'https://api.agency-os.com///';
+      mockOAuthService.handleOAuthCallback.mockResolvedValue({
+        workspaceId: 'workspace-123',
+        socialAccountId: 'account-123',
+        isNew: true,
+      });
+
+      await controller.callbackProvider(
+        SocialProvider.YOUTUBE,
+        { code: 'auth-code', state: 'valid-state' },
+        mockReq as Request,
+        mockRes as Response,
+      );
+
+      expect(mockOAuthService.handleOAuthCallback).toHaveBeenCalledWith(
+        SocialProvider.YOUTUBE,
+        'user-123',
+        'valid-state',
+        'auth-code',
+        'https://api.agency-os.com/api/v1/oauth/youtube/callback',
+      );
+    });
+
+    it('maintains consistent callback URI construction across all providers during callback', async () => {
+      process.env.API_PUBLIC_URL = 'https://api.agency-os.com';
+      mockOAuthService.handleOAuthCallback.mockResolvedValue({
+        workspaceId: 'workspace-123',
+        socialAccountId: 'account-123',
+        isNew: true,
+      });
+
+      await controller.callbackProvider(
+        SocialProvider.LINKEDIN,
+        { code: 'auth-code', state: 'valid-state' },
+        mockReq as Request,
+        mockRes as Response,
+      );
+      expect(mockOAuthService.handleOAuthCallback).toHaveBeenCalledWith(
+        SocialProvider.LINKEDIN,
+        'user-123',
+        'valid-state',
+        'auth-code',
+        'https://api.agency-os.com/api/v1/oauth/linkedin/callback',
+      );
+
+      await controller.callbackProvider(
+        SocialProvider.FACEBOOK,
+        { code: 'auth-code', state: 'valid-state' },
+        mockReq as Request,
+        mockRes as Response,
+      );
+      expect(mockOAuthService.handleOAuthCallback).toHaveBeenCalledWith(
+        SocialProvider.FACEBOOK,
+        'user-123',
+        'valid-state',
+        'auth-code',
+        'https://api.agency-os.com/api/v1/oauth/facebook/callback',
+      );
+
+      await controller.callbackProvider(
+        'META' as any,
+        { code: 'auth-code', state: 'valid-state' },
+        mockReq as Request,
+        mockRes as Response,
+      );
+      expect(mockOAuthService.handleOAuthCallback).toHaveBeenCalledWith(
+        'META',
+        'user-123',
+        'valid-state',
+        'auth-code',
+        'https://api.agency-os.com/api/v1/oauth/meta/callback',
       );
     });
 

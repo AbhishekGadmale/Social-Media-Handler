@@ -240,4 +240,73 @@ In `apps/api/src/config/trust-proxy.spec.ts` (12 tests, all passing):
 - `CI / Tests`: **SUCCESS** (Green)
 - `CI / Code Quality (Lint & Typecheck)`: **SUCCESS** (Green)
 
+---
+
+## Deterministic OAuth Public URL Configuration on Branch `fix/oauth-public-url`
+
+### 1. Root Cause & Reliability/Security Analysis
+- **Reliability Flaw**: `apps/api/src/modules/oauth/oauth.controller.ts` previously derived the OAuth callback redirect URI dynamically from `${req.protocol}://${req.get('host')}/api/v1/oauth/${provider.toLowerCase()}/callback` in two separate HTTP requests (`connectProvider` and `callbackProvider`). In multi-tier topologies (reverse proxies, API gateways, Docker Compose, Kubernetes), the client-to-API connect request (often internal or proxy-routed) and the user's top-level browser callback navigation frequently presented divergent host headers or schemes. Any byte-level divergence causes RFC 6749 token exchange failure (`redirect_uri_mismatch`).
+- **Security & Topology Leakage**: Unsanitized `Host` headers allowed untrusted values to be passed into external OAuth authorization requests, and internal cluster hostnames (e.g. `api:3001` or `.local` domains) leaked into third-party redirect URLs.
+- **Provider Requirements**: External providers (LinkedIn, Google/YouTube, Meta) require pre-registered, exact, static redirect URIs in their developer consoles. A deterministic `API_PUBLIC_URL` aligns runtime execution with developer portal whitelists.
+
+### 2. Validation & Normalization Rules (`apps/api/src/config/public-url.ts`)
+Implemented `parseApiPublicUrl` and `getPublicApiUrl`:
+- **Production (`NODE_ENV === 'production'`)**:
+  - `API_PUBLIC_URL` is **REQUIRED**. Missing or empty string throws a fail-fast error on startup/invocation.
+  - Protocol must be **HTTPS** (`https://`), **except for local loopback hosts** (`localhost`, `127.0.0.1`, `[::1]`) which are permitted to support local production-like Docker Compose environments.
+  - All non-loopback `http://` URLs (such as `http://api.example.com`, `http://10.0.0.1:3001`, `http://192.168.1.1:3001`) in production strictly throw with a descriptive error message.
+  - Must parse as a valid WHATWG URL.
+  - Rejects URLs containing query parameters (`?`), hash fragments (`#`), or embedded user credentials (`user:pass@`).
+  - Normalizes trailing slashes (`.replace(/\/+$/, '')`) so `${apiPublicUrl}/api/v1/...` never produces accidental double slashes (`//api/...`).
+- **Development & Testing (`NODE_ENV !== 'production'`)**:
+  - `API_PUBLIC_URL` is **OPTIONAL**.
+  - If unset or empty, falls back deterministically to `http://localhost:${process.env.PORT || 3001}` without depending on untrusted request headers.
+  - If provided, validated and normalized (`http:` and `https:` both permitted for localhost and dev tunnels).
+
+### 3. Fail-Fast Startup Validation in `apps/api/src/main.ts`
+- Wired `getPublicApiUrl()` directly into `bootstrap()` immediately after `isProduction` is computed.
+- If `API_PUBLIC_URL` is missing or invalid in a production deployment, the server aborts startup immediately at deploy time rather than failing lazily when a user initiates an OAuth connection.
+
+### 4. Controller Integration & Host Header Immunity
+- Updated `apps/api/src/modules/oauth/oauth.controller.ts`:
+  - `connectProvider()` and `callbackProvider()` now construct `redirectUri` exclusively via `getPublicApiUrl()`:
+    `${apiPublicUrl}/api/v1/oauth/${provider.toLowerCase()}/callback`
+  - Replaced all dependencies on `req.protocol` and `req.get('host')`.
+  - The callback URI is 100% immune to `Host`, `X-Forwarded-Host`, and `X-Forwarded-Proto` request headers.
+  - The exact same deterministic URI is used for authorization URL generation and token exchange across all providers (**LinkedIn**, **YouTube**, and **Meta**).
+
+### 5. Configuration Updates
+- `.env.example`: Added documented `API_PUBLIC_URL=http://localhost:3001` with instructions for production HTTPS requirements (noting the loopback exception) and local development defaults.
+- `docker-compose.yml`: Added `API_PUBLIC_URL: http://localhost:3001` to the `api` service environment.
+- `.github/workflows/ci.yml`: Added `API_PUBLIC_URL: http://localhost:3001` to the smoke test Compose stack step environment.
+
+### 6. Tests Added
+- `apps/api/src/config/public-url.spec.ts` (14 tests):
+  - Validated production HTTPS URLs and trailing slash normalization.
+  - Proved fail-fast rejection when `API_PUBLIC_URL` is missing or empty in production.
+  - Proved production allows loopback HTTP (`http://localhost:3001`, `http://127.0.0.1:3001`, `http://[::1]:3001`).
+  - Proved production rejects non-loopback HTTP (`http://api.example.com`, `http://10.0.0.1:3001`, `http://192.168.1.1:3001`) with explicit error messages.
+  - Proved rejection of non-HTTP(S) schemes, queries, fragments, credentials, and malformed strings.
+  - Proved development fallback to local port and custom development hosts/tunnels.
+- `apps/api/src/modules/oauth/oauth.controller.spec.ts` (12 tests):
+  - Proved `connectProvider` and `callbackProvider` use `API_PUBLIC_URL` for redirect URI.
+  - Proved immunity against `Host` and `X-Forwarded-Host` headers in both connect and callback flows.
+  - Proved trailing slash normalization in generated callback URIs.
+  - Proved multi-provider consistency across LinkedIn, YouTube, and Meta.
+- `apps/api/src/modules/oauth/oauth.service.spec.ts` (12 tests):
+  - Added dedicated test proving `generateAuthUrl` and `handleOAuthCallback` forward the exact `redirectUri` argument to underlying provider adapters and external token endpoints with full fidelity.
+
+### 7. Local Verification Results
+- `pnpm --filter @agency-os/api test`: **PASS** (15/15 test files, 117/117 tests passing).
+- `pnpm turbo run typecheck`: **PASS** (5/5 tasks successful).
+- `pnpm turbo run lint`: **PASS** (5/5 tasks successful, 0 errors, 0 new warnings).
+- `pnpm turbo run build`: **PASS** (API, Web, Worker all compiled successfully).
+
+### 8. GitHub CI Checks Status (PR #4)
+- PR: `#4` (`fix/oauth-public-url`)
+- Previous HEAD `a383aee`: All 5 CI checks **SUCCESS** (Green).
+
+
+
+
 
