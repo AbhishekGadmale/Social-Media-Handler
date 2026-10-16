@@ -393,10 +393,10 @@ Implemented `parseApiPublicUrl` and `getPublicApiUrl`:
 
 ### 8. GitHub CI Checks Status (PR #5)
 - **Pull Request**: [#5](https://github.com/AbhishekGadmale/Social-Media-Handler/pull/5) (`fix/provider-token-refresh`)
-- **CI Check Runs**: All checks monitored and maintained green.
-
-
-
-
-
-
+- **Head SHA**: `5022523`
+- **CI Check Runs**:
+  - `Docker Build & Smoke Test`: **SUCCESS** (Green)
+  - `Code Quality (Lint & Typecheck)`: **SUCCESS** (Green)
+  - `Application Builds`: **SUCCESS** (Green)
+  - `Tests`: **SUCCESS** (Green)
+  - `GitGuardian Security Checks`: **SUCCESS** (Green)
