@@ -306,6 +306,88 @@ Implemented `parseApiPublicUrl` and `getPublicApiUrl`:
 - PR: `#4` (`fix/oauth-public-url`)
 - Previous HEAD `a383aee`: All 5 CI checks **SUCCESS** (Green).
 
+---
+
+## Provider Token Expiry & Centralized Worker Refresh on Branch `fix/provider-token-refresh`
+
+### 1. Verified Root Cause & Gaps
+- **Lack of Refresh Contract in Provider Core**: `ISocialProvider` lacked any refresh abstraction (`refreshCredentials` method was absent from the interface and from all concrete provider classes).
+- **Silent Inability to Refresh in Worker**: `apps/worker/src/sync/sync.processor.ts` performed a raw check on `expiresAt < new Date()`. If expired, it immediately flipped `SocialAccount.status` to `REAUTH_REQUIRED` and skipped sync, even though valid encrypted refresh tokens existed in `SocialConnection`.
+- **Duplicate, Non-Centralized Decryption Logic**: `SyncProcessor` and `PublishingProcessor` each decrypted stored access tokens independently, bypassing centralized token validity and freshness checks.
+- **Publishing Worker Missing Auth Status Updates**: When `PublishingProcessor` encountered credential acquisition failures or provider `AUTH_REQUIRED` failure results, `SocialAccount.status` was not consistently updated to `REAUTH_REQUIRED`, allowing subsequent jobs to attempt publication with broken tokens.
+
+### 2. Provider-Specific Token Lifecycle & Refresh Implementation
+- **Provider Core Contract (`packages/providers/core/interfaces/ISocialProvider.ts`)**:
+  - Added optional `refreshCredentials?(refreshToken: string): Promise<OAuthCredentials>` to `ISocialProvider`.
+- **YouTube (`packages/providers/youtube/youtube.provider.ts`)**:
+  - Implemented `refreshCredentials` calling Google OAuth2 token endpoint `https://oauth2.googleapis.com/token` (`grant_type=refresh_token`).
+  - Supports token rotation: if Google returns a new `refresh_token`, it is captured; if omitted, the existing refresh token is preserved.
+  - Returns calculated `expiresAt = new Date(Date.now() + expires_in * 1000)`.
+- **LinkedIn (`packages/providers/linkedin/linkedin.provider.ts`)**:
+  - Implemented `refreshCredentials` calling LinkedIn token endpoint `https://www.linkedin.com/oauth/v2/accessToken` (`grant_type=refresh_token`).
+  - Supports token rotation with `refresh_token` and `refresh_token_expires_in`.
+  - Computes `expiresAt = new Date(Date.now() + expires_in * 1000)`.
+- **Meta / Instagram (`packages/providers/meta/meta.provider.ts`)**:
+  - Explicitly does NOT add generic refresh credentials method. Meta Graph API Page Access Tokens exchanged via server-side OAuth flow are long-lived/perpetual (`expiresAt == null`).
+  - Out-of-band token revocations or permission changes surface as HTTP 401 / OAuthException during execution, which transition the account to `REAUTH_REQUIRED`.
+
+### 3. Centralized `TokenService` & Concurrency Architecture (`apps/worker/src/publishing/token.service.ts`)
+- **Single Execution Credential Authority**: All workers (`SyncProcessor`, `PublishingProcessor`) resolve execution credentials solely through `tokenService.getExecutionCredentials(socialAccountId, workspaceId)`.
+- **Preemptive Freshness Threshold**: Tokens expiring within 5 minutes (`now >= expiresAt - 5m`) or already expired trigger automatic refresh before worker execution.
+- **Distributed Concurrency Lock**:
+  - Uses Redis `SET lock:refresh:${socialAccountId} <lockToken> PX 10000 NX` to ensure only one worker attempts token refresh per account.
+  - Safe release using a Lua script (`if redis.call("get", KEYS[1]) == ARGV[1] then return redis.call("del", KEYS[1]) else return 0 end`) ensuring a worker whose lock expired never inadvertently releases a subsequent worker's lock.
+- **Double-Checked Read Pattern**: Workers waiting on the lock re-check `SocialConnection` in PostgreSQL to immediately return new credentials once the lock owner completes refresh, preventing duplicate provider requests.
+- **Atomic Persistence**:
+  - Encrypts new tokens with AES-256-GCM.
+  - Persists new ciphertext, IV, auth tag, key version, and new `expiresAt` in an atomic Prisma transaction.
+  - Rotates `encryptedRefreshToken` only when provider supplies a new one; preserves existing refresh token otherwise.
+  - Automatically resets `SocialAccount.status` to `ACTIVE` upon successful refresh.
+
+### 4. Error Classification & Handling
+- **Permanent Auth Invalidation (`REAUTH_REQUIRED`)**:
+  - HTTP 400 with `invalid_grant`, `invalid_token`, `unauthorized`, or revoked status marks `SocialAccount.status = REAUTH_REQUIRED` and throws `AuthRequiredError`.
+  - Accounts with expired tokens but no refresh token or unsupported provider refresh transition to `REAUTH_REQUIRED`.
+- **Transient Failures (Retryable)**:
+  - Network timeouts, DNS errors, or HTTP 5xx responses from provider OAuth servers are rethrown without modifying `SocialAccount.status`, allowing standard BullMQ queue backoff retries.
+
+### 5. Processor Integrations
+- **`apps/worker/src/sync/sync.processor.ts`**:
+  - Injected `TokenService` and removed inline decryption.
+  - Catches `AuthRequiredError`, records `syncRun` status as `SKIPPED` with reason `expired_token`, and skips execution without retrying.
+- **`apps/worker/src/publishing/publishing.processor.ts`**:
+  - Updated credential acquisition and `handleFailure`: ensures `socialAccount.status = REAUTH_REQUIRED` whenever `AuthRequiredError` is caught or `category === 'AUTH_REQUIRED'`.
+
+### 6. Test Coverage Added
+- **`packages/providers/youtube/youtube.provider.spec.ts`**:
+  - Unit tests verifying Google OAuth2 refresh endpoint call, token rotation, and refresh token preservation.
+- **`packages/providers/linkedin/linkedin.provider.spec.ts`**:
+  - Unit tests verifying LinkedIn OAuth2 refresh endpoint call, rotated refresh tokens, and parameter formatting.
+- **`apps/worker/src/publishing/token.service.spec.ts`**:
+  - 11 comprehensive unit & integration tests covering fresh tokens, perpetual Meta tokens, preemptive refresh, token preservation, token rotation, 400 `invalid_grant` vs 500 transient errors, missing refresh token handling, Redis distributed concurrency, and Lua lock release safety.
+- **`apps/worker/src/sync/sync.processor.spec.ts`**:
+  - Added test verifying expired YouTube token with valid refresh token refreshes credentials and completes sync successfully.
+- **`apps/worker/src/publishing/publishing.worker.spec.ts`**:
+  - Added tests verifying `socialAccount.status` transitions to `REAUTH_REQUIRED` when provider returns `AUTH_REQUIRED` or `TokenService` throws `AuthRequiredError`.
+
+### 7. Verification Results
+- `pnpm --filter @agency-os/providers test`: **PASS** (15/15 test files, 231/231 tests passing).
+- `pnpm --filter @agency-os/worker test`: **PASS** (9/9 test files, 96/96 tests passing).
+- `pnpm --filter @agency-os/api test`: **PASS** (15/15 test files, 117/117 tests passing).
+- `pnpm turbo run typecheck`: **PASS** (5/5 tasks successful).
+- `pnpm turbo run lint`: **PASS** (5/5 tasks successful, 0 errors, 0 new warnings).
+- `pnpm turbo run build`: **PASS** (All packages built successfully).
+
+### 8. GitHub CI Checks Status (PR #5)
+- **Pull Request**: [#5](https://github.com/AbhishekGadmale/Social-Media-Handler/pull/5) (`fix/provider-token-refresh`)
+- **Head SHA**: `56c0ccd`
+- **CI Check Runs**:
+  - `Application Builds`: **SUCCESS** (Green)
+  - `Tests`: **SUCCESS** (Green)
+  - `Docker Build & Smoke Test`: **SUCCESS** (Green)
+  - `Code Quality (Lint & Typecheck)`: **SUCCESS** (Green)
+  - `GitGuardian Security Checks`: **SUCCESS** (Green)
+
 
 
 
