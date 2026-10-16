@@ -289,6 +289,26 @@ describe('TokenService', () => {
 
       refreshSpy.mockRestore();
     });
+
+    it('returns valid token and keeps account ACTIVE when token expires in <5m on non-refreshable account (e.g. Meta)', async () => {
+      const expiringInTwoMinutes = new Date(Date.now() + 2 * 60 * 1000); // 2 min validity (<5m threshold)
+      const { account } = await createAccountWithConnection({
+        provider: 'INSTAGRAM',
+        accessToken: 'still-valid-meta-token',
+        refreshToken: null,
+        expiresAt: expiringInTwoMinutes,
+      });
+
+      const tokenService = new TokenService(prisma);
+      const creds = await tokenService.getExecutionCredentials(account.id);
+
+      expect(creds.accessToken).toBe('still-valid-meta-token');
+
+      const updatedAccount = await prisma.socialAccount.findUniqueOrThrow({
+        where: { id: account.id },
+      });
+      expect(updatedAccount.status).toBe(SocialAccountStatus.ACTIVE);
+    });
   });
 
   describe('Error Classification & Failure Modes', () => {
@@ -395,6 +415,98 @@ describe('TokenService', () => {
       });
       expect(updatedAccount.status).toBe(SocialAccountStatus.REAUTH_REQUIRED);
     });
+
+    it('rethrows bare HTTP 400 error without marking account as REAUTH_REQUIRED', async () => {
+      const expiredDate = new Date(Date.now() - 60 * 1000);
+      const { account } = await createAccountWithConnection({
+        provider: 'YOUTUBE',
+        accessToken: 'expired-token',
+        refreshToken: 'valid-refresh-token',
+        expiresAt: expiredDate,
+      });
+
+      const ytProvider = providerRegistry.get('youtube');
+      const error: any = new Error('Bad Request');
+      error.statusCode = 400;
+      const refreshSpy = jest
+        .spyOn(ytProvider as any, 'refreshCredentials')
+        .mockRejectedValueOnce(error);
+
+      const tokenService = new TokenService(prisma);
+
+      await expect(
+        tokenService.getExecutionCredentials(account.id),
+      ).rejects.toThrow('Bad Request');
+
+      const updatedAccount = await prisma.socialAccount.findUniqueOrThrow({
+        where: { id: account.id },
+      });
+      expect(updatedAccount.status).toBe(SocialAccountStatus.ACTIVE);
+
+      refreshSpy.mockRestore();
+    });
+
+    it('rethrows HTTP 400 invalid_client config error without marking account as REAUTH_REQUIRED', async () => {
+      const expiredDate = new Date(Date.now() - 60 * 1000);
+      const { account } = await createAccountWithConnection({
+        provider: 'YOUTUBE',
+        accessToken: 'expired-token',
+        refreshToken: 'valid-refresh-token',
+        expiresAt: expiredDate,
+      });
+
+      const ytProvider = providerRegistry.get('youtube');
+      const error: any = new Error(
+        'invalid_client: Unauthorized client credentials',
+      );
+      error.statusCode = 400;
+      const refreshSpy = jest
+        .spyOn(ytProvider as any, 'refreshCredentials')
+        .mockRejectedValueOnce(error);
+
+      const tokenService = new TokenService(prisma);
+
+      await expect(
+        tokenService.getExecutionCredentials(account.id),
+      ).rejects.toThrow('invalid_client');
+
+      const updatedAccount = await prisma.socialAccount.findUniqueOrThrow({
+        where: { id: account.id },
+      });
+      expect(updatedAccount.status).toBe(SocialAccountStatus.ACTIVE);
+
+      refreshSpy.mockRestore();
+    });
+
+    it('rethrows HTTP 400 generic invalid_request config error without marking account as REAUTH_REQUIRED', async () => {
+      const expiredDate = new Date(Date.now() - 60 * 1000);
+      const { account } = await createAccountWithConnection({
+        provider: 'YOUTUBE',
+        accessToken: 'expired-token',
+        refreshToken: 'valid-refresh-token',
+        expiresAt: expiredDate,
+      });
+
+      const ytProvider = providerRegistry.get('youtube');
+      const error: any = new Error('invalid_request: Missing parameter');
+      error.statusCode = 400;
+      const refreshSpy = jest
+        .spyOn(ytProvider as any, 'refreshCredentials')
+        .mockRejectedValueOnce(error);
+
+      const tokenService = new TokenService(prisma);
+
+      await expect(
+        tokenService.getExecutionCredentials(account.id),
+      ).rejects.toThrow('invalid_request');
+
+      const updatedAccount = await prisma.socialAccount.findUniqueOrThrow({
+        where: { id: account.id },
+      });
+      expect(updatedAccount.status).toBe(SocialAccountStatus.ACTIVE);
+
+      refreshSpy.mockRestore();
+    });
   });
 
   describe('Redis Distributed Locking & Concurrency', () => {
@@ -459,6 +571,117 @@ describe('TokenService', () => {
       // Now release with Worker B's token
       await (tokenService as any).releaseLock(lockKey, tokenWorkerB);
       expect(await mockRedis.get(lockKey)).toBeNull();
+    });
+
+    it('failure fencing: stale worker getting 400 invalid_grant does NOT mark REAUTH_REQUIRED if another worker refreshed credentials in DB', async () => {
+      const expiredDate = new Date(Date.now() - 60 * 1000);
+      const { account } = await createAccountWithConnection({
+        provider: 'YOUTUBE',
+        accessToken: 'expired-token',
+        refreshToken: 'stale-refresh-token',
+        expiresAt: expiredDate,
+      });
+
+      const ytProvider = providerRegistry.get('youtube');
+      const error: any = new Error('invalid_grant: Token has been revoked');
+      error.statusCode = 400;
+
+      // When stale worker calls refresh, another worker has ALREADY updated the DB with new rotated refresh token & fresh access token
+      const refreshSpy = jest
+        .spyOn(ytProvider as any, 'refreshCredentials')
+        .mockImplementation(async () => {
+          // Simulate Worker A updating DB while Worker B was calling refresh
+          const encNewAccess = encrypt('fresh-token-from-worker-a');
+          const encNewRefresh = encrypt('rotated-refresh-token-from-worker-a');
+          await prisma.socialConnection.update({
+            where: { socialAccountId: account.id },
+            data: {
+              encryptedAccessToken: encNewAccess.encrypted,
+              accessTokenIv: encNewAccess.iv,
+              accessTokenAuthTag: encNewAccess.authTag,
+              keyVersion: encNewAccess.keyVersion,
+              encryptedRefreshToken: encNewRefresh.encrypted,
+              refreshTokenIv: encNewRefresh.iv,
+              refreshTokenAuthTag: encNewRefresh.authTag,
+              expiresAt: new Date(Date.now() + 3600 * 1000),
+            },
+          });
+          // Stale worker call fails with 400 invalid_grant
+          throw error;
+        });
+
+      const tokenService = new TokenService(prisma);
+
+      // Stale worker should not mark REAUTH_REQUIRED, but instead recover and return fresh token from DB
+      const creds = await tokenService.getExecutionCredentials(account.id);
+
+      expect(creds.accessToken).toBe('fresh-token-from-worker-a');
+
+      const updatedAccount = await prisma.socialAccount.findUniqueOrThrow({
+        where: { id: account.id },
+      });
+      expect(updatedAccount.status).toBe(SocialAccountStatus.ACTIVE);
+
+      refreshSpy.mockRestore();
+    });
+
+    it('CAS fencing: worker does not overwrite newer rotated refresh token when CAS update conflict occurs', async () => {
+      const expiredDate = new Date(Date.now() - 60 * 1000);
+      const { account } = await createAccountWithConnection({
+        provider: 'LINKEDIN',
+        accessToken: 'expired-token',
+        refreshToken: 'original-refresh-token',
+        expiresAt: expiredDate,
+      });
+
+      const liProvider = providerRegistry.get('linkedin');
+      const refreshSpy = jest
+        .spyOn(liProvider as any, 'refreshCredentials')
+        .mockImplementation(async () => {
+          // While Worker B was calling refresh, Worker A already completed and updated DB with newer rotated token
+          const encNewAccess = encrypt('worker-a-fresh-access-token');
+          const encNewRefresh = encrypt('worker-a-new-rotated-refresh-token');
+          await prisma.socialConnection.update({
+            where: { socialAccountId: account.id },
+            data: {
+              encryptedAccessToken: encNewAccess.encrypted,
+              accessTokenIv: encNewAccess.iv,
+              accessTokenAuthTag: encNewAccess.authTag,
+              keyVersion: encNewAccess.keyVersion,
+              encryptedRefreshToken: encNewRefresh.encrypted,
+              refreshTokenIv: encNewRefresh.iv,
+              refreshTokenAuthTag: encNewRefresh.authTag,
+              expiresAt: new Date(Date.now() + 3600 * 1000),
+            },
+          });
+
+          // Worker B gets its own credentials response based on old refresh token
+          return {
+            accessToken: 'worker-b-stale-access-token',
+            refreshToken: 'worker-b-stale-rotated-refresh-token',
+            expiresAt: new Date(Date.now() + 3600 * 1000),
+            tokenType: 'Bearer',
+          };
+        });
+
+      const tokenService = new TokenService(prisma);
+      const creds = await tokenService.getExecutionCredentials(account.id);
+
+      // CAS should prevent Worker B from overwriting Worker A's credentials, and return Worker A's token
+      expect(creds.accessToken).toBe('worker-a-fresh-access-token');
+
+      const connInDb = await prisma.socialConnection.findUniqueOrThrow({
+        where: { socialAccountId: account.id },
+      });
+      const decryptedRefresh = decrypt({
+        encrypted: connInDb.encryptedRefreshToken!,
+        iv: connInDb.refreshTokenIv!,
+        authTag: connInDb.refreshTokenAuthTag!,
+        keyVersion: connInDb.keyVersion,
+      });
+      expect(decryptedRefresh).toBe('worker-a-new-rotated-refresh-token');
+
+      refreshSpy.mockRestore();
     });
   });
 });

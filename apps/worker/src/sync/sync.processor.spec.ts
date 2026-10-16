@@ -372,4 +372,51 @@ describe('SyncProcessor', () => {
 
     refreshSpy.mockRestore();
   });
+
+  it('Transient error during token acquisition keeps account ACTIVE and rethrows standard error for retry without UnrecoverableError', async () => {
+    const { workspace, account } = await createMockData(
+      'YOUTUBE',
+      SocialAccountStatus.ACTIVE,
+    );
+    const job = {
+      id: 'job-transient-token',
+      data: { socialAccountId: account.id, workspaceId: workspace.id },
+    } as Job<any>;
+
+    const tokenService = (processor as any).tokenService;
+    const credSpy = jest
+      .spyOn(tokenService, 'getExecutionCredentials')
+      .mockRejectedValueOnce(
+        new Error(
+          'Token refresh lock acquisition timed out for social account',
+        ),
+      );
+
+    let thrownError: any;
+    try {
+      await processor.process(job);
+    } catch (err) {
+      thrownError = err;
+    }
+
+    expect(thrownError).toBeDefined();
+    expect(thrownError.message).toContain(
+      'Token refresh lock acquisition timed out',
+    );
+    expect(thrownError).not.toBeInstanceOf(UnrecoverableError);
+
+    // Account remains ACTIVE
+    const updatedAccount = await prisma.socialAccount.findUnique({
+      where: { id: account.id },
+    });
+    expect(updatedAccount!.status).toBe(SocialAccountStatus.ACTIVE);
+
+    // syncRun status is FAILED
+    const syncRun = await prisma.syncRun.findFirst({
+      orderBy: { startedAt: 'desc' },
+    });
+    expect(syncRun!.status).toBe(SyncRunStatus.FAILED);
+
+    credSpy.mockRestore();
+  });
 });

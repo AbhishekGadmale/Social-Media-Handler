@@ -132,13 +132,17 @@ export class LinkedInProvider implements ISocialProvider, IPublishingProvider {
       client_secret: this.clientSecret,
     });
 
-    const response = await fetch(this.tokenUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
+    const response = await this.fetchWithTimeout(
+      this.tokenUrl,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: params.toString(),
       },
-      body: params.toString(),
-    });
+      7000,
+    );
 
     if (!response.ok) {
       const errorText = await response.text();
@@ -149,7 +153,12 @@ export class LinkedInProvider implements ISocialProvider, IPublishingProvider {
       } catch (e) {
         safeMessage = errorText;
       }
-      safeMessage = safeMessage.replace(this.clientSecret, '***').replace(refreshToken, '***');
+      if (this.clientSecret) {
+        safeMessage = safeMessage.replaceAll(this.clientSecret, '***');
+      }
+      if (refreshToken) {
+        safeMessage = safeMessage.replaceAll(refreshToken, '***');
+      }
       throw new ProviderApiError(`Failed to refresh access token: ${safeMessage}`, response.status);
     }
 

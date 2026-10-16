@@ -63,7 +63,7 @@ export class SyncProcessor extends WorkerHost implements OnModuleInit {
 
     try {
       if (!socialAccountId || !workspaceId) {
-        throw new Error(
+        throw new UnrecoverableError(
           `Missing required socialAccountId or workspaceId in job data (received socialAccountId: ${socialAccountId}, workspaceId: ${workspaceId})`,
         );
       }
@@ -77,7 +77,7 @@ export class SyncProcessor extends WorkerHost implements OnModuleInit {
       });
 
       if (!account || !account.connection) {
-        throw new Error(
+        throw new UnrecoverableError(
           `Account or connection not found for id: ${socialAccountId} in workspace: ${workspaceId}`,
         );
       }
@@ -257,10 +257,12 @@ export class SyncProcessor extends WorkerHost implements OnModuleInit {
         throw error; // Standard backoff retry for other ProviderApiErrors
       }
 
-      // Never let a raw unhandled exception crash the worker process, handle other errors gracefully
-      const errorMessage =
-        error instanceof Error ? error.message : String(error);
-      throw new UnrecoverableError(errorMessage);
+      if (error instanceof UnrecoverableError) {
+        throw error;
+      }
+
+      // Allow transient errors (network, Redis lock, database blips, 5xx) to bubble up so BullMQ can retry
+      throw error;
     }
   }
 

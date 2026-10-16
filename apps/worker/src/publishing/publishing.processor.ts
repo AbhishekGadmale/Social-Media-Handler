@@ -66,7 +66,10 @@ export class PublishingProcessor extends WorkerHost {
     // 3. Decrypt token
     let credentials;
     try {
-      credentials = await this.tokenService.getExecutionCredentials(variant.socialAccountId);
+      credentials = await this.tokenService.getExecutionCredentials(
+        variant.socialAccountId,
+        workspaceId,
+      );
     } catch (err: any) {
       if (err instanceof AuthRequiredError) {
         await this.prisma.socialAccount.update({
@@ -253,6 +256,7 @@ export class PublishingProcessor extends WorkerHost {
     try {
       credentials = await this.tokenService.getExecutionCredentials(
         variant.socialAccountId,
+        workspaceId,
       );
     } catch (error: any) {
       if (error instanceof AuthRequiredError) {
@@ -260,15 +264,22 @@ export class PublishingProcessor extends WorkerHost {
           where: { id: variant.socialAccountId },
           data: { status: SocialAccountStatus.REAUTH_REQUIRED },
         });
+        await this.handleFailure(
+          publicationId,
+          attempt.id,
+          'AUTH_REQUIRED',
+          'CREDENTIALS_UNAVAILABLE',
+          error.message,
+        );
+        return;
       }
-      await this.handleFailure(
+      this.logger.warn({
+        msg: 'publication.credentials_transient_error',
         publicationId,
-        attempt.id,
-        'AUTH_REQUIRED',
-        'CREDENTIALS_UNAVAILABLE',
-        error.message,
-      );
-      return;
+        socialAccountId: variant.socialAccountId,
+        err: error?.message,
+      });
+      throw error; // Let BullMQ retry
     }
 
     const providerInput: ProviderPublicationInput = {

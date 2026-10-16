@@ -55,7 +55,7 @@ export class TokenService {
       ? account.connection.expiresAt.getTime()
       : null;
 
-    // 1. Freshness check: if token has no expiration (e.g. Meta page token) or expires in > 5m
+    // 1. Freshness check: if token has no expiration (e.g. permanent token) or expires in > 5m
     if (
       expiresAtMs === null ||
       expiresAtMs > now + TokenService.REFRESH_THRESHOLD_MS
@@ -72,7 +72,27 @@ export class TokenService {
       };
     }
 
-    // 2. Token is near expiry or expired: coordinate refresh
+    // Check if token cannot be refreshed and is still valid (Blocker 3: Premature REAUTH fix)
+    const registry = this.providerRegistryInstance || providerRegistry;
+    const provider = registry.get(String(account.provider).toLowerCase());
+    const hasRefreshToken = Boolean(account.connection.encryptedRefreshToken);
+    const canRefresh =
+      hasRefreshToken && typeof provider?.refreshCredentials === 'function';
+
+    if (!canRefresh && expiresAtMs > now) {
+      // Token is in the 5-minute pre-expiry window, cannot be refreshed, but is STILL VALID
+      const decryptedToken = decrypt({
+        encrypted: account.connection.encryptedAccessToken,
+        iv: account.connection.accessTokenIv,
+        authTag: account.connection.accessTokenAuthTag,
+        keyVersion: account.connection.keyVersion,
+      });
+      return {
+        accessToken: decryptedToken,
+      };
+    }
+
+    // 2. Token is near expiry and refreshable, or actually expired: coordinate refresh
     return this.refreshAndGetCredentials(account, socialAccountId);
   }
 
@@ -86,7 +106,7 @@ export class TokenService {
 
     if (this.redis) {
       let attempts = 0;
-      const maxAttempts = 15; // 15 * 200ms = 3000ms max wait
+      const maxAttempts = 50; // 50 * 200ms = 10,000ms max wait (matches 10s Redis Lock TTL)
       while (!lockAcquired && attempts < maxAttempts) {
         const res = await this.redis.set(
           lockKey,
@@ -184,6 +204,22 @@ export class TokenService {
         hasRefreshToken && typeof provider?.refreshCredentials === 'function';
 
       if (!canRefresh || !provider?.refreshCredentials) {
+        // Blocker 3: Premature REAUTH fix
+        // If the token is still valid (now < expiresAt), return it!
+        if (
+          currentConnection.expiresAt &&
+          currentConnection.expiresAt.getTime() > Date.now()
+        ) {
+          const decryptedToken = decrypt({
+            encrypted: currentConnection.encryptedAccessToken,
+            iv: currentConnection.accessTokenIv,
+            authTag: currentConnection.accessTokenAuthTag,
+            keyVersion: currentConnection.keyVersion,
+          });
+          return { accessToken: decryptedToken };
+        }
+
+        // Only mark REAUTH_REQUIRED if token is actually expired
         await this.prisma.socialAccount.update({
           where: { id: socialAccountId },
           data: { status: SocialAccountStatus.REAUTH_REQUIRED },
@@ -192,6 +228,8 @@ export class TokenService {
           `Token expired for account ${socialAccountId} (${String(account.provider)}) and cannot be refreshed`,
         );
       }
+
+      const oldEncryptedRefreshToken = currentConnection.encryptedRefreshToken;
 
       const refreshToken = decrypt({
         encrypted: currentConnection.encryptedRefreshToken!,
@@ -211,15 +249,61 @@ export class TokenService {
               ? (err.status as number)
               : undefined;
         const msg = String(err?.message || '').toLowerCase();
-        const isAuthInvalid =
-          statusCode === 400 ||
-          statusCode === 401 ||
+
+        // Blocker 4: Require semantic evidence before treating HTTP 400 as permanent auth failure
+        const hasSemanticAuthFailure =
           msg.includes('invalid_grant') ||
           msg.includes('invalid_token') ||
           msg.includes('unauthorized') ||
-          msg.includes('revoked');
+          msg.includes('revoked') ||
+          msg.includes('token_expired') ||
+          msg.includes('token has been expired or revoked') ||
+          msg.includes('expired');
+
+        const is401 = statusCode === 401;
+        const is400WithSemanticAuth =
+          statusCode === 400 && hasSemanticAuthFailure;
+
+        // Exclude config errors like invalid_client or bare invalid_request unless accompanied by explicit grant failure
+        const isConfigError =
+          msg.includes('invalid_client') ||
+          (msg.includes('invalid_request') && !hasSemanticAuthFailure);
+
+        const isAuthInvalid =
+          (is401 || is400WithSemanticAuth || hasSemanticAuthFailure) &&
+          !isConfigError;
 
         if (isAuthInvalid) {
+          // Failure Fencing (Blocker 1): Re-read connection from DB before marking REAUTH_REQUIRED
+          const latestConnection =
+            await this.prisma.socialConnection.findUnique({
+              where: { socialAccountId },
+            });
+
+          // Check if another worker refreshed while we were in flight
+          const isRefreshedByOther =
+            (latestConnection?.encryptedRefreshToken &&
+              latestConnection.encryptedRefreshToken !==
+                oldEncryptedRefreshToken) ||
+            (latestConnection?.expiresAt &&
+              latestConnection.expiresAt.getTime() >
+                Date.now() + TokenService.REFRESH_THRESHOLD_MS);
+
+          if (
+            isRefreshedByOther &&
+            latestConnection?.expiresAt &&
+            latestConnection.expiresAt.getTime() > Date.now()
+          ) {
+            const decryptedToken = decrypt({
+              encrypted: latestConnection.encryptedAccessToken,
+              iv: latestConnection.accessTokenIv,
+              authTag: latestConnection.accessTokenAuthTag,
+              keyVersion: latestConnection.keyVersion,
+            });
+            return { accessToken: decryptedToken };
+          }
+
+          // Genuine auth failure: Refresh token in DB hasn't changed and token is truly revoked/expired
           await this.prisma.socialAccount.update({
             where: { id: socialAccountId },
             data: { status: SocialAccountStatus.REAUTH_REQUIRED },
@@ -229,13 +313,13 @@ export class TokenService {
           );
         }
 
-        // Transient / network / 5xx error: do NOT mark permanently REAUTH_REQUIRED
+        // Transient / network / 5xx / config error: do NOT mark permanently REAUTH_REQUIRED
         throw err;
       }
 
       const encAccess = encrypt(newCreds.accessToken);
 
-      await this.prisma.$transaction(async (tx) => {
+      const returnedCreds = await this.prisma.$transaction(async (tx) => {
         const updateData: any = {
           encryptedAccessToken: encAccess.encrypted,
           accessTokenIv: encAccess.iv,
@@ -253,10 +337,31 @@ export class TokenService {
           updateData.refreshTokenAuthTag = encRefresh.authTag;
         }
 
-        await tx.socialConnection.update({
-          where: { socialAccountId },
+        // CAS Fencing (Blocker 1): Compare-and-swap using oldEncryptedRefreshToken
+        const casResult = await tx.socialConnection.updateMany({
+          where: {
+            socialAccountId,
+            encryptedRefreshToken: oldEncryptedRefreshToken,
+          },
           data: updateData,
         });
+
+        if (casResult.count === 0) {
+          // Another worker won the race and updated the connection!
+          // Re-read latest connection and return fresh credentials without overwriting
+          const latest = await tx.socialConnection.findUnique({
+            where: { socialAccountId },
+          });
+          if (latest) {
+            const decryptedLatest = decrypt({
+              encrypted: latest.encryptedAccessToken,
+              iv: latest.accessTokenIv,
+              authTag: latest.accessTokenAuthTag,
+              keyVersion: latest.keyVersion,
+            });
+            return { accessToken: decryptedLatest };
+          }
+        }
 
         if (account.status !== SocialAccountStatus.ACTIVE) {
           await tx.socialAccount.update({
@@ -264,11 +369,13 @@ export class TokenService {
             data: { status: SocialAccountStatus.ACTIVE },
           });
         }
+
+        return {
+          accessToken: newCreds.accessToken,
+        };
       });
 
-      return {
-        accessToken: newCreds.accessToken,
-      };
+      return returnedCreds;
     } finally {
       if (this.redis && lockAcquired) {
         await this.releaseLock(lockKey, lockToken);

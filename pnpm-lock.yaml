@@ -333,9 +333,6 @@ importers:
       '@types/express':
         specifier: ^5.0.0
         version: 5.0.6
-      '@types/ioredis':
-        specifier: 5.0.0
-        version: 5.0.0
       '@types/jest':
         specifier: ^29.5.0
         version: 29.5.14

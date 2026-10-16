@@ -999,5 +999,88 @@ describe('Publishing Worker (e2e)', () => {
       expect(attempt?.failureCategory).toBe('VALIDATION');
       expect(attempt?.failureCode).toBe('BAD_PREP');
     });
+
+    it('transient credential error keeps account ACTIVE and rethrows error for BullMQ retry without terminal failure', async () => {
+      const { variantId, wsId, accountId } = await createFixture(
+        PostStatus.QUEUED,
+      );
+
+      const credSpy = jest
+        .spyOn(tokenService, 'getExecutionCredentials')
+        .mockRejectedValueOnce(
+          new Error(
+            'Token refresh lock acquisition timed out for social account',
+          ),
+        );
+
+      await expect(
+        processor.process({
+          id: 'job-transient-cred',
+          data: {
+            workspaceId: wsId,
+            publicationId: variantId,
+            dispatchVersion: 1,
+          },
+        } as any),
+      ).rejects.toThrow('Token refresh lock acquisition timed out');
+
+      // Account must remain ACTIVE
+      const account = await prisma.socialAccount.findUniqueOrThrow({
+        where: { id: accountId },
+      });
+      expect(account.status).toBe(SocialAccountStatus.ACTIVE);
+
+      // Attempt must NOT be marked FAILED with AUTH_REQUIRED
+      const attempt = await prisma.publicationAttempt.findFirst({
+        where: { variantId },
+        orderBy: { attemptNumber: 'desc' },
+      });
+      expect(attempt?.failureCategory).not.toBe('AUTH_REQUIRED');
+
+      credSpy.mockRestore();
+    });
+
+    it('AuthRequiredError marks account REAUTH_REQUIRED and fails attempt terminally without rethrowing', async () => {
+      const { variantId, wsId, accountId } = await createFixture(
+        PostStatus.QUEUED,
+      );
+
+      const credSpy = jest
+        .spyOn(tokenService, 'getExecutionCredentials')
+        .mockRejectedValueOnce(
+          new AuthRequiredError('Token expired and cannot be refreshed'),
+        );
+
+      // Must not throw (BullMQ treats as handled/terminal)
+      await processor.process({
+        id: 'job-auth-required',
+        data: {
+          workspaceId: wsId,
+          publicationId: variantId,
+          dispatchVersion: 1,
+        },
+      } as any);
+
+      // Account must be marked REAUTH_REQUIRED
+      const account = await prisma.socialAccount.findUniqueOrThrow({
+        where: { id: accountId },
+      });
+      expect(account.status).toBe(SocialAccountStatus.REAUTH_REQUIRED);
+
+      // Variant must be FAILED
+      const variant = await prisma.postPlatformVariant.findUniqueOrThrow({
+        where: { id: variantId },
+      });
+      expect(variant.status).toBe(PostStatus.FAILED);
+
+      // Attempt must be marked FAILED with AUTH_REQUIRED
+      const attempt = await prisma.publicationAttempt.findFirst({
+        where: { variantId },
+        orderBy: { attemptNumber: 'desc' },
+      });
+      expect(attempt?.failureCategory).toBe('AUTH_REQUIRED');
+
+      credSpy.mockRestore();
+    });
   });
 });

@@ -143,6 +143,29 @@ export class YouTubeProvider implements ISocialProvider, IPublishingProvider {
     };
   }
 
+  private async fetchWithTimeout(
+    url: string,
+    options: RequestInit,
+    timeoutMs: number,
+  ): Promise<Response> {
+    const controller = new AbortController();
+    const id = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const response = await fetch(url, {
+        ...options,
+        signal: controller.signal as any,
+      });
+      clearTimeout(id);
+      return response;
+    } catch (err: any) {
+      clearTimeout(id);
+      if (err.name === "AbortError") {
+        throw new Error(`Request timed out after ${timeoutMs}ms`);
+      }
+      throw err;
+    }
+  }
+
   async refreshCredentials(refreshToken: string): Promise<OAuthCredentials> {
     const params = new URLSearchParams({
       client_id: this.clientId,
@@ -151,13 +174,17 @@ export class YouTubeProvider implements ISocialProvider, IPublishingProvider {
       grant_type: "refresh_token",
     });
 
-    const response = await fetch(this.tokenUrl, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
+    const response = await this.fetchWithTimeout(
+      this.tokenUrl,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body: params.toString(),
       },
-      body: params.toString(),
-    });
+      7000,
+    );
 
     if (!response.ok) {
       const errorText = await response.text();
@@ -167,6 +194,12 @@ export class YouTubeProvider implements ISocialProvider, IPublishingProvider {
         safeMessage = parsed.error_description || parsed.error || errorText;
       } catch {
         safeMessage = errorText;
+      }
+      if (this.clientSecret) {
+        safeMessage = safeMessage.replaceAll(this.clientSecret, "***");
+      }
+      if (refreshToken) {
+        safeMessage = safeMessage.replaceAll(refreshToken, "***");
       }
       throw new ProviderApiError(
         `Failed to refresh YouTube access token: ${safeMessage}`,
