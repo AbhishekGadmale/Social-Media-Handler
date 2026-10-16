@@ -124,6 +124,54 @@ export class LinkedInProvider implements ISocialProvider, IPublishingProvider {
     };
   }
 
+  async refreshCredentials(refreshToken: string): Promise<OAuthCredentials> {
+    const params = new URLSearchParams({
+      grant_type: 'refresh_token',
+      refresh_token: refreshToken,
+      client_id: this.clientId,
+      client_secret: this.clientSecret,
+    });
+
+    const response = await this.fetchWithTimeout(
+      this.tokenUrl,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: params.toString(),
+      },
+      7000,
+    );
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      let safeMessage = 'Unknown error';
+      try {
+        const parsed = JSON.parse(errorText);
+        safeMessage = parsed.error_description || parsed.error || parsed.message || errorText;
+      } catch (e) {
+        safeMessage = errorText;
+      }
+      if (this.clientSecret) {
+        safeMessage = safeMessage.replaceAll(this.clientSecret, '***');
+      }
+      if (refreshToken) {
+        safeMessage = safeMessage.replaceAll(refreshToken, '***');
+      }
+      throw new ProviderApiError(`Failed to refresh access token: ${safeMessage}`, response.status);
+    }
+
+    const data = await response.json();
+
+    return {
+      accessToken: data.access_token,
+      refreshToken: data.refresh_token || refreshToken,
+      expiresAt: data.expires_in ? new Date(Date.now() + data.expires_in * 1000) : undefined,
+      scopes: data.scope ? data.scope.split(' ') : ['openid', 'profile', 'email'],
+    };
+  }
+
   async getProfiles(credentials: OAuthCredentials): Promise<ProviderProfileResult[]> {
     const response = await fetch(this.userInfoUrl, {
       headers: {

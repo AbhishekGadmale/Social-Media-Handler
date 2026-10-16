@@ -306,7 +306,97 @@ Implemented `parseApiPublicUrl` and `getPublicApiUrl`:
 - PR: `#4` (`fix/oauth-public-url`)
 - Previous HEAD `a383aee`: All 5 CI checks **SUCCESS** (Green).
 
+---
 
+## Provider Token Expiry & Centralized Worker Refresh on Branch `fix/provider-token-refresh`
 
+### 1. Verified Root Cause & Gaps
+- **Lack of Refresh Contract in Provider Core**: `ISocialProvider` lacked any refresh abstraction (`refreshCredentials` method was absent from the interface and from all concrete provider classes).
+- **Silent Inability to Refresh in Worker**: `apps/worker/src/sync/sync.processor.ts` performed a raw check on `expiresAt < new Date()`. If expired, it immediately flipped `SocialAccount.status` to `REAUTH_REQUIRED` and skipped sync, even though valid encrypted refresh tokens existed in `SocialConnection`.
+- **Duplicate, Non-Centralized Decryption Logic**: `SyncProcessor` and `PublishingProcessor` each decrypted stored access tokens independently, bypassing centralized token validity and freshness checks.
+- **Publishing Worker Missing Auth Status Updates**: When `PublishingProcessor` encountered credential acquisition failures or provider `AUTH_REQUIRED` failure results, `SocialAccount.status` was not consistently updated to `REAUTH_REQUIRED`, allowing subsequent jobs to attempt publication with broken tokens.
 
+### 2. Provider-Specific Token Lifecycle & Refresh Implementation
+- **Provider Core Contract (`packages/providers/core/interfaces/ISocialProvider.ts`)**:
+  - Added optional `refreshCredentials?(refreshToken: string): Promise<OAuthCredentials>` to `ISocialProvider`.
+- **YouTube (`packages/providers/youtube/youtube.provider.ts`)**:
+  - Implemented `refreshCredentials` calling Google OAuth2 token endpoint `https://oauth2.googleapis.com/token` (`grant_type=refresh_token`).
+  - Added `fetchWithTimeout(..., 7000)`: guarantees HTTP refresh call will timeout at 7,000ms (strictly less than Redis lock TTL of 10,000ms).
+  - Redacts sensitive secrets (`clientSecret` and `refreshToken`) from error messages using `replaceAll`.
+  - Supports token rotation: if Google returns a new `refresh_token`, it is captured; if omitted, the existing refresh token is preserved.
+  - Returns calculated `expiresAt = new Date(Date.now() + expires_in * 1000)`.
+- **LinkedIn (`packages/providers/linkedin/linkedin.provider.ts`)**:
+  - Implemented `refreshCredentials` calling LinkedIn token endpoint `https://www.linkedin.com/oauth/v2/accessToken` (`grant_type=refresh_token`).
+  - Added `fetchWithTimeout(..., 7000)`: guarantees HTTP refresh call will timeout at 7,000ms (strictly less than Redis lock TTL of 10,000ms).
+  - Redacts sensitive secrets (`clientSecret` and `refreshToken`) from error messages using `replaceAll`.
+  - Supports token rotation with `refresh_token` and `refresh_token_expires_in`.
+  - Computes `expiresAt = new Date(Date.now() + expires_in * 1000)`.
+- **Meta / Instagram (`packages/providers/meta/meta.provider.ts`)**:
+  - Explicitly does NOT add generic refresh credentials method. Meta user tokens are exchanged via server-side OAuth flow for 60-day long-lived tokens and carry an explicit ~60-day `expiresAt` in the DB.
+  - When within the 5-minute pre-expiry window, if `expiresAt > now`, `TokenService` recognizes the token is still valid, keeps the account `ACTIVE`, and returns the decrypted token without marking `REAUTH_REQUIRED`.
+  - Only when actually expired (`expiresAt <= now`) or when an explicit HTTP 401 / OAuthException is returned during execution is the account transitioned to `REAUTH_REQUIRED`.
 
+### 3. Centralized `TokenService` & Concurrency Architecture (`apps/worker/src/publishing/token.service.ts`)
+- **Single Execution Credential Authority**: All workers (`SyncProcessor`, `PublishingProcessor`) resolve execution credentials solely through `tokenService.getExecutionCredentials(socialAccountId, workspaceId)`. Tenant isolation is enforced via optional `workspaceId`.
+- **Preemptive Freshness Threshold**: Tokens expiring within 5 minutes (`now >= expiresAt - 5m`) or already expired trigger automatic refresh before worker execution, while still-valid non-refreshable tokens return cleanly until actually expired.
+- **Distributed Concurrency Lock & Extended Contention Wait**:
+  - Uses Redis `SET lock:refresh:${socialAccountId} <lockToken> PX 10000 NX` to ensure only one worker attempts token refresh per account.
+  - Contention wait loop extended to 50 attempts * 200ms = 10,000ms (matching the 10-second lock TTL) with double-checked DB re-reading every 200ms.
+  - Safe release using a Lua script (`if redis.call("get", KEYS[1]) == ARGV[1] then return redis.call("del", KEYS[1]) else return 0 end`) ensuring a worker whose lock expired never inadvertently releases a subsequent worker's lock.
+- **CAS (Compare-And-Swap) Persistence**:
+  - Encrypts new tokens with AES-256-GCM.
+  - Uses `tx.socialConnection.updateMany({ where: { socialAccountId, encryptedRefreshToken: oldEncryptedRefreshToken }, data: updateData })`.
+  - If `casResult.count === 0`, a concurrent worker has already refreshed credentials and rotated the refresh token; `TokenService` aborts overwrite, re-reads the fresh token from DB, and returns it safely.
+- **Failure Fencing on Refresh Errors**:
+  - When a worker encounters an auth invalidation error (e.g. HTTP 400 `invalid_grant`) during refresh, it re-reads `SocialConnection` from DB before mutating status.
+  - If another worker already successfully refreshed and stored new credentials in DB (changing `encryptedRefreshToken` or setting fresh `expiresAt`), the current worker recovers the fresh token without marking `REAUTH_REQUIRED`.
+  - Only genuine auth failures where the DB state has not been updated mark `SocialAccount.status = REAUTH_REQUIRED`.
+
+### 4. Error Classification & Handling
+- **Semantic Evidence Required for Permanent Auth Failure (`REAUTH_REQUIRED`)**:
+  - HTTP 401 Unauthorized, or HTTP 400 specifically accompanied by OAuth error indicators (`invalid_grant`, `invalid_token`, `unauthorized`, `revoked`, `expired`, `token_expired`), marks `SocialAccount.status = REAUTH_REQUIRED` and throws `AuthRequiredError`.
+  - Bare HTTP 400 responses, `invalid_client` configuration errors, and generic `invalid_request` errors are classified as transient/configuration errors and rethrown without marking `REAUTH_REQUIRED`.
+- **Transient Failures (Retryable)**:
+  - Network timeouts, DNS errors, HTTP 5xx responses, and Redis lock acquisition timeouts are rethrown without modifying `SocialAccount.status`, allowing standard BullMQ queue backoff retries.
+
+### 5. Processor Integrations
+- **`apps/worker/src/sync/sync.processor.ts`**:
+  - Injected `TokenService` and removed inline decryption; passes `workspaceId` for tenant scoping.
+  - Catches `AuthRequiredError`, records `syncRun` status as `SKIPPED` with reason `expired_token`, and skips execution without retrying.
+  - Transient errors bubble up as standard errors so BullMQ retries with exponential backoff (no longer converts transient errors into `UnrecoverableError`). Only missing required job inputs or missing account throw `UnrecoverableError`.
+- **`apps/worker/src/publishing/publishing.processor.ts`**:
+  - Updated credential acquisition in `process` and `processDelete` to pass `workspaceId`.
+  - Split credential acquisition error handling: only `AuthRequiredError` sets `socialAccount.status = REAUTH_REQUIRED` and calls `handleFailure(..., 'AUTH_REQUIRED', ...)`.
+  - Transient credential acquisition errors (e.g. lock acquisition timeout, 5xx) log a warning and rethrow so BullMQ retries the job without failing the publication or marking the account `REAUTH_REQUIRED`.
+
+### 6. Test Coverage Added
+- **`packages/providers/youtube/youtube.provider.spec.ts`**:
+  - Unit tests verifying Google OAuth2 refresh endpoint call, token rotation, and refresh token preservation.
+- **`packages/providers/linkedin/linkedin.provider.spec.ts`**:
+  - Unit tests verifying LinkedIn OAuth2 refresh endpoint call, rotated refresh tokens, and parameter formatting.
+- **`apps/worker/src/publishing/token.service.spec.ts`**:
+  - 17 comprehensive unit & integration tests covering fresh tokens, perpetual Meta tokens, preemptive refresh, token preservation, token rotation, still-valid <5m non-refreshable tokens, bare HTTP 400 vs 400 `invalid_grant` vs config errors (`invalid_client`, `invalid_request`), missing refresh token handling, Redis distributed concurrency, Lua lock release safety, CAS conflict fencing, and failure fencing.
+- **`apps/worker/src/sync/sync.processor.spec.ts`**:
+  - Added test verifying expired YouTube token with valid refresh token refreshes credentials and completes sync successfully.
+  - Added test verifying transient credential acquisition errors keep account `ACTIVE` and rethrow for BullMQ retry without `UnrecoverableError`.
+- **`apps/worker/src/publishing/publishing.worker.spec.ts`**:
+  - Added tests verifying `socialAccount.status` transitions to `REAUTH_REQUIRED` when provider returns `AUTH_REQUIRED` or `TokenService` throws `AuthRequiredError`.
+  - Added tests verifying transient credential errors keep account `ACTIVE` and rethrow for BullMQ retry without terminal `AUTH_REQUIRED` attempt failure.
+
+### 7. Verification Results
+- `pnpm --filter @agency-os/providers test`: **PASS** (15/15 test files, 231/231 tests passing).
+- `pnpm --filter @agency-os/worker test`: **PASS** (9/9 test files, 105/105 tests passing).
+- `pnpm --filter @agency-os/api test`: **PASS** (15/15 test files, 117/117 tests passing).
+- `pnpm turbo run typecheck`: **PASS** (5/5 tasks successful).
+- `pnpm turbo run lint`: **PASS** (5/5 tasks successful, 0 errors, 0 new warnings).
+- `pnpm turbo run build`: **PASS** (All packages built successfully).
+
+### 8. GitHub CI Checks Status (PR #5)
+- **Pull Request**: [#5](https://github.com/AbhishekGadmale/Social-Media-Handler/pull/5) (`fix/provider-token-refresh`)
+- **Head SHA**: `5022523`
+- **CI Check Runs**:
+  - `Docker Build & Smoke Test`: **SUCCESS** (Green)
+  - `Code Quality (Lint & Typecheck)`: **SUCCESS** (Green)
+  - `Application Builds`: **SUCCESS** (Green)
+  - `Tests`: **SUCCESS** (Green)
+  - `GitGuardian Security Checks`: **SUCCESS** (Green)

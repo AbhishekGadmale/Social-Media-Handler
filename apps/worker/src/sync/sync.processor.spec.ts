@@ -16,6 +16,7 @@ import * as invokeMod from '@agency-os/providers';
 import { Job, UnrecoverableError } from 'bullmq';
 import { encrypt } from '@agency-os/database/src/crypto/encryption';
 import { assertTestDatabaseUrl } from '@agency-os/database';
+import { TokenService } from '../publishing/token.service';
 
 jest.mock('@agency-os/providers', () => {
   const original = jest.requireActual('@agency-os/providers');
@@ -34,6 +35,7 @@ describe('SyncProcessor', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         SyncProcessor,
+        TokenService,
         {
           provide: PrismaClient,
           useValue: prisma,
@@ -68,6 +70,7 @@ describe('SyncProcessor', () => {
     provider: any,
     status = SocialAccountStatus.ACTIVE,
     expiresAt?: Date,
+    refreshToken?: string,
   ) => {
     const org = await prisma.organization.create({
       data: {
@@ -96,6 +99,7 @@ describe('SyncProcessor', () => {
     });
 
     const token = encrypt('mock-token');
+    const encRefresh = refreshToken ? encrypt(refreshToken) : null;
 
     await prisma.socialConnection.create({
       data: {
@@ -105,6 +109,9 @@ describe('SyncProcessor', () => {
         accessTokenIv: token.iv,
         accessTokenAuthTag: token.authTag,
         keyVersion: token.keyVersion,
+        encryptedRefreshToken: encRefresh ? encRefresh.encrypted : null,
+        refreshTokenIv: encRefresh ? encRefresh.iv : null,
+        refreshTokenAuthTag: encRefresh ? encRefresh.authTag : null,
         expiresAt,
       },
     });
@@ -309,5 +316,107 @@ describe('SyncProcessor', () => {
       'Missing required socialAccountId or workspaceId in job data',
     );
     expect(invokeMod.invokeCapability).not.toHaveBeenCalled();
+  });
+
+  it('Expired token with valid refresh capability refreshes credentials and completes sync successfully', async () => {
+    const pastDate = new Date();
+    pastDate.setFullYear(pastDate.getFullYear() - 1);
+    const { workspace, account } = await createMockData(
+      'YOUTUBE',
+      SocialAccountStatus.ACTIVE,
+      pastDate,
+      'valid-refresh-token',
+    );
+    const job = {
+      data: { socialAccountId: account.id, workspaceId: workspace.id },
+    } as Job<any>;
+
+    const ytProvider = providerRegistry.get('youtube');
+    const refreshSpy = jest
+      .spyOn(ytProvider as any, 'refreshCredentials')
+      .mockResolvedValueOnce({
+        accessToken: 'brand-new-refreshed-token',
+        refreshToken: 'valid-refresh-token',
+        expiresAt: new Date(Date.now() + 3600 * 1000),
+        tokenType: 'Bearer',
+        scope: ['read'],
+      });
+
+    (invokeMod.invokeCapability as jest.Mock).mockResolvedValueOnce({
+      followersCount: 300,
+      engagement: 75,
+    });
+
+    await processor.process(job);
+
+    expect(refreshSpy).toHaveBeenCalledWith('valid-refresh-token');
+
+    // Confirm connection updated in DB
+    const connection = await prisma.socialConnection.findUnique({
+      where: { socialAccountId: account.id },
+    });
+    expect(connection!.expiresAt!.getTime()).toBeGreaterThan(Date.now());
+
+    // Confirm account remains ACTIVE
+    const updatedAccount = await prisma.socialAccount.findUnique({
+      where: { id: account.id },
+    });
+    expect(updatedAccount!.status).toBe(SocialAccountStatus.ACTIVE);
+
+    // Confirm syncRun completed successfully
+    const syncRun = await prisma.syncRun.findFirst({
+      orderBy: { startedAt: 'desc' },
+    });
+    expect(syncRun!.status).toBe(SyncRunStatus.COMPLETED);
+    expect((syncRun!.counts as any).followers).toBe(300);
+
+    refreshSpy.mockRestore();
+  });
+
+  it('Transient error during token acquisition keeps account ACTIVE and rethrows standard error for retry without UnrecoverableError', async () => {
+    const { workspace, account } = await createMockData(
+      'YOUTUBE',
+      SocialAccountStatus.ACTIVE,
+    );
+    const job = {
+      id: 'job-transient-token',
+      data: { socialAccountId: account.id, workspaceId: workspace.id },
+    } as Job<any>;
+
+    const tokenService = (processor as any).tokenService;
+    const credSpy = jest
+      .spyOn(tokenService, 'getExecutionCredentials')
+      .mockRejectedValueOnce(
+        new Error(
+          'Token refresh lock acquisition timed out for social account',
+        ),
+      );
+
+    let thrownError: any;
+    try {
+      await processor.process(job);
+    } catch (err) {
+      thrownError = err;
+    }
+
+    expect(thrownError).toBeDefined();
+    expect(thrownError.message).toContain(
+      'Token refresh lock acquisition timed out',
+    );
+    expect(thrownError).not.toBeInstanceOf(UnrecoverableError);
+
+    // Account remains ACTIVE
+    const updatedAccount = await prisma.socialAccount.findUnique({
+      where: { id: account.id },
+    });
+    expect(updatedAccount!.status).toBe(SocialAccountStatus.ACTIVE);
+
+    // syncRun status is FAILED
+    const syncRun = await prisma.syncRun.findFirst({
+      orderBy: { startedAt: 'desc' },
+    });
+    expect(syncRun!.status).toBe(SyncRunStatus.FAILED);
+
+    credSpy.mockRestore();
   });
 });
