@@ -5,7 +5,8 @@
  * Supported behavior:
  * - Production (NODE_ENV === 'production'):
  *     - API_PUBLIC_URL is REQUIRED. Missing or empty string throws a fail-fast Error.
- *     - Protocol must be HTTPS (https://). Insecure http:// is rejected.
+ *     - Protocol must be HTTPS (https://), except for loopback hosts (localhost, 127.0.0.1, [::1])
+ *       to support production-like local Docker Compose environments.
  *     - Must be a valid WHATWG URL.
  *     - Must not contain query parameters, hash fragments, or embedded credentials.
  *     - Trailing slashes are stripped/normalized.
@@ -45,9 +46,14 @@ export function parseApiPublicUrl(
     );
   }
 
-  if (isProduction && parsed.protocol !== 'https:') {
+  const isLoopback =
+    parsed.hostname === 'localhost' ||
+    parsed.hostname === '127.0.0.1' ||
+    parsed.hostname === '[::1]';
+
+  if (isProduction && parsed.protocol !== 'https:' && !isLoopback) {
     throw new Error(
-      `Invalid API_PUBLIC_URL: production requires https://, got "${parsed.protocol}".`,
+      `Invalid API_PUBLIC_URL: production requires HTTPS except for loopback hosts (localhost, 127.0.0.1, [::1]), got "${parsed.protocol}".`,
     );
   }
 

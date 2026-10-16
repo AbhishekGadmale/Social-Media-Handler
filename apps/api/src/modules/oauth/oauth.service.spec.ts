@@ -399,4 +399,58 @@ describe('OAuthService', () => {
       }),
     );
   });
+
+  it('forwards the exact redirectUri to provider in generateAuthUrl and handleOAuthCallback', async () => {
+    const customRedirect =
+      'https://public-api.agency-os.com/api/v1/oauth/linkedin/callback';
+    const userId = 'b0e4c6c0-6f0a-47b8-80e9-74f4b4c730e2';
+    const workspaceId = 'f3e098a0-2f94-4d89-9e8c-5a9d82136e09';
+
+    // 1. generateAuthUrl forwards redirectUri in the generated authorization URL
+    const url = await service.generateAuthUrl(
+      SocialProvider.LINKEDIN,
+      userId,
+      workspaceId,
+      customRedirect,
+    );
+    const parsedUrl = new URL(url);
+    expect(parsedUrl.searchParams.get('redirect_uri')).toBe(customRedirect);
+    const state = parsedUrl.searchParams.get('state')!;
+
+    // 2. handleOAuthCallback forwards the exact redirectUri to the token endpoint
+    let forwardedRedirectUri: string | null = null;
+    nock('https://www.linkedin.com')
+      .post('/oauth/v2/accessToken', (body: any) => {
+        if (typeof body === 'string') {
+          const params = new URLSearchParams(body);
+          forwardedRedirectUri = params.get('redirect_uri');
+        } else if (body && typeof body === 'object') {
+          forwardedRedirectUri = body.redirect_uri;
+        }
+        return true;
+      })
+      .reply(200, {
+        access_token: 'mock-access-token',
+        refresh_token: 'mock-refresh-token',
+        expires_in: 3600,
+        scope: 'openid profile email',
+      });
+
+    nock('https://api.linkedin.com').get('/v2/userinfo').reply(200, {
+      sub: 'li-user-forward-test',
+      name: 'LinkedIn User',
+      email: 'user@linkedin.com',
+      picture: 'http://pic.com/1.jpg',
+    });
+
+    await service.handleOAuthCallback(
+      SocialProvider.LINKEDIN,
+      userId,
+      state,
+      'auth-code-test',
+      customRedirect,
+    );
+
+    expect(forwardedRedirectUri).toBe(customRedirect);
+  });
 });

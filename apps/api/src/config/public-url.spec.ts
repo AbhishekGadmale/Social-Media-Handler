@@ -33,9 +33,30 @@ describe('Public API URL Configuration', () => {
       );
     });
 
-    it('rejects insecure http in production', () => {
+    it('allows loopback http in production for local production-like compose', () => {
+      expect(parseApiPublicUrl('http://localhost:3001', true)).toBe(
+        'http://localhost:3001',
+      );
+      expect(parseApiPublicUrl('http://127.0.0.1:3001', true)).toBe(
+        'http://127.0.0.1:3001',
+      );
+      expect(parseApiPublicUrl('http://[::1]:3001', true)).toBe(
+        'http://[::1]:3001',
+      );
+    });
+
+    it('rejects non-loopback insecure http in production', () => {
+      const expectedError =
+        'Invalid API_PUBLIC_URL: production requires HTTPS except for loopback hosts (localhost, 127.0.0.1, [::1]), got "http:".';
+
       expect(() => parseApiPublicUrl('http://api.example.com', true)).toThrow(
-        'Invalid API_PUBLIC_URL: production requires https://, got "http:".',
+        expectedError,
+      );
+      expect(() => parseApiPublicUrl('http://10.0.0.1:3001', true)).toThrow(
+        expectedError,
+      );
+      expect(() => parseApiPublicUrl('http://192.168.1.1:3001', true)).toThrow(
+        expectedError,
       );
     });
 

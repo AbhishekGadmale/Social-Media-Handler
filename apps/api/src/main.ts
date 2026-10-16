@@ -9,9 +9,14 @@ import helmet from 'helmet';
 
 import { Logger } from 'nestjs-pino';
 import { configureTrustProxy } from './config/trust-proxy';
+import { getPublicApiUrl } from './config/public-url';
 
 async function bootstrap() {
   const isProduction = process.env.NODE_ENV === 'production';
+
+  // Fail-fast startup validation for API_PUBLIC_URL in production
+  getPublicApiUrl();
+
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
     bufferLogs: true,
   });
