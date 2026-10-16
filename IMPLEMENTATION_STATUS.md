@@ -308,15 +308,25 @@ Implemented `parseApiPublicUrl` and `getPublicApiUrl`:
 
 ---
 
-## Provider Token Expiry & Centralized Worker Refresh on Branch `fix/provider-token-refresh`
+## Provider Token Expiry & Centralized Worker Refresh (PR #5) — MERGED
 
-### 1. Verified Root Cause & Gaps
+### 1. Merge & Release Summary
+- **PR**: [#5](https://github.com/AbhishekGadmale/Social-Media-Handler/pull/5) (`fix/provider-token-refresh`)
+- **Status**: **MERGED**
+- **Approved Head SHA**: `ef71244`
+- **Final Merge Commit SHA**: `0d862ca187bda6c11d11294138c2a5e9cbd5b4f9` (`0d862ca`)
+- **Merged Into**: `main`
+- **GitHub Actions CI**: All 5 check-runs completed **SUCCESS** (Green).
+- **Automated Test Results**: **453 / 453 tests passed** across all packages (`providers`: 231/231, `worker`: 105/105, `api`: 117/117).
+- **Static Analysis & Builds**: Turbo typecheck (5/5), turbo lint (5/5, 0 errors), turbo build (3/3) all clean.
+
+### 2. Verified Root Cause & Gaps
 - **Lack of Refresh Contract in Provider Core**: `ISocialProvider` lacked any refresh abstraction (`refreshCredentials` method was absent from the interface and from all concrete provider classes).
 - **Silent Inability to Refresh in Worker**: `apps/worker/src/sync/sync.processor.ts` performed a raw check on `expiresAt < new Date()`. If expired, it immediately flipped `SocialAccount.status` to `REAUTH_REQUIRED` and skipped sync, even though valid encrypted refresh tokens existed in `SocialConnection`.
 - **Duplicate, Non-Centralized Decryption Logic**: `SyncProcessor` and `PublishingProcessor` each decrypted stored access tokens independently, bypassing centralized token validity and freshness checks.
 - **Publishing Worker Missing Auth Status Updates**: When `PublishingProcessor` encountered credential acquisition failures or provider `AUTH_REQUIRED` failure results, `SocialAccount.status` was not consistently updated to `REAUTH_REQUIRED`, allowing subsequent jobs to attempt publication with broken tokens.
 
-### 2. Provider-Specific Token Lifecycle & Refresh Implementation
+### 3. Provider-Specific Token Lifecycle & Refresh Implementation
 - **Provider Core Contract (`packages/providers/core/interfaces/ISocialProvider.ts`)**:
   - Added optional `refreshCredentials?(refreshToken: string): Promise<OAuthCredentials>` to `ISocialProvider`.
 - **YouTube (`packages/providers/youtube/youtube.provider.ts`)**:
@@ -329,37 +339,39 @@ Implemented `parseApiPublicUrl` and `getPublicApiUrl`:
   - Implemented `refreshCredentials` calling LinkedIn token endpoint `https://www.linkedin.com/oauth/v2/accessToken` (`grant_type=refresh_token`).
   - Added `fetchWithTimeout(..., 7000)`: guarantees HTTP refresh call will timeout at 7,000ms (strictly less than Redis lock TTL of 10,000ms).
   - Redacts sensitive secrets (`clientSecret` and `refreshToken`) from error messages using `replaceAll`.
-  - Supports token rotation with `refresh_token` and `refresh_token_expires_in`.
+  - Supports token rotation with `refresh_token`.
   - Computes `expiresAt = new Date(Date.now() + expires_in * 1000)`.
 - **Meta / Instagram (`packages/providers/meta/meta.provider.ts`)**:
   - Explicitly does NOT add generic refresh credentials method. Meta user tokens are exchanged via server-side OAuth flow for 60-day long-lived tokens and carry an explicit ~60-day `expiresAt` in the DB.
   - When within the 5-minute pre-expiry window, if `expiresAt > now`, `TokenService` recognizes the token is still valid, keeps the account `ACTIVE`, and returns the decrypted token without marking `REAUTH_REQUIRED`.
   - Only when actually expired (`expiresAt <= now`) or when an explicit HTTP 401 / OAuthException is returned during execution is the account transitioned to `REAUTH_REQUIRED`.
 
-### 3. Centralized `TokenService` & Concurrency Architecture (`apps/worker/src/publishing/token.service.ts`)
+### 4. Centralized `TokenService` & Concurrency Architecture (`apps/worker/src/publishing/token.service.ts`)
 - **Single Execution Credential Authority**: All workers (`SyncProcessor`, `PublishingProcessor`) resolve execution credentials solely through `tokenService.getExecutionCredentials(socialAccountId, workspaceId)`. Tenant isolation is enforced via optional `workspaceId`.
 - **Preemptive Freshness Threshold**: Tokens expiring within 5 minutes (`now >= expiresAt - 5m`) or already expired trigger automatic refresh before worker execution, while still-valid non-refreshable tokens return cleanly until actually expired.
 - **Distributed Concurrency Lock & Extended Contention Wait**:
-  - Uses Redis `SET lock:refresh:${socialAccountId} <lockToken> PX 10000 NX` to ensure only one worker attempts token refresh per account.
-  - Contention wait loop extended to 50 attempts * 200ms = 10,000ms (matching the 10-second lock TTL) with double-checked DB re-reading every 200ms.
-  - Safe release using a Lua script (`if redis.call("get", KEYS[1]) == ARGV[1] then return redis.call("del", KEYS[1]) else return 0 end`) ensuring a worker whose lock expired never inadvertently releases a subsequent worker's lock.
-- **CAS (Compare-And-Swap) Persistence**:
-  - Encrypts new tokens with AES-256-GCM.
-  - Uses `tx.socialConnection.updateMany({ where: { socialAccountId, encryptedRefreshToken: oldEncryptedRefreshToken }, data: updateData })`.
-  - If `casResult.count === 0`, a concurrent worker has already refreshed credentials and rotated the refresh token; `TokenService` aborts overwrite, re-reads the fresh token from DB, and returns it safely.
+  - Uses Redis `SET lock:refresh:${socialAccountId} <lockToken> PX 10000 NX` to reduce concurrent refresh attempts across workers.
+  - While Redis locking significantly reduces duplicate provider refresh requests, the design does NOT claim mathematically perfect exactly-once external provider invocation (e.g. under edge network partitions, Redis failover, or clock skew).
+  - Outbound provider HTTP requests are strictly bounded below the lock TTL using a 7,000ms abort timeout (`fetchWithTimeout`), guaranteeing the provider call times out before the 10,000ms Redis lock expires.
+  - Contention wait loop extends to 50 attempts * 200ms = 10,000ms (matching the 10-second lock TTL) with double-checked DB re-reading every 200ms to immediately return fresh credentials when an in-flight refresh completes.
+  - Safe lock release uses a Lua script (`if redis.call("get", KEYS[1]) == ARGV[1] then return redis.call("del", KEYS[1]) else return 0 end`) ensuring a worker whose lock expired never inadvertently releases a subsequent worker's lock.
+- **CAS (Compare-And-Swap) Persistence & Fencing**:
+  - State convergence and credential integrity are guaranteed at the database layer rather than relying solely on distributed locking.
+  - Persists new ciphertext, IV, auth tag, key version, and new `expiresAt` using `tx.socialConnection.updateMany({ where: { socialAccountId, encryptedRefreshToken: oldEncryptedRefreshToken }, data: updateData })`.
+  - Stale workers that completed refresh after another worker cannot overwrite the winning credential state; if `casResult.count === 0`, the losing worker discards its stale credential response, re-reads the fresh token from DB, and returns the winning state.
 - **Failure Fencing on Refresh Errors**:
   - When a worker encounters an auth invalidation error (e.g. HTTP 400 `invalid_grant`) during refresh, it re-reads `SocialConnection` from DB before mutating status.
   - If another worker already successfully refreshed and stored new credentials in DB (changing `encryptedRefreshToken` or setting fresh `expiresAt`), the current worker recovers the fresh token without marking `REAUTH_REQUIRED`.
   - Only genuine auth failures where the DB state has not been updated mark `SocialAccount.status = REAUTH_REQUIRED`.
 
-### 4. Error Classification & Handling
+### 5. Error Classification & Handling
 - **Semantic Evidence Required for Permanent Auth Failure (`REAUTH_REQUIRED`)**:
   - HTTP 401 Unauthorized, or HTTP 400 specifically accompanied by OAuth error indicators (`invalid_grant`, `invalid_token`, `unauthorized`, `revoked`, `expired`, `token_expired`), marks `SocialAccount.status = REAUTH_REQUIRED` and throws `AuthRequiredError`.
   - Bare HTTP 400 responses, `invalid_client` configuration errors, and generic `invalid_request` errors are classified as transient/configuration errors and rethrown without marking `REAUTH_REQUIRED`.
 - **Transient Failures (Retryable)**:
   - Network timeouts, DNS errors, HTTP 5xx responses, and Redis lock acquisition timeouts are rethrown without modifying `SocialAccount.status`, allowing standard BullMQ queue backoff retries.
 
-### 5. Processor Integrations
+### 6. Processor Integrations
 - **`apps/worker/src/sync/sync.processor.ts`**:
   - Injected `TokenService` and removed inline decryption; passes `workspaceId` for tenant scoping.
   - Catches `AuthRequiredError`, records `syncRun` status as `SKIPPED` with reason `expired_token`, and skips execution without retrying.
@@ -369,7 +381,7 @@ Implemented `parseApiPublicUrl` and `getPublicApiUrl`:
   - Split credential acquisition error handling: only `AuthRequiredError` sets `socialAccount.status = REAUTH_REQUIRED` and calls `handleFailure(..., 'AUTH_REQUIRED', ...)`.
   - Transient credential acquisition errors (e.g. lock acquisition timeout, 5xx) log a warning and rethrow so BullMQ retries the job without failing the publication or marking the account `REAUTH_REQUIRED`.
 
-### 6. Test Coverage Added
+### 7. Test Coverage Added
 - **`packages/providers/youtube/youtube.provider.spec.ts`**:
   - Unit tests verifying Google OAuth2 refresh endpoint call, token rotation, and refresh token preservation.
 - **`packages/providers/linkedin/linkedin.provider.spec.ts`**:
@@ -383,20 +395,155 @@ Implemented `parseApiPublicUrl` and `getPublicApiUrl`:
   - Added tests verifying `socialAccount.status` transitions to `REAUTH_REQUIRED` when provider returns `AUTH_REQUIRED` or `TokenService` throws `AuthRequiredError`.
   - Added tests verifying transient credential errors keep account `ACTIVE` and rethrow for BullMQ retry without terminal `AUTH_REQUIRED` attempt failure.
 
-### 7. Verification Results
+### 8. Verification Results & CI Status
 - `pnpm --filter @agency-os/providers test`: **PASS** (15/15 test files, 231/231 tests passing).
 - `pnpm --filter @agency-os/worker test`: **PASS** (9/9 test files, 105/105 tests passing).
 - `pnpm --filter @agency-os/api test`: **PASS** (15/15 test files, 117/117 tests passing).
 - `pnpm turbo run typecheck`: **PASS** (5/5 tasks successful).
 - `pnpm turbo run lint`: **PASS** (5/5 tasks successful, 0 errors, 0 new warnings).
 - `pnpm turbo run build`: **PASS** (All packages built successfully).
-
-### 8. GitHub CI Checks Status (PR #5)
-- **Pull Request**: [#5](https://github.com/AbhishekGadmale/Social-Media-Handler/pull/5) (`fix/provider-token-refresh`)
-- **Head SHA**: `5022523`
-- **CI Check Runs**:
+- **GitHub Check Runs (PR #5 / Head `ef71244`)**:
   - `Docker Build & Smoke Test`: **SUCCESS** (Green)
   - `Code Quality (Lint & Typecheck)`: **SUCCESS** (Green)
   - `Application Builds`: **SUCCESS** (Green)
   - `Tests`: **SUCCESS** (Green)
   - `GitGuardian Security Checks`: **SUCCESS** (Green)
+
+### 9. Non-Blocking Concurrency Follow-Up (Future Hardening)
+> [!NOTE]
+> **NON-BLOCKING FOLLOW-UP**:
+> There is a narrow Time-Of-Check to Time-Of-Use (TOCTOU) window between:
+> 1. A stale worker re-reading `SocialConnection` from the database upon receiving a permanent refresh error (such as HTTP 400 `invalid_grant`), and
+> 2. The subsequent update setting `SocialAccount.status = SocialAccountStatus.REAUTH_REQUIRED`.
+>
+> If a winning concurrent worker successfully commits fresh credentials immediately after the stale worker's re-read check but before its status update, the stale worker could still mark the account `REAUTH_REQUIRED`.
+>
+> **Recommended future hardening**:
+> Fence the `REAUTH_REQUIRED` status update using the same credential/CAS condition (e.g. executing the status update conditionally or verifying that the connection's `encryptedRefreshToken` / `updatedAt` still matches the failed credential snapshot) so the status update only succeeds if the failed credential state is still current.
+
+---
+
+## Comprehensive Review Backlog & Architecture Re-Evaluation (Post-PR #5)
+
+### 1. Re-Evaluation of Cookie Clearing on Logout (VERIFIED FALSE POSITIVE)
+- **Previous Claim**:
+  It was previously hypothesized that `res.clearCookie('session')` and `res.clearCookie('csrfToken')` in [`apps/api/src/modules/auth/auth.controller.ts`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/auth/auth.controller.ts) fail to evict cookies from the client browser because they omit `secure: true` and `sameSite: 'lax'`, thereby supposedly leaving active session cookies stored on the client.
+- **Empirical Code & RFC 6265 Verification**:
+  1. **RFC 6265 Storage Key Model**: Per RFC 6265 Section 5.3 ("Storage Model") and Section 5.4 ("The Cookie Header"), user agents store and match cookies based strictly on the tuple:
+     $$\text{Key} = (\text{name}, \text{domain}, \text{path})$$
+     Attributes such as `Secure`, `HttpOnly`, and `SameSite` are transport and accessibility constraints; they are **not** part of the cookie lookup key during eviction.
+  2. **Express `res.cookie` vs `res.clearCookie` Parameter Matching**:
+     - At login ([`auth.controller.ts#L75-L89`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/auth/auth.controller.ts#L75-L89)):
+       ```typescript
+       res.cookie('session', session.sessionId, {
+         httpOnly: true,
+         secure: process.env.NODE_ENV === 'production',
+         sameSite: 'lax',
+         expires: session.expiresAt,
+       });
+       res.cookie('csrfToken', session.csrfToken, {
+         httpOnly: false,
+         secure: process.env.NODE_ENV === 'production',
+         sameSite: 'lax',
+         expires: session.expiresAt,
+       });
+       ```
+       Because no explicit `path` option is provided, Express defaults `path: '/'`. Because no explicit `domain` option is provided, Express emits a host-only cookie for the request host.
+     - At logout ([`auth.controller.ts#L115-L116`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/auth/auth.controller.ts#L115-L116)):
+       ```typescript
+       res.clearCookie('session');
+       res.clearCookie('csrfToken');
+       ```
+       Express `res.clearCookie(name)` defaults `path: '/'` and sets `expires: new Date(1)` (`Thu, 01 Jan 1970 00:00:00 GMT`).
+       The emitted HTTP response headers are:
+       ```http
+       Set-Cookie: session=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT
+       Set-Cookie: csrfToken=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT
+       ```
+       Because `name`, `domain` (host-only), and `path` (`/`) match identically with the stored cookie, compliant browsers immediately evict both cookies from storage.
+  3. **Immediate Server-Side Session Revocation**:
+     Regardless of client-side cookie storage or client compliance, `AuthService.logout()` unconditionally destroys the server-side session in Redis:
+     ```typescript
+     await this.sessionManager.deleteSession(sessionId);
+     ```
+     Any subsequent request carrying the evicted or copied session cookie is rejected immediately by [`AuthGuard`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/auth/guards/auth.guard.ts) with `401 Unauthorized` because `sessionManager.getSession(sessionId)` returns `null`.
+- **Classification**: **VERIFIED FALSE POSITIVE / NON-ISSUE**. No application code changes are required or warranted.
+
+### 2. Cross-Subdomain CSRF Architecture (ARCHITECTURAL DEPLOYMENT DECISION)
+- **Distinction from Cookie Clearing**:
+  Cross-subdomain CSRF compatibility is an infrastructure topology design decision, entirely distinct from logout cookie clearing.
+- **Repository Implementation Analysis**:
+  1. `csrfToken` is currently set as a host-only cookie (`httpOnly: false`, without an explicit `domain` attribute).
+  2. The frontend web application ([`apps/web/src/lib/api/client.ts`](file:///C:/Users/bappa/agency-os/apps/web/src/lib/api/client.ts#L20-L26)) reads `document.cookie` to extract `csrfToken` and submits it via the `x-csrf-token` header for mutating API requests.
+- **Topology Analysis**:
+  - **Single-Origin Reverse Proxy Gateway (Current Documented Topology)**:
+    In [`docs/phase-6-readiness.md`](file:///C:/Users/bappa/agency-os/docs/phase-6-readiness.md#L71-L76), staging and production prerequisites specify a unified reverse proxy / ingress (e.g., NGINX, Traefik, Caddy, or AWS ALB) routing frontend traffic (`/`) to the Next.js service and API traffic (`/api/*`) to the NestJS service under the same origin (e.g., `https://app.example.com`). Under this unified topology, `document.cookie` seamlessly reads `csrfToken` because both services share the same origin and host-only cookie scope. The double-submit CSRF mechanism operates correctly without defect.
+  - **Separate Subdomains Topology (`app.example.com` vs `api.example.com`)**:
+    If an operator deploys the frontend and backend on distinct subdomains without a shared reverse proxy, standard browser same-origin policies prevent JavaScript executing on `app.example.com` from accessing host-only cookies set by `api.example.com`.
+  - **Architectural Solutions (When Multi-Subdomain is Adopted)**:
+    1. *Option A (Shared Parent Domain Cookie)*: Configure `COOKIE_DOMAIN=.example.com` so the browser permits subdomains to share the cookie.
+    2. *Option B (Dedicated Token Handshake Endpoint)*: Expose an unauthenticated or session-authenticated `GET /api/v1/auth/csrf-token` endpoint returning `{ csrfToken }` in the JSON response body, enabling the client to store the CSRF token in memory.
+    3. *Option C (Login Response Body Payload)*: Return `csrfToken` in the `/login` JSON response body alongside user metadata.
+- **Classification**: **ARCHITECTURAL DEPLOYMENT DECISION REQUIRED**. Not a bug under the primary single-origin reverse proxy deployment pattern.
+
+### 3. Prioritized Review Backlog Hierarchy & Status
+
+Following the project's 7-tier prioritization hierarchy:
+1. **Tier 1 — Cross-Tenant Data Isolation / IDOR**
+2. **Tier 2 — Direct Authentication / Session Bypass**
+3. **Tier 3 — Publishing / Worker Data Loss / State Corruption**
+4. **Tier 4 — Provider Contract Compliance & Token Refresh**
+5. **Tier 5 — Public API Contract / OAuth Callback Correctness**
+6. **Tier 6 — Deployment / Infrastructure / Rate-Limiting Hardening**
+7. **Tier 7 — Code Cleanup / Documentation / Non-Blocking Improvements**
+
+| Priority Tier | Backlog Item | Target Components / Files | Status | Severity / Classification | Next Action |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **Tier 1: Tenant Isolation** | Cross-tenant sync IDOR vulnerability | `apps/worker/src/sync/sync.processor.ts` | **MERGED** (PR #1, `cb37719`) | High / Resolved | Complete |
+| **Tier 2: Auth Bypass** | Open redirect on login (`returnUrl`) | `apps/api/src/modules/auth/auth.controller.ts` | **MERGED** (PR #2, `862372c`) | High / Resolved | Complete |
+| **Tier 2: Auth Bypass** | Trust Proxy unconfigured spoofing & rate-limit defeat | `apps/api/src/config/trust-proxy.ts`, `apps/api/src/main.ts` | **MERGED** (PR #3, `f382a93`) | High / Resolved | Complete |
+| **Tier 2: Auth Bypass** | Logout cookie clear omitting `Secure`/`SameSite` | `apps/api/src/modules/auth/auth.controller.ts` | **DISMISSED** | **FALSE POSITIVE** (RFC 6265 Section 5.3 + Redis revocation) | None (Closed) |
+| **Tier 3: Publishing / Data Loss** | **Ambiguous Publication Reconciliation Transactionality, Metadata Synchronization, and Attributed RBAC** | [`apps/api/src/modules/publishing/services/publishing-application.service.ts`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/publishing/services/publishing-application.service.ts#L496-L623), [`apps/api/src/modules/publishing/controllers/publications.controller.ts`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/publishing/controllers/publications.controller.ts#L194-L207), [`docs/AMBIGUOUS_PUBLICATION_RECONCILIATION_ARCHITECTURE.md`](file:///C:/Users/bappa/agency-os/docs/AMBIGUOUS_PUBLICATION_RECONCILIATION_ARCHITECTURE.md) | **OPEN (TOP PRIORITY)** | **HIGH** / Data Integrity & Operator State Inconsistency | **Verification & Unit Test Hardening (R1–R10 Invariants)** |
+| **Tier 4: Provider Token** | Centralized worker token refresh & lifecycle management | `packages/providers/`, `apps/worker/src/publishing/token.service.ts` | **MERGED** (PR #5, `0d862ca`) | High / Resolved | PR #6 Docs Tracking (Current) |
+| **Tier 5: API / OAuth Contract** | Deterministic `API_PUBLIC_URL` for OAuth callbacks | `apps/api/src/config/public-url.ts`, `apps/api/src/modules/oauth/oauth.controller.ts` | **MERGED** (PR #4, `28b9a2c`) | Medium / Resolved | Complete |
+| **Tier 6: Deployment Hardening** | Cross-Subdomain CSRF Deployment Architecture | `apps/api/src/modules/auth/auth.controller.ts`, `docs/phase-6-readiness.md` | **OPEN** | Medium / Architectural Deployment Decision | Ingress topology documentation / Optional token endpoint |
+| **Tier 6: Deployment Hardening** | Security Event Audit Logging Interceptors | `apps/api/src/modules/audit/`, `docs/phase6_gap_audit.md` | **OPEN** | Medium / Compliance Hardening | Implement global audit interceptor for auth/provider mutations |
+| **Tier 6: Deployment Hardening** | Global Distributed Rate Limiting via Redis Throttler | `apps/api/src/app.module.ts`, `apps/api/src/modules/core/redis-throttler.storage.ts` | **OPEN** | Medium / Ingress Abuse Prevention | Apply throttler globally across all non-exempt API endpoints |
+| **Tier 7: Cleanup / Optimization** | Container Runtime Transpilation (`tsx` vs compiled `dist`) | `apps/api/Dockerfile`, `apps/worker/Dockerfile`, `docs/phase-6-readiness.md` | **OPEN** | Low / Performance & Startup Optimization | Add build output transpilation for monorepo internal packages |
+| **Tier 7: Cleanup / Optimization** | Token Refresh `REAUTH_REQUIRED` CAS TOCTOU Fencing | `apps/worker/src/publishing/token.service.ts` | **OPEN** | Low / Concurrency Follow-Up | Add CAS check to status mutation on refresh auth failures |
+
+---
+
+### 4. Single Highest-Priority Next Focus Area: Ambiguous Publication Reconciliation Hardening
+
+- **Priority Tier**: **Tier 3 (Publishing / Worker Data Loss / State Corruption)**
+- **Component**: [`apps/api/src/modules/publishing/services/publishing-application.service.ts`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/publishing/services/publishing-application.service.ts#L496-L623)
+- **Controller**: [`apps/api/src/modules/publishing/controllers/publications.controller.ts`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/publishing/controllers/publications.controller.ts#L194-L207)
+- **Specification**: [`docs/AMBIGUOUS_PUBLICATION_RECONCILIATION_ARCHITECTURE.md`](file:///C:/Users/bappa/agency-os/docs/AMBIGUOUS_PUBLICATION_RECONCILIATION_ARCHITECTURE.md)
+- **Core Risk**:
+  When a dangerous provider mutation times out or returns an ambiguous result (e.g. HTTP 5xx or dropped connection), execution enters `AMBIGUOUS` and `PostPlatformVariant` enters `UNKNOWN`.
+  If manual reconciliation logic lacks strict transactional guarantees, missing audit logs, or desynchronized `PublicationAttempt` / `executionMetadata` records, operators could inadvertently re-trigger duplicate publishing, create torn database states, or bypass RBAC authorization controls.
+- **Current State Analysis**:
+  Prior commits (`2a6de50`, `91159e0`, `181b587`) implemented atomic transactions covering `PostPlatformVariant`, `PublicationAttempt`, and `AuditLog`, and applied `@RequirePermission('publishing.reconcile')`. However:
+  1. **Zero Test Coverage**: No unit or integration tests currently exist for `PublishingApplicationService.reconcile` in `apps/api/src/modules/publishing`.
+  2. **Invariant Verification Required**: R1 through R10 invariants from [`docs/AMBIGUOUS_PUBLICATION_RECONCILIATION_ARCHITECTURE.md`](file:///C:/Users/bappa/agency-os/docs/AMBIGUOUS_PUBLICATION_RECONCILIATION_ARCHITECTURE.md) (CAS concurrency fencing, required `externalPostId` on `CONFIRM_PUBLISHED`, multi-attempt conflict detection, and audit trail atomicity) have not been formally verified against automated test suites.
+- **Verification-Only Plan (Next Steps)**:
+  1. **Phase A — Static Code Audit**:
+     - Inspect `PublishingApplicationService.reconcile` lines 496–623 against the 10 safety invariants (R1–R10).
+     - Verify `@RequirePermission('publishing.reconcile')` enforcement in `PermissionGuard` and `publications.controller.ts:195`.
+     - Confirm that `externalPostId` is strictly non-empty when `decision === 'CONFIRM_PUBLISHED'`.
+     - Check error classification (`ConflictException` for concurrency/state mismatches, `UnprocessableEntityException` for invalid payloads).
+  2. **Phase B — Test Gap Analysis**:
+     - Design a comprehensive test suite for `PublishingApplicationService.reconcile` covering:
+       - Successful `CONFIRM_PUBLISHED` atomic commit (variant `PUBLISHED`, attempt `SUCCESS`, audit log created).
+       - Successful `CONFIRM_FAILED` atomic commit (variant `FAILED`, attempt `FAILED`, audit log created).
+       - Non-`UNKNOWN` variant rejection (`ConflictException`).
+       - Non-`AMBIGUOUS` execution metadata rejection (`ConflictException`).
+       - Missing `externalPostId` rejection for `CONFIRM_PUBLISHED` (`UnprocessableEntityException`).
+       - CAS concurrency collision handling (`updated.count === 0` -> `ConflictException`).
+       - Non-unique publication attempt detection (`ConflictException`).
+       - Transaction rollback if any step (e.g. audit log creation) fails.
+  3. **Phase C — Execution & Reporting**:
+     - Run existing test suites (`pnpm --filter @agency-os/api test`) to confirm zero regressions before authoring new test coverage.
+
+
