@@ -240,4 +240,58 @@ In `apps/api/src/config/trust-proxy.spec.ts` (12 tests, all passing):
 - `CI / Tests`: **SUCCESS** (Green)
 - `CI / Code Quality (Lint & Typecheck)`: **SUCCESS** (Green)
 
+---
+
+## Deterministic OAuth Public URL Configuration on Branch `fix/oauth-public-url`
+
+### 1. Root Cause & Reliability/Security Analysis
+- **Reliability Flaw**: `apps/api/src/modules/oauth/oauth.controller.ts` previously derived the OAuth callback redirect URI dynamically from `${req.protocol}://${req.get('host')}/api/v1/oauth/${provider.toLowerCase()}/callback` in two separate HTTP requests (`connectProvider` and `callbackProvider`). In multi-tier topologies (reverse proxies, API gateways, Docker Compose, Kubernetes), the client-to-API connect request (often internal or proxy-routed) and the user's top-level browser callback navigation frequently presented divergent host headers or schemes. Any byte-level divergence causes RFC 6749 token exchange failure (`redirect_uri_mismatch`).
+- **Security & Topology Leakage**: Unsanitized `Host` headers allowed untrusted values to be passed into external OAuth authorization requests, and internal cluster hostnames (e.g. `api:3001` or `.local` domains) leaked into third-party redirect URLs.
+- **Provider Requirements**: External providers (LinkedIn, Google/YouTube, Meta) require pre-registered, exact, static redirect URIs in their developer consoles. A deterministic `API_PUBLIC_URL` aligns runtime execution with developer portal whitelists.
+
+### 2. Validation & Normalization Rules (`apps/api/src/config/public-url.ts`)
+Implemented `parseApiPublicUrl` and `getPublicApiUrl`:
+- **Production (`NODE_ENV === 'production'`)**:
+  - `API_PUBLIC_URL` is **REQUIRED**. Missing or empty string throws a fail-fast error on startup/invocation.
+  - Protocol must be **HTTPS** (`https://`). Insecure `http://` is strictly rejected.
+  - Must parse as a valid WHATWG URL.
+  - Rejects URLs containing query parameters (`?`), hash fragments (`#`), or embedded user credentials (`user:pass@`).
+  - Normalizes trailing slashes (`.replace(/\/+$/, '')`) so `${apiPublicUrl}/api/v1/...` never produces accidental double slashes (`//api/...`).
+- **Development & Testing (`NODE_ENV !== 'production'`)**:
+  - `API_PUBLIC_URL` is **OPTIONAL**.
+  - If unset or empty, falls back deterministically to `http://localhost:${process.env.PORT || 3001}` without depending on untrusted request headers.
+  - If provided, validated and normalized (`http:` and `https:` both permitted for localhost and dev tunnels).
+
+### 3. Controller Integration & Host Header Immunity
+- Updated `apps/api/src/modules/oauth/oauth.controller.ts`:
+  - `connectProvider()` and `callbackProvider()` now construct `redirectUri` exclusively via `getPublicApiUrl()`:
+    `${apiPublicUrl}/api/v1/oauth/${provider.toLowerCase()}/callback`
+  - Replaced all dependencies on `req.protocol` and `req.get('host')`.
+  - The callback URI is 100% immune to `Host`, `X-Forwarded-Host`, and `X-Forwarded-Proto` request headers.
+  - The exact same deterministic URI is used for authorization URL generation and token exchange across all providers (**LinkedIn**, **YouTube**, and **Meta**).
+
+### 4. Configuration Updates
+- `.env.example`: Added documented `API_PUBLIC_URL=http://localhost:3001` with instructions for production HTTPS requirements and local development defaults.
+- `docker-compose.yml`: Added `API_PUBLIC_URL: http://localhost:3001` to the `api` service environment.
+- `.github/workflows/ci.yml`: Added `API_PUBLIC_URL: http://localhost:3001` to the smoke test Compose stack step environment.
+
+### 5. Tests Added
+- `apps/api/src/config/public-url.spec.ts` (13 tests):
+  - Validated production HTTPS URLs and trailing slash normalization.
+  - Proved fail-fast rejection when `API_PUBLIC_URL` is missing or empty in production.
+  - Proved rejection of insecure HTTP in production, non-HTTP(S) schemes, queries, fragments, credentials, and malformed strings.
+  - Proved development fallback to local port and custom development hosts/tunnels.
+- `apps/api/src/modules/oauth/oauth.controller.spec.ts` (12 tests):
+  - Proved `connectProvider` and `callbackProvider` use `API_PUBLIC_URL` for redirect URI.
+  - Proved immunity against `Host` and `X-Forwarded-Host` headers in both connect and callback flows.
+  - Proved trailing slash normalization in generated callback URIs.
+  - Proved multi-provider consistency across LinkedIn, YouTube, and Meta.
+
+### 6. Local Verification Results
+- `pnpm --filter @agency-os/api test`: **PASS** (15/15 test files, 115/115 tests passing).
+- `pnpm turbo run typecheck`: **PASS** (5/5 tasks successful).
+- `pnpm turbo run lint`: **PASS** (5/5 tasks successful, 0 errors, 0 new warnings).
+- `pnpm turbo run build`: **PASS** (API, Web, Worker all compiled successfully).
+
+
 

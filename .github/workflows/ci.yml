@@ -164,6 +164,7 @@ jobs:
           COOKIE_SECRET: super-secret-test-cookie-key
           YOUTUBE_CLIENT_ID: dummy-client-id
           YOUTUBE_CLIENT_SECRET: dummy-client-secret
+          API_PUBLIC_URL: http://localhost:3001
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: password
           POSTGRES_DB: agency_os

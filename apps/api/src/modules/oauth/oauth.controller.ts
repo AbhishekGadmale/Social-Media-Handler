@@ -30,6 +30,7 @@ import { RateLimitPolicies } from '../core/rate-limit.policies';
 
 import { AuditAction } from '@agency-os/database';
 import { AuditService } from '../core/audit.service';
+import { getPublicApiUrl } from '../../config/public-url';
 
 @Controller()
 export class OAuthController {
@@ -52,7 +53,8 @@ export class OAuthController {
     @Req() req: Request,
   ) {
     const userId = req.user!.id;
-    const redirectUri = `${req.protocol}://${req.get('host')}/api/v1/oauth/${provider.toLowerCase()}/callback`;
+    const apiPublicUrl = getPublicApiUrl();
+    const redirectUri = `${apiPublicUrl}/api/v1/oauth/${provider.toLowerCase()}/callback`;
     const requestedScopes = scopesQuery
       ? scopesQuery
           .split(',')
@@ -110,7 +112,8 @@ export class OAuthController {
       throw new ForbiddenException('Missing code or state');
     }
 
-    const redirectUri = `${req.protocol}://${req.get('host')}/api/v1/oauth/${provider.toLowerCase()}/callback`;
+    const apiPublicUrl = getPublicApiUrl();
+    const redirectUri = `${apiPublicUrl}/api/v1/oauth/${provider.toLowerCase()}/callback`;
 
     try {
       const result = await this.oauthService.handleOAuthCallback(
