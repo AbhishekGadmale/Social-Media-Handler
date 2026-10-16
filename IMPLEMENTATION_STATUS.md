@@ -421,3 +421,129 @@ Implemented `parseApiPublicUrl` and `getPublicApiUrl`:
 > **Recommended future hardening**:
 > Fence the `REAUTH_REQUIRED` status update using the same credential/CAS condition (e.g. executing the status update conditionally or verifying that the connection's `encryptedRefreshToken` / `updatedAt` still matches the failed credential snapshot) so the status update only succeeds if the failed credential state is still current.
 
+---
+
+## Comprehensive Review Backlog & Architecture Re-Evaluation (Post-PR #5)
+
+### 1. Re-Evaluation of Cookie Clearing on Logout (VERIFIED FALSE POSITIVE)
+- **Previous Claim**:
+  It was previously hypothesized that `res.clearCookie('session')` and `res.clearCookie('csrfToken')` in [`apps/api/src/modules/auth/auth.controller.ts`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/auth/auth.controller.ts) fail to evict cookies from the client browser because they omit `secure: true` and `sameSite: 'lax'`, thereby supposedly leaving active session cookies stored on the client.
+- **Empirical Code & RFC 6265 Verification**:
+  1. **RFC 6265 Storage Key Model**: Per RFC 6265 Section 5.3 ("Storage Model") and Section 5.4 ("The Cookie Header"), user agents store and match cookies based strictly on the tuple:
+     $$\text{Key} = (\text{name}, \text{domain}, \text{path})$$
+     Attributes such as `Secure`, `HttpOnly`, and `SameSite` are transport and accessibility constraints; they are **not** part of the cookie lookup key during eviction.
+  2. **Express `res.cookie` vs `res.clearCookie` Parameter Matching**:
+     - At login ([`auth.controller.ts#L75-L89`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/auth/auth.controller.ts#L75-L89)):
+       ```typescript
+       res.cookie('session', session.sessionId, {
+         httpOnly: true,
+         secure: process.env.NODE_ENV === 'production',
+         sameSite: 'lax',
+         expires: session.expiresAt,
+       });
+       res.cookie('csrfToken', session.csrfToken, {
+         httpOnly: false,
+         secure: process.env.NODE_ENV === 'production',
+         sameSite: 'lax',
+         expires: session.expiresAt,
+       });
+       ```
+       Because no explicit `path` option is provided, Express defaults `path: '/'`. Because no explicit `domain` option is provided, Express emits a host-only cookie for the request host.
+     - At logout ([`auth.controller.ts#L115-L116`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/auth/auth.controller.ts#L115-L116)):
+       ```typescript
+       res.clearCookie('session');
+       res.clearCookie('csrfToken');
+       ```
+       Express `res.clearCookie(name)` defaults `path: '/'` and sets `expires: new Date(1)` (`Thu, 01 Jan 1970 00:00:00 GMT`).
+       The emitted HTTP response headers are:
+       ```http
+       Set-Cookie: session=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT
+       Set-Cookie: csrfToken=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT
+       ```
+       Because `name`, `domain` (host-only), and `path` (`/`) match identically with the stored cookie, compliant browsers immediately evict both cookies from storage.
+  3. **Immediate Server-Side Session Revocation**:
+     Regardless of client-side cookie storage or client compliance, `AuthService.logout()` unconditionally destroys the server-side session in Redis:
+     ```typescript
+     await this.sessionManager.deleteSession(sessionId);
+     ```
+     Any subsequent request carrying the evicted or copied session cookie is rejected immediately by [`AuthGuard`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/auth/guards/auth.guard.ts) with `401 Unauthorized` because `sessionManager.getSession(sessionId)` returns `null`.
+- **Classification**: **VERIFIED FALSE POSITIVE / NON-ISSUE**. No application code changes are required or warranted.
+
+### 2. Cross-Subdomain CSRF Architecture (ARCHITECTURAL DEPLOYMENT DECISION)
+- **Distinction from Cookie Clearing**:
+  Cross-subdomain CSRF compatibility is an infrastructure topology design decision, entirely distinct from logout cookie clearing.
+- **Repository Implementation Analysis**:
+  1. `csrfToken` is currently set as a host-only cookie (`httpOnly: false`, without an explicit `domain` attribute).
+  2. The frontend web application ([`apps/web/src/lib/api/client.ts`](file:///C:/Users/bappa/agency-os/apps/web/src/lib/api/client.ts#L20-L26)) reads `document.cookie` to extract `csrfToken` and submits it via the `x-csrf-token` header for mutating API requests.
+- **Topology Analysis**:
+  - **Single-Origin Reverse Proxy Gateway (Current Documented Topology)**:
+    In [`docs/phase-6-readiness.md`](file:///C:/Users/bappa/agency-os/docs/phase-6-readiness.md#L71-L76), staging and production prerequisites specify a unified reverse proxy / ingress (e.g., NGINX, Traefik, Caddy, or AWS ALB) routing frontend traffic (`/`) to the Next.js service and API traffic (`/api/*`) to the NestJS service under the same origin (e.g., `https://app.example.com`). Under this unified topology, `document.cookie` seamlessly reads `csrfToken` because both services share the same origin and host-only cookie scope. The double-submit CSRF mechanism operates correctly without defect.
+  - **Separate Subdomains Topology (`app.example.com` vs `api.example.com`)**:
+    If an operator deploys the frontend and backend on distinct subdomains without a shared reverse proxy, standard browser same-origin policies prevent JavaScript executing on `app.example.com` from accessing host-only cookies set by `api.example.com`.
+  - **Architectural Solutions (When Multi-Subdomain is Adopted)**:
+    1. *Option A (Shared Parent Domain Cookie)*: Configure `COOKIE_DOMAIN=.example.com` so the browser permits subdomains to share the cookie.
+    2. *Option B (Dedicated Token Handshake Endpoint)*: Expose an unauthenticated or session-authenticated `GET /api/v1/auth/csrf-token` endpoint returning `{ csrfToken }` in the JSON response body, enabling the client to store the CSRF token in memory.
+    3. *Option C (Login Response Body Payload)*: Return `csrfToken` in the `/login` JSON response body alongside user metadata.
+- **Classification**: **ARCHITECTURAL DEPLOYMENT DECISION REQUIRED**. Not a bug under the primary single-origin reverse proxy deployment pattern.
+
+### 3. Prioritized Review Backlog Hierarchy & Status
+
+Following the project's 7-tier prioritization hierarchy:
+1. **Tier 1 — Cross-Tenant Data Isolation / IDOR**
+2. **Tier 2 — Direct Authentication / Session Bypass**
+3. **Tier 3 — Publishing / Worker Data Loss / State Corruption**
+4. **Tier 4 — Provider Contract Compliance & Token Refresh**
+5. **Tier 5 — Public API Contract / OAuth Callback Correctness**
+6. **Tier 6 — Deployment / Infrastructure / Rate-Limiting Hardening**
+7. **Tier 7 — Code Cleanup / Documentation / Non-Blocking Improvements**
+
+| Priority Tier | Backlog Item | Target Components / Files | Status | Severity / Classification | Next Action |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **Tier 1: Tenant Isolation** | Cross-tenant sync IDOR vulnerability | `apps/worker/src/sync/sync.processor.ts` | **MERGED** (PR #1, `cb37719`) | High / Resolved | Complete |
+| **Tier 2: Auth Bypass** | Open redirect on login (`returnUrl`) | `apps/api/src/modules/auth/auth.controller.ts` | **MERGED** (PR #2, `862372c`) | High / Resolved | Complete |
+| **Tier 2: Auth Bypass** | Trust Proxy unconfigured spoofing & rate-limit defeat | `apps/api/src/config/trust-proxy.ts`, `apps/api/src/main.ts` | **MERGED** (PR #3, `f382a93`) | High / Resolved | Complete |
+| **Tier 2: Auth Bypass** | Logout cookie clear omitting `Secure`/`SameSite` | `apps/api/src/modules/auth/auth.controller.ts` | **DISMISSED** | **FALSE POSITIVE** (RFC 6265 Section 5.3 + Redis revocation) | None (Closed) |
+| **Tier 3: Publishing / Data Loss** | **Ambiguous Publication Reconciliation Transactionality, Metadata Synchronization, and Attributed RBAC** | [`apps/api/src/modules/publishing/services/publishing-application.service.ts`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/publishing/services/publishing-application.service.ts#L496-L623), [`apps/api/src/modules/publishing/controllers/publications.controller.ts`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/publishing/controllers/publications.controller.ts#L194-L207), [`docs/AMBIGUOUS_PUBLICATION_RECONCILIATION_ARCHITECTURE.md`](file:///C:/Users/bappa/agency-os/docs/AMBIGUOUS_PUBLICATION_RECONCILIATION_ARCHITECTURE.md) | **OPEN (TOP PRIORITY)** | **HIGH** / Data Integrity & Operator State Inconsistency | **Verification & Unit Test Hardening (R1–R10 Invariants)** |
+| **Tier 4: Provider Token** | Centralized worker token refresh & lifecycle management | `packages/providers/`, `apps/worker/src/publishing/token.service.ts` | **MERGED** (PR #5, `0d862ca`) | High / Resolved | PR #6 Docs Tracking (Current) |
+| **Tier 5: API / OAuth Contract** | Deterministic `API_PUBLIC_URL` for OAuth callbacks | `apps/api/src/config/public-url.ts`, `apps/api/src/modules/oauth/oauth.controller.ts` | **MERGED** (PR #4, `28b9a2c`) | Medium / Resolved | Complete |
+| **Tier 6: Deployment Hardening** | Cross-Subdomain CSRF Deployment Architecture | `apps/api/src/modules/auth/auth.controller.ts`, `docs/phase-6-readiness.md` | **OPEN** | Medium / Architectural Deployment Decision | Ingress topology documentation / Optional token endpoint |
+| **Tier 6: Deployment Hardening** | Security Event Audit Logging Interceptors | `apps/api/src/modules/audit/`, `docs/phase6_gap_audit.md` | **OPEN** | Medium / Compliance Hardening | Implement global audit interceptor for auth/provider mutations |
+| **Tier 6: Deployment Hardening** | Global Distributed Rate Limiting via Redis Throttler | `apps/api/src/app.module.ts`, `apps/api/src/modules/core/redis-throttler.storage.ts` | **OPEN** | Medium / Ingress Abuse Prevention | Apply throttler globally across all non-exempt API endpoints |
+| **Tier 7: Cleanup / Optimization** | Container Runtime Transpilation (`tsx` vs compiled `dist`) | `apps/api/Dockerfile`, `apps/worker/Dockerfile`, `docs/phase-6-readiness.md` | **OPEN** | Low / Performance & Startup Optimization | Add build output transpilation for monorepo internal packages |
+| **Tier 7: Cleanup / Optimization** | Token Refresh `REAUTH_REQUIRED` CAS TOCTOU Fencing | `apps/worker/src/publishing/token.service.ts` | **OPEN** | Low / Concurrency Follow-Up | Add CAS check to status mutation on refresh auth failures |
+
+---
+
+### 4. Single Highest-Priority Next Focus Area: Ambiguous Publication Reconciliation Hardening
+
+- **Priority Tier**: **Tier 3 (Publishing / Worker Data Loss / State Corruption)**
+- **Component**: [`apps/api/src/modules/publishing/services/publishing-application.service.ts`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/publishing/services/publishing-application.service.ts#L496-L623)
+- **Controller**: [`apps/api/src/modules/publishing/controllers/publications.controller.ts`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/publishing/controllers/publications.controller.ts#L194-L207)
+- **Specification**: [`docs/AMBIGUOUS_PUBLICATION_RECONCILIATION_ARCHITECTURE.md`](file:///C:/Users/bappa/agency-os/docs/AMBIGUOUS_PUBLICATION_RECONCILIATION_ARCHITECTURE.md)
+- **Core Risk**:
+  When a dangerous provider mutation times out or returns an ambiguous result (e.g. HTTP 5xx or dropped connection), execution enters `AMBIGUOUS` and `PostPlatformVariant` enters `UNKNOWN`.
+  If manual reconciliation logic lacks strict transactional guarantees, missing audit logs, or desynchronized `PublicationAttempt` / `executionMetadata` records, operators could inadvertently re-trigger duplicate publishing, create torn database states, or bypass RBAC authorization controls.
+- **Current State Analysis**:
+  Prior commits (`2a6de50`, `91159e0`, `181b587`) implemented atomic transactions covering `PostPlatformVariant`, `PublicationAttempt`, and `AuditLog`, and applied `@RequirePermission('publishing.reconcile')`. However:
+  1. **Zero Test Coverage**: No unit or integration tests currently exist for `PublishingApplicationService.reconcile` in `apps/api/src/modules/publishing`.
+  2. **Invariant Verification Required**: R1 through R10 invariants from [`docs/AMBIGUOUS_PUBLICATION_RECONCILIATION_ARCHITECTURE.md`](file:///C:/Users/bappa/agency-os/docs/AMBIGUOUS_PUBLICATION_RECONCILIATION_ARCHITECTURE.md) (CAS concurrency fencing, required `externalPostId` on `CONFIRM_PUBLISHED`, multi-attempt conflict detection, and audit trail atomicity) have not been formally verified against automated test suites.
+- **Verification-Only Plan (Next Steps)**:
+  1. **Phase A — Static Code Audit**:
+     - Inspect `PublishingApplicationService.reconcile` lines 496–623 against the 10 safety invariants (R1–R10).
+     - Verify `@RequirePermission('publishing.reconcile')` enforcement in `PermissionGuard` and `publications.controller.ts:195`.
+     - Confirm that `externalPostId` is strictly non-empty when `decision === 'CONFIRM_PUBLISHED'`.
+     - Check error classification (`ConflictException` for concurrency/state mismatches, `UnprocessableEntityException` for invalid payloads).
+  2. **Phase B — Test Gap Analysis**:
+     - Design a comprehensive test suite for `PublishingApplicationService.reconcile` covering:
+       - Successful `CONFIRM_PUBLISHED` atomic commit (variant `PUBLISHED`, attempt `SUCCESS`, audit log created).
+       - Successful `CONFIRM_FAILED` atomic commit (variant `FAILED`, attempt `FAILED`, audit log created).
+       - Non-`UNKNOWN` variant rejection (`ConflictException`).
+       - Non-`AMBIGUOUS` execution metadata rejection (`ConflictException`).
+       - Missing `externalPostId` rejection for `CONFIRM_PUBLISHED` (`UnprocessableEntityException`).
+       - CAS concurrency collision handling (`updated.count === 0` -> `ConflictException`).
+       - Non-unique publication attempt detection (`ConflictException`).
+       - Transaction rollback if any step (e.g. audit log creation) fails.
+  3. **Phase C — Execution & Reporting**:
+     - Run existing test suites (`pnpm --filter @agency-os/api test`) to confirm zero regressions before authoring new test coverage.
+
+
