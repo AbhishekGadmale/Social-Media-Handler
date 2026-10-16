@@ -126,5 +126,27 @@ describe('Trust Proxy Configuration', () => {
       expect(res.body.protocol).toBe('https');
       expect(res.body.secure).toBe(true);
     });
+
+    it('3-entry spoof chain with trust=1 only trusts rightmost upstream-appended address', async () => {
+      const app = createTestApp('1', false);
+      const res = await request(app)
+        .get('/test-proxy')
+        .set('X-Forwarded-For', '1.1.1.1, 2.2.2.2, 203.0.113.50');
+
+      expect(res.status).toBe(200);
+      expect(res.body.ip).toBe('203.0.113.50');
+      expect(res.body.ip).not.toBe('1.1.1.1');
+      expect(res.body.ip).not.toBe('2.2.2.2');
+    });
+
+    it('pin dangerous TRUST_PROXY=true semantics (trusts leftmost attacker-controlled address)', async () => {
+      const app = createTestApp('true', false);
+      const res = await request(app)
+        .get('/test-proxy')
+        .set('X-Forwarded-For', '1.1.1.1, 203.0.113.50');
+
+      expect(res.status).toBe(200);
+      expect(res.body.ip).toBe('1.1.1.1');
+    });
   });
 });

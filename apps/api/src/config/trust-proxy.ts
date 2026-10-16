@@ -5,7 +5,11 @@
  * - Unset or empty:
  *     - production (NODE_ENV === 'production'): defaults to 1 (trusts 1 upstream ingress hop)
  *     - non-production: defaults to false (disabled, direct client connection)
- * - "true": enables full proxy trust (boolean true)
+ * - "true": enables full proxy trust (boolean true).
+ *     WARNING: `TRUST_PROXY=true` trusts ALL `X-Forwarded-For` entries, including attacker-controlled values.
+ *     Only use it behind a proxy that strips/overwrites incoming `X-Forwarded-For`.
+ *     Never use it when the API is directly reachable from the public internet.
+ *     Using it incorrectly defeats rate limiting and IP-based audit/logging protections.
  * - "false" or "0": explicitly disables proxy trust (boolean false)
  * - Positive integer (e.g. "1", "2"): specifies the exact number of trusted upstream proxy hops
  *
