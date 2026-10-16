@@ -1,10 +1,15 @@
 /* eslint-disable @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-argument */
 import { Test, TestingModule } from '@nestjs/testing';
-import { PrismaClient, PostStatus, generateId } from '@agency-os/database';
+import {
+  PrismaClient,
+  PostStatus,
+  SocialAccountStatus,
+  generateId,
+} from '@agency-os/database';
 import { PublishingProcessor } from './publishing.processor';
 import { PublishingDispatcher } from './publishing.dispatcher';
 import { ExecutionValidator } from './execution.validator';
-import { TokenService } from './token.service';
+import { TokenService, AuthRequiredError } from './token.service';
 import {
   ProviderRegistry,
   providerRegistry,
@@ -503,6 +508,74 @@ describe('Publishing Worker (e2e)', () => {
 
       const serialized = JSON.stringify(attempt.providerResponse);
       expect(serialized).not.toContain('SECRET_TEST_VALUE');
+    });
+
+    it('transitions socialAccount to REAUTH_REQUIRED when provider returns AUTH_REQUIRED', async () => {
+      const { variantId, wsId } = await createFixture(
+        PostStatus.QUEUED,
+        'trigger-auth-fail',
+      );
+
+      await processor.process({
+        id: 'job-auth-fail',
+        data: {
+          workspaceId: wsId,
+          publicationId: variantId,
+          dispatchVersion: 1,
+        },
+      } as any);
+
+      const variant = await prisma.postPlatformVariant.findUniqueOrThrow({
+        where: { id: variantId },
+        include: { socialAccount: true },
+      });
+      expect(variant.status).toBe(PostStatus.FAILED);
+      expect(variant.socialAccount.status).toBe(
+        SocialAccountStatus.REAUTH_REQUIRED,
+      );
+
+      const attempt = await prisma.publicationAttempt.findFirstOrThrow({
+        where: { variantId },
+      });
+      expect(attempt.failureCategory).toBe('AUTH_REQUIRED');
+    });
+
+    it('transitions socialAccount to REAUTH_REQUIRED when TokenService throws AuthRequiredError', async () => {
+      const { variantId, wsId } = await createFixture(
+        PostStatus.QUEUED,
+        'valid content',
+      );
+
+      const tokenService = moduleRef.get(TokenService);
+      jest
+        .spyOn(tokenService, 'getExecutionCredentials')
+        .mockRejectedValueOnce(
+          new AuthRequiredError('Token expired and refresh token is invalid'),
+        );
+
+      await processor.process({
+        id: 'job-token-auth-error',
+        data: {
+          workspaceId: wsId,
+          publicationId: variantId,
+          dispatchVersion: 1,
+        },
+      } as any);
+
+      const variant = await prisma.postPlatformVariant.findUniqueOrThrow({
+        where: { id: variantId },
+        include: { socialAccount: true },
+      });
+      expect(variant.status).toBe(PostStatus.FAILED);
+      expect(variant.socialAccount.status).toBe(
+        SocialAccountStatus.REAUTH_REQUIRED,
+      );
+
+      const attempt = await prisma.publicationAttempt.findFirstOrThrow({
+        where: { variantId },
+      });
+      expect(attempt.failureCategory).toBe('AUTH_REQUIRED');
+      expect(attempt.failureCode).toBe('CREDENTIALS_UNAVAILABLE');
     });
   });
 

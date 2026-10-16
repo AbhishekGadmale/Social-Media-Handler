@@ -90,6 +90,57 @@ describe('YouTubeProvider', () => {
     expect(fetchCall[1].body).toContain('code_verifier=verifier-abc');
   });
 
+  it('refreshes credentials successfully and preserves original refresh_token if omitted', async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        access_token: 'new-access-token',
+        expires_in: 3600,
+        scope: 'https://www.googleapis.com/auth/youtube.readonly',
+      }),
+    });
+
+    const creds = await provider.refreshCredentials('existing-refresh-token');
+
+    expect(creds.accessToken).toBe('new-access-token');
+    expect(creds.refreshToken).toBe('existing-refresh-token');
+    expect(creds.expiresAt).toBeDefined();
+
+    const fetchCall = (global.fetch as any).mock.calls[0];
+    expect(fetchCall[0]).toBe('https://oauth2.googleapis.com/token');
+    expect(fetchCall[1].method).toBe('POST');
+    expect(fetchCall[1].body).toContain('grant_type=refresh_token');
+    expect(fetchCall[1].body).toContain('refresh_token=existing-refresh-token');
+  });
+
+  it('refreshes credentials and updates refresh_token if rotated', async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        access_token: 'new-access-token',
+        refresh_token: 'rotated-refresh-token',
+        expires_in: 3600,
+      }),
+    });
+
+    const creds = await provider.refreshCredentials('old-refresh-token');
+
+    expect(creds.accessToken).toBe('new-access-token');
+    expect(creds.refreshToken).toBe('rotated-refresh-token');
+  });
+
+  it('throws ProviderApiError on refresh failure', async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 400,
+      text: async () => JSON.stringify({ error: 'invalid_grant', error_description: 'Token revoked' }),
+    });
+
+    await expect(provider.refreshCredentials('revoked-token')).rejects.toThrow(
+      'Failed to refresh YouTube access token: Token revoked',
+    );
+  });
+
   it('fetches profiles correctly', async () => {
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,

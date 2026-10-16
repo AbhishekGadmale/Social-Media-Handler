@@ -84,6 +84,56 @@ describe('LinkedInProvider', () => {
     expect(bodyParams.has('code_verifier')).toBe(false);
   });
 
+  it('should refresh access token successfully', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        access_token: 'new-li-access',
+        expires_in: 5184000,
+        scope: 'openid profile email',
+      }),
+    });
+
+    const creds = await provider.refreshCredentials('current-li-refresh');
+    expect(creds.accessToken).toBe('new-li-access');
+    expect(creds.refreshToken).toBe('current-li-refresh');
+    expect(creds.expiresAt).toBeDefined();
+
+    const callArgs = mockFetch.mock.calls[0][1];
+    const bodyParams = new URLSearchParams(callArgs.body);
+    expect(bodyParams.get('grant_type')).toBe('refresh_token');
+    expect(bodyParams.get('refresh_token')).toBe('current-li-refresh');
+    expect(bodyParams.get('client_id')).toBe('test-client');
+    expect(bodyParams.get('client_secret')).toBe('test-secret');
+  });
+
+  it('should update refresh token if rotated by LinkedIn', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        access_token: 'new-li-access',
+        refresh_token: 'rotated-li-refresh',
+        expires_in: 5184000,
+      }),
+    });
+
+    const creds = await provider.refreshCredentials('old-li-refresh');
+    expect(creds.accessToken).toBe('new-li-access');
+    expect(creds.refreshToken).toBe('rotated-li-refresh');
+  });
+
+  it('should throw ProviderApiError on LinkedIn refresh failure', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 400,
+      text: async () => JSON.stringify({ error: 'invalid_grant', error_description: 'Refresh token expired' }),
+    });
+
+    await expect(provider.refreshCredentials('bad-token')).rejects.toThrow(
+      'Failed to refresh access token: Refresh token expired',
+    );
+  });
+
   it('should fetch user profile successfully', async () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,

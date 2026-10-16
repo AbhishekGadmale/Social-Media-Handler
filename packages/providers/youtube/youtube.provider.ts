@@ -143,6 +143,51 @@ export class YouTubeProvider implements ISocialProvider, IPublishingProvider {
     };
   }
 
+  async refreshCredentials(refreshToken: string): Promise<OAuthCredentials> {
+    const params = new URLSearchParams({
+      client_id: this.clientId,
+      client_secret: this.clientSecret,
+      refresh_token: refreshToken,
+      grant_type: "refresh_token",
+    });
+
+    const response = await fetch(this.tokenUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: params.toString(),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      let safeMessage = "Unknown error";
+      try {
+        const parsed = JSON.parse(errorText);
+        safeMessage = parsed.error_description || parsed.error || errorText;
+      } catch {
+        safeMessage = errorText;
+      }
+      throw new ProviderApiError(
+        `Failed to refresh YouTube access token: ${safeMessage}`,
+        response.status,
+      );
+    }
+
+    const data = await response.json();
+
+    return {
+      accessToken: data.access_token,
+      refreshToken: data.refresh_token || refreshToken,
+      expiresAt: data.expires_in
+        ? new Date(Date.now() + data.expires_in * 1000)
+        : undefined,
+      scopes: data.scope
+        ? data.scope.split(" ")
+        : ["https://www.googleapis.com/auth/youtube.readonly"],
+    };
+  }
+
   async getProfiles(
     credentials: OAuthCredentials,
   ): Promise<ProviderProfileResult[]> {

@@ -6,7 +6,6 @@ import {
   SyncRunStatus,
   generateId,
 } from '@agency-os/database';
-import { decrypt } from '@agency-os/database/src/crypto/encryption';
 import {
   providerRegistry,
   ProviderCapabilityError,
@@ -17,6 +16,7 @@ import { invokeCapability } from '@agency-os/providers';
 import { Logger, OnModuleInit } from '@nestjs/common';
 
 import { SyncService } from './sync.service';
+import { TokenService, AuthRequiredError } from '../publishing/token.service';
 
 @Processor('sync')
 export class SyncProcessor extends WorkerHost implements OnModuleInit {
@@ -25,6 +25,7 @@ export class SyncProcessor extends WorkerHost implements OnModuleInit {
   constructor(
     private readonly prisma: PrismaClient,
     private readonly syncService: SyncService,
+    private readonly tokenService: TokenService,
   ) {
     super();
   }
@@ -98,46 +99,32 @@ export class SyncProcessor extends WorkerHost implements OnModuleInit {
         return;
       }
 
-      // Check if token expired
-      if (
-        account.connection.expiresAt &&
-        account.connection.expiresAt < new Date()
-      ) {
-        // mark REAUTH_REQUIRED and skip
-        await this.prisma.socialAccount.update({
-          where: { id: socialAccountId },
-          data: { status: SocialAccountStatus.REAUTH_REQUIRED },
-        });
-        this.logger.log(
-          {
-            jobId: job.id,
-            socialAccountId,
-            action: 'sync_skipped',
-            reason: 'expired_token',
-          },
-          'Skipping sync due to expired token',
+      // Check & obtain valid execution credentials via TokenService
+      let credentials;
+      try {
+        credentials = await this.tokenService.getExecutionCredentials(
+          socialAccountId as string,
+          workspaceId as string | undefined,
         );
-        await this.completeSyncRun(syncRun.id, SyncRunStatus.SKIPPED, {
-          skipped: true,
-          reason: 'expired_token',
-        });
-        return;
+      } catch (error: any) {
+        if (error instanceof AuthRequiredError) {
+          this.logger.log(
+            {
+              jobId: job.id,
+              socialAccountId,
+              action: 'sync_skipped',
+              reason: 'expired_token',
+            },
+            'Skipping sync due to expired token requiring reauth',
+          );
+          await this.completeSyncRun(syncRun.id, SyncRunStatus.SKIPPED, {
+            skipped: true,
+            reason: 'expired_token',
+          });
+          return;
+        }
+        throw error;
       }
-
-      this.logger.log(
-        { jobId: job.id, action: 'decrypt_token' },
-        'decrypting access token',
-      );
-      const decryptedToken = decrypt({
-        encrypted: account.connection.encryptedAccessToken,
-        iv: account.connection.accessTokenIv,
-        authTag: account.connection.accessTokenAuthTag,
-        keyVersion: account.connection.keyVersion,
-      });
-
-      const credentials = {
-        accessToken: decryptedToken,
-      };
 
       const provider = providerRegistry.get(account.provider.toLowerCase());
       if (!provider) {

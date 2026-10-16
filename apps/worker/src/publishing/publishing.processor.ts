@@ -6,6 +6,7 @@ import {
   PrismaClient,
   PostStatus,
   Prisma,
+  SocialAccountStatus,
   generateId,
   PublishingRepository,
 } from '@agency-os/database';
@@ -21,7 +22,7 @@ import {
 } from '@agency-os/providers';
 import { PublishJobData } from './publishing.types';
 import { ExecutionValidator } from './execution.validator';
-import { TokenService } from './token.service';
+import { TokenService, AuthRequiredError } from './token.service';
 
 @Processor('publish', { concurrency: 5 })
 export class PublishingProcessor extends WorkerHost {
@@ -67,7 +68,12 @@ export class PublishingProcessor extends WorkerHost {
     try {
       credentials = await this.tokenService.getExecutionCredentials(variant.socialAccountId);
     } catch (err: any) {
-      // Mark as unknown or failed depending on the error
+      if (err instanceof AuthRequiredError) {
+        await this.prisma.socialAccount.update({
+          where: { id: variant.socialAccountId },
+          data: { status: SocialAccountStatus.REAUTH_REQUIRED },
+        });
+      }
       throw err;
     }
 
@@ -79,6 +85,12 @@ export class PublishingProcessor extends WorkerHost {
         await this.emitAudit(workspaceId, publicationId, 'PUBLICATION_DELETED_REMOTELY');
       } else {
         if (res.failureCategory === 'AUTH_REQUIRED' || res.failureCategory === 'PERMANENT') {
+          if (res.failureCategory === 'AUTH_REQUIRED') {
+            await this.prisma.socialAccount.update({
+              where: { id: variant.socialAccountId },
+              data: { status: SocialAccountStatus.REAUTH_REQUIRED },
+            });
+          }
           // Leave it in UNKNOWN or return to FAILED delete state? Let's mark it UNKNOWN for manual reconciliation
           await this.prisma.postPlatformVariant.update({ where: { id: publicationId }, data: { status: 'UNKNOWN' } });
           await this.emitAudit(workspaceId, publicationId, 'PUBLICATION_DELETE_FAILED');
@@ -242,7 +254,13 @@ export class PublishingProcessor extends WorkerHost {
       credentials = await this.tokenService.getExecutionCredentials(
         variant.socialAccountId,
       );
-    } catch (error) {
+    } catch (error: any) {
+      if (error instanceof AuthRequiredError) {
+        await this.prisma.socialAccount.update({
+          where: { id: variant.socialAccountId },
+          data: { status: SocialAccountStatus.REAUTH_REQUIRED },
+        });
+      }
       await this.handleFailure(
         publicationId,
         attempt.id,
@@ -587,12 +605,19 @@ export class PublishingProcessor extends WorkerHost {
     const variant = await this.prisma.postPlatformVariant.findUnique({
       where: { id: publicationId },
     });
-    if (variant)
+    if (variant) {
+      if (category === 'AUTH_REQUIRED') {
+        await this.prisma.socialAccount.update({
+          where: { id: variant.socialAccountId },
+          data: { status: SocialAccountStatus.REAUTH_REQUIRED },
+        });
+      }
       await this.emitAudit(
         variant.workspaceId,
         publicationId,
         'PUBLICATION_FAILED',
       );
+    }
   }
 
   private async handleUnknown(
