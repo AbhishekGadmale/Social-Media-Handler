@@ -233,10 +233,11 @@ In `apps/api/src/config/trust-proxy.spec.ts` (12 tests, all passing):
 - `pnpm turbo run lint`: **PASS** (Exit code 0, 0 errors, zero new warnings).
 - `pnpm turbo run build`: **PASS** (API, Web, Worker all compiled successfully).
 
-### 6. GitHub CI Checks Status (Commit 4c2a938 / PR #3 / Run 38785593825)
+### 6. GitHub CI Checks Status (Commit e5665a6 / PR #3)
 - `GitGuardian Security Checks`: **SUCCESS** (Green)
 - `CI / Application Builds`: **SUCCESS** (Green)
 - `CI / Docker Build & Smoke Test`: **SUCCESS** (Green)
 - `CI / Tests`: **SUCCESS** (Green)
 - `CI / Code Quality (Lint & Typecheck)`: **SUCCESS** (Green)
+
 
