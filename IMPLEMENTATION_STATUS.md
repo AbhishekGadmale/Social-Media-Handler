@@ -510,7 +510,7 @@ Following the project's 7-tier prioritization hierarchy:
 | **Tier 6: Deployment Hardening** | Security Event Audit Logging Interceptors | `apps/api/src/modules/audit/`, `docs/phase6_gap_audit.md` | **OPEN** | Medium / Compliance Hardening | Implement global audit interceptor for auth/provider mutations |
 | **Tier 6: Deployment Hardening** | Global Distributed Rate Limiting via Redis Throttler | `apps/api/src/app.module.ts`, `apps/api/src/modules/core/redis-throttler.storage.ts` | **VERIFIED COMPLETE** | Medium / Ingress Abuse Prevention | Complete (`APP_GUARD` + Redis store verified) |
 | **Tier 7: Cleanup / Optimization** | Container Runtime Transpilation (`tsx` vs compiled `dist`) | `apps/api/Dockerfile`, `apps/worker/Dockerfile`, `docs/phase-6-readiness.md` | **OPEN** | Low / Performance & Startup Optimization | Add build output transpilation for monorepo internal packages |
-| **Tier 7: Cleanup / Optimization** | Token Refresh `REAUTH_REQUIRED` CAS TOCTOU Fencing | `apps/worker/src/publishing/token.service.ts` | **OPEN** | Low / Concurrency Follow-Up | Add CAS check to status mutation on refresh auth failures |
+| **Tier 7: Concurrency & Data Integrity** | **Token Refresh `REAUTH_REQUIRED` CAS TOCTOU Fencing** | [`apps/worker/src/publishing/token.service.ts`](file:///C:/Users/bappa/agency-os/apps/worker/src/publishing/token.service.ts#L359-L540), [`apps/worker/src/publishing/token.service.spec.ts`](file:///C:/Users/bappa/agency-os/apps/worker/src/publishing/token.service.spec.ts#L688-L1075) | **IMPLEMENTED & VERIFIED** (Branch `fix/token-refresh-reauth-toctou`) | High / Concurrency Data Integrity | Centralized transactional CAS fencing with credential snapshot validation |
 
 ---
 
@@ -527,6 +527,70 @@ Following the project's 7-tier prioritization hierarchy:
   A verification-only audit is required to inspect ingress specifications, staging deployment topologies, and evaluate whether to:
   1. Formalize single-origin reverse proxy routing in staging/production deployment guides.
   2. Or configure a configurable parent cookie domain (`COOKIE_DOMAIN=.example.com`) and/or provide a lightweight `GET /api/v1/auth/csrf` token endpoint.
+
+---
+
+## Token Refresh `REAUTH_REQUIRED` CAS TOCTOU Fencing (Branch `fix/token-refresh-reauth-toctou`)
+
+### 1. Defect Root Cause & Concurrency Hazard
+- **The Defect**:
+  When a token refresh failed with a permanent auth error (e.g. `invalid_grant` / 401) or when a non-refreshable expired token was encountered, `TokenService` previously performed an un-fenced database write:
+  `SocialAccount.status = REAUTH_REQUIRED`
+  keyed purely by `socialAccountId`.
+- **The Race Condition (TOCTOU)**:
+  Under high concurrency, if Worker A called provider refresh while Worker B successfully completed refresh, or while an end-user reconnected their social account in the web UI, Worker A's stale failure response would arrive later and blindly overwrite `SocialAccount.status = REAUTH_REQUIRED`. This forced active, freshly-authenticated connections back into broken reauth states, disrupting ongoing publishing and sync pipelines.
+  Furthermore, if an account was intentionally disconnected by a user (`status = DISCONNECTED`), a stale worker refresh failure could resurrect the account to `REAUTH_REQUIRED`.
+
+### 2. Architectural Hardening
+1. **Centralized Failure Helper (`handlePermanentAuthFailure`)**:
+   - Both permanent provider refresh failures (`invalid_grant`, 401) and non-refreshable expired token paths are routed through a single transactional helper in `TokenService`.
+2. **Interactive Transaction (`this.prisma.$transaction`)**:
+   - Re-reads latest `SocialConnection` and associated parent `SocialAccount` inside the transaction with strong consistency.
+3. **Explicit `DISCONNECTED` Fence**:
+   - If `latestConnection.account.status === DISCONNECTED`, the helper aborts status mutation, throws `AuthRequiredError`, and guarantees disconnected accounts are never resurrected.
+4. **Credential Snapshot Delta & Automatic Recovery**:
+   - Compares the failed worker's initial snapshot against the latest persisted state in PostgreSQL:
+     - `encryptedRefreshToken`
+     - `encryptedAccessToken`
+     - `updatedAt`
+     - `expiresAt`
+   - If any credential attribute changed AND the latest credentials have future validity (`expiresAt > Date.now()`), the helper automatically recovers and returns fresh credentials, allowing the calling job to succeed without failure.
+   - If credentials changed but are not valid, status mutation is skipped (`stale_credentials_skip`).
+5. **Atomic Compare-And-Swap (CAS)**:
+   - When credentials match the failed snapshot, updates `SocialAccount` using conditional CAS:
+     ```typescript
+     await tx.socialAccount.updateMany({
+       where: {
+         id: socialAccountId,
+         updatedAt: latestConnection.account.updatedAt,
+         status: { not: SocialAccountStatus.DISCONNECTED },
+         ...(workspaceId && { workspaceId }),
+       },
+       data: { status: SocialAccountStatus.REAUTH_REQUIRED },
+     });
+     ```
+   - If `casResult.count === 0`, another actor concurrently updated the account; the helper re-reads account state and safely aborts (`cas_conflict_skip`).
+6. **PostgreSQL Commit Before Error Throw**:
+   - Crucial Prisma Client guarantee: In Prisma interactive transactions, throwing an exception inside the callback automatically triggers a PostgreSQL `ROLLBACK`. The helper returns an outcome descriptor (`'reauth_marked' | 'recovered' | 'disconnected' | 'stale_credentials_skip' | 'cas_conflict_skip'`) to allow the transaction to `COMMIT` to PostgreSQL, and then throws `AuthRequiredError` outside the transaction callback.
+
+### 3. Test Coverage & Verification
+- **10 Focused Concurrency & Concurrency-Fence Tests Added in `apps/worker/src/publishing/token.service.spec.ts`**:
+  1. *Genuine permanent refresh failure*: Unchanged credential snapshot transitions account to `REAUTH_REQUIRED` and throws `AuthRequiredError`.
+  2. *Concurrent successful refresh*: Newer DB credentials allow stale worker to recover fresh access token without marking `REAUTH_REQUIRED`.
+  3. *Concurrent manual OAuth reconnect*: Stale failure does not set `REAUTH_REQUIRED`; fresh credentials returned.
+  4. *Refresh-token rotation*: Newer rotated refresh token in DB prevents stale worker from mutating account status.
+  5. *Disconnect race*: Stale failure leaves `DISCONNECTED` status unchanged.
+  6. *Genuine `invalid_grant` regression*: Unchanged snapshot transitions to `REAUTH_REQUIRED`.
+  7. *Non-refreshable expired token*: Transitions to `REAUTH_REQUIRED` when snapshot is unchanged.
+  8. *Non-refreshable expired token + concurrent reconnect*: Stale worker recovers fresh credentials without overwriting `ACTIVE`.
+  9. *Account CAS conflict*: `updateMany` count 0 skips stale mutation and preserves latest account state.
+  10. *No stale `ACTIVE` restoration*: Stale worker encountering changed credentials never blindly forces account status to `ACTIVE`.
+- **Test Suite Results**:
+  - Worker Unit & Integration Tests (`pnpm --filter @agency-os/worker test`): **PASS** (9/9 suites, 115/115 tests passing, +10 new tests).
+  - Monorepo Tests (`pnpm turbo run test`): **PASS** (5/5 tasks successful across worker, api, providers, database, web).
+  - Monorepo Typecheck (`pnpm turbo run typecheck`): **PASS** (5/5 tasks successful).
+  - Monorepo Lint (`pnpm turbo run lint`): **PASS** (5/5 tasks successful, 0 errors).
+  - Production Builds (`pnpm turbo run build`): **PASS** (3/3 builds successful across api, web, and worker).
 
 ---
 
