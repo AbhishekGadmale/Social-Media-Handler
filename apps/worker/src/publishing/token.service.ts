@@ -93,12 +93,13 @@ export class TokenService {
     }
 
     // 2. Token is near expiry and refreshable, or actually expired: coordinate refresh
-    return this.refreshAndGetCredentials(account, socialAccountId);
+    return this.refreshAndGetCredentials(account, socialAccountId, workspaceId);
   }
 
   private async refreshAndGetCredentials(
     account: any,
     socialAccountId: string,
+    workspaceId?: string,
   ): Promise<ProviderExecutionCredentials> {
     const lockKey = `lock:refresh:${socialAccountId}`;
     const lockToken = crypto.randomUUID();
@@ -219,14 +220,15 @@ export class TokenService {
           return { accessToken: decryptedToken };
         }
 
-        // Only mark REAUTH_REQUIRED if token is actually expired
-        await this.prisma.socialAccount.update({
-          where: { id: socialAccountId },
-          data: { status: SocialAccountStatus.REAUTH_REQUIRED },
+        // Only mark REAUTH_REQUIRED if token is actually expired and snapshot is unchanged
+        return await this.handlePermanentAuthFailure({
+          socialAccountId,
+          workspaceId,
+          accountProvider: String(account.provider),
+          snapshotConnection: currentConnection,
+          snapshotAccount: account,
+          errorMessage: `Token expired for account ${socialAccountId} (${String(account.provider)}) and cannot be refreshed`,
         });
-        throw new AuthRequiredError(
-          `Token expired for account ${socialAccountId} (${String(account.provider)}) and cannot be refreshed`,
-        );
       }
 
       const oldEncryptedRefreshToken = currentConnection.encryptedRefreshToken;
@@ -274,43 +276,14 @@ export class TokenService {
           !isConfigError;
 
         if (isAuthInvalid) {
-          // Failure Fencing (Blocker 1): Re-read connection from DB before marking REAUTH_REQUIRED
-          const latestConnection =
-            await this.prisma.socialConnection.findUnique({
-              where: { socialAccountId },
-            });
-
-          // Check if another worker refreshed while we were in flight
-          const isRefreshedByOther =
-            (latestConnection?.encryptedRefreshToken &&
-              latestConnection.encryptedRefreshToken !==
-                oldEncryptedRefreshToken) ||
-            (latestConnection?.expiresAt &&
-              latestConnection.expiresAt.getTime() >
-                Date.now() + TokenService.REFRESH_THRESHOLD_MS);
-
-          if (
-            isRefreshedByOther &&
-            latestConnection?.expiresAt &&
-            latestConnection.expiresAt.getTime() > Date.now()
-          ) {
-            const decryptedToken = decrypt({
-              encrypted: latestConnection.encryptedAccessToken,
-              iv: latestConnection.accessTokenIv,
-              authTag: latestConnection.accessTokenAuthTag,
-              keyVersion: latestConnection.keyVersion,
-            });
-            return { accessToken: decryptedToken };
-          }
-
-          // Genuine auth failure: Refresh token in DB hasn't changed and token is truly revoked/expired
-          await this.prisma.socialAccount.update({
-            where: { id: socialAccountId },
-            data: { status: SocialAccountStatus.REAUTH_REQUIRED },
+          return await this.handlePermanentAuthFailure({
+            socialAccountId,
+            workspaceId,
+            accountProvider: String(account.provider),
+            snapshotConnection: currentConnection,
+            snapshotAccount: account,
+            errorMessage: String(err?.message || 'Unauthorized'),
           });
-          throw new AuthRequiredError(
-            `Failed to refresh token for account ${socialAccountId}: ${String(err?.message || 'Unauthorized')}`,
-          );
         }
 
         // Transient / network / 5xx / config error: do NOT mark permanently REAUTH_REQUIRED
@@ -381,6 +354,191 @@ export class TokenService {
         await this.releaseLock(lockKey, lockToken);
       }
     }
+  }
+
+  private async handlePermanentAuthFailure(params: {
+    socialAccountId: string;
+    workspaceId?: string;
+    accountProvider: string;
+    snapshotConnection: {
+      encryptedAccessToken: string;
+      accessTokenIv: string;
+      accessTokenAuthTag: string;
+      encryptedRefreshToken?: string | null;
+      refreshTokenIv?: string | null;
+      refreshTokenAuthTag?: string | null;
+      keyVersion: number;
+      expiresAt?: Date | null;
+      updatedAt: Date;
+    };
+    snapshotAccount?: {
+      updatedAt?: Date;
+      status?: SocialAccountStatus;
+    };
+    errorMessage: string;
+  }): Promise<ProviderExecutionCredentials> {
+    const {
+      socialAccountId,
+      workspaceId,
+      accountProvider,
+      snapshotConnection,
+      errorMessage,
+    } = params;
+
+    const result = await this.prisma.$transaction(async (tx) => {
+      // 1. Re-read the latest SocialConnection and parent SocialAccount inside transaction
+      const latestConnection = await tx.socialConnection.findUnique({
+        where: { socialAccountId },
+        include: { account: true },
+      });
+
+      if (!latestConnection || !latestConnection.account) {
+        throw new Error(
+          `Social account connection missing for id: ${socialAccountId}`,
+        );
+      }
+
+      // 2. Explicitly detect DISCONNECTED:
+      // If latest account status is DISCONNECTED, do not change status,
+      // do not resurrect it to REAUTH_REQUIRED, throw AuthRequiredError without mutation.
+      if (
+        latestConnection.account.status === SocialAccountStatus.DISCONNECTED
+      ) {
+        return {
+          outcome: 'disconnected' as const,
+        };
+      }
+
+      // 3. Stale Credential Detection:
+      // Compare the latest persisted credential state against the failed snapshot.
+      const isRefreshTokenChanged =
+        latestConnection.encryptedRefreshToken !==
+        snapshotConnection.encryptedRefreshToken;
+
+      const isAccessTokenChanged =
+        latestConnection.encryptedAccessToken !==
+        snapshotConnection.encryptedAccessToken;
+
+      const isConnectionUpdatedAtChanged =
+        latestConnection.updatedAt.getTime() !==
+        snapshotConnection.updatedAt.getTime();
+
+      const isExpiresAtChanged =
+        (latestConnection.expiresAt?.getTime() ?? null) !==
+        (snapshotConnection.expiresAt?.getTime() ?? null);
+
+      const hasCredentialStateChanged =
+        isRefreshTokenChanged ||
+        isAccessTokenChanged ||
+        isConnectionUpdatedAtChanged ||
+        isExpiresAtChanged;
+
+      // 4. Recovery if another actor fixed the account:
+      if (hasCredentialStateChanged) {
+        // If DB state changed and latest credentials are currently valid:
+        if (
+          latestConnection.expiresAt &&
+          latestConnection.expiresAt.getTime() > Date.now()
+        ) {
+          const decryptedToken = decrypt({
+            encrypted: latestConnection.encryptedAccessToken,
+            iv: latestConnection.accessTokenIv,
+            authTag: latestConnection.accessTokenAuthTag,
+            keyVersion: latestConnection.keyVersion,
+          });
+          return {
+            outcome: 'recovered' as const,
+            credentials: { accessToken: decryptedToken },
+          };
+        }
+
+        // DB state changed but credentials are not usable:
+        // Skip stale status mutation; throw AuthRequiredError after commit
+        return {
+          outcome: 'stale_credentials_skip' as const,
+        };
+      }
+
+      // 5. Atomic Status CAS:
+      // The latest credential snapshot still matches the failed snapshot.
+      // Conditionally update SocialAccount to REAUTH_REQUIRED using CAS on updatedAt and excluding DISCONNECTED.
+      const whereClause: any = {
+        id: socialAccountId,
+        updatedAt: latestConnection.account.updatedAt,
+        status: { not: SocialAccountStatus.DISCONNECTED },
+      };
+      if (workspaceId) {
+        whereClause.workspaceId = workspaceId;
+      }
+
+      const casResult = await tx.socialAccount.updateMany({
+        where: whereClause,
+        data: {
+          status: SocialAccountStatus.REAUTH_REQUIRED,
+        },
+      });
+
+      if (casResult.count === 0) {
+        // Another actor changed account state between read and update.
+        // Re-read account to fail safely / recover if credentials became valid.
+        const recheckAccount = await tx.socialAccount.findUnique({
+          where: { id: socialAccountId },
+          include: { connection: true },
+        });
+
+        if (
+          recheckAccount?.connection?.expiresAt &&
+          recheckAccount.connection.expiresAt.getTime() > Date.now()
+        ) {
+          const decryptedToken = decrypt({
+            encrypted: recheckAccount.connection.encryptedAccessToken,
+            iv: recheckAccount.connection.accessTokenIv,
+            authTag: recheckAccount.connection.accessTokenAuthTag,
+            keyVersion: recheckAccount.connection.keyVersion,
+          });
+          return {
+            outcome: 'recovered' as const,
+            credentials: { accessToken: decryptedToken },
+          };
+        }
+
+        return {
+          outcome: 'cas_conflict_skip' as const,
+        };
+      }
+
+      return {
+        outcome: 'reauth_marked' as const,
+      };
+    });
+
+    // Handle outcomes outside the transaction so updates remain COMMITTED in PostgreSQL
+    if (result.outcome === 'recovered') {
+      return result.credentials;
+    }
+
+    if (result.outcome === 'disconnected') {
+      throw new AuthRequiredError(
+        `Account ${socialAccountId} (${accountProvider}) is disconnected`,
+      );
+    }
+
+    if (result.outcome === 'stale_credentials_skip') {
+      throw new AuthRequiredError(
+        `Token credentials for account ${socialAccountId} (${accountProvider}) were modified by another actor; skipping stale REAUTH_REQUIRED update. Details: ${errorMessage}`,
+      );
+    }
+
+    if (result.outcome === 'cas_conflict_skip') {
+      throw new AuthRequiredError(
+        `Account ${socialAccountId} was concurrently modified during failure handling; skipping stale REAUTH_REQUIRED update`,
+      );
+    }
+
+    // Genuine failure with unchanged snapshot and successfully committed CAS:
+    throw new AuthRequiredError(
+      `Failed to refresh token for account ${socialAccountId} (${accountProvider}): ${errorMessage}`,
+    );
   }
 
   private async releaseLock(lockKey: string, lockToken: string): Promise<void> {

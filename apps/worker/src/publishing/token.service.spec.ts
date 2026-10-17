@@ -684,4 +684,395 @@ describe('TokenService', () => {
       refreshSpy.mockRestore();
     });
   });
+
+  describe('Token Refresh REAUTH_REQUIRED CAS TOCTOU Fencing', () => {
+    it('1. genuine permanent refresh failure: unchanged snapshot transitions account to REAUTH_REQUIRED and throws AuthRequiredError', async () => {
+      const expiredDate = new Date(Date.now() - 60 * 1000);
+      const { account } = await createAccountWithConnection({
+        provider: 'YOUTUBE',
+        accessToken: 'expired-token-1',
+        refreshToken: 'valid-refresh-token-1',
+        expiresAt: expiredDate,
+      });
+
+      const ytProvider = providerRegistry.get('youtube');
+      const error: any = new Error('invalid_grant: token has been revoked');
+      error.statusCode = 400;
+      const refreshSpy = jest
+        .spyOn(ytProvider as any, 'refreshCredentials')
+        .mockRejectedValueOnce(error);
+
+      const tokenService = new TokenService(prisma);
+      await expect(
+        tokenService.getExecutionCredentials(account.id),
+      ).rejects.toThrow(AuthRequiredError);
+
+      const updatedAccount = await prisma.socialAccount.findUniqueOrThrow({
+        where: { id: account.id },
+      });
+      expect(updatedAccount.status).toBe(SocialAccountStatus.REAUTH_REQUIRED);
+
+      refreshSpy.mockRestore();
+    });
+
+    it('2. concurrent successful refresh: DB has newer credentials -> stale worker receives invalid_grant, account remains ACTIVE, fresh access token returned', async () => {
+      const expiredDate = new Date(Date.now() - 60 * 1000);
+      const { account } = await createAccountWithConnection({
+        provider: 'YOUTUBE',
+        accessToken: 'expired-token-2',
+        refreshToken: 'stale-refresh-token-2',
+        expiresAt: expiredDate,
+      });
+
+      const ytProvider = providerRegistry.get('youtube');
+      const error: any = new Error('invalid_grant: Bad Request');
+      error.statusCode = 400;
+
+      const refreshSpy = jest
+        .spyOn(ytProvider as any, 'refreshCredentials')
+        .mockImplementation(async () => {
+          // Simulate Worker A completing refresh while Worker B was in flight
+          const encNewAccess = encrypt('fresh-token-from-worker-a-2');
+          const encNewRefresh = encrypt(
+            'rotated-refresh-token-from-worker-a-2',
+          );
+          await prisma.socialConnection.update({
+            where: { socialAccountId: account.id },
+            data: {
+              encryptedAccessToken: encNewAccess.encrypted,
+              accessTokenIv: encNewAccess.iv,
+              accessTokenAuthTag: encNewAccess.authTag,
+              keyVersion: encNewAccess.keyVersion,
+              encryptedRefreshToken: encNewRefresh.encrypted,
+              refreshTokenIv: encNewRefresh.iv,
+              refreshTokenAuthTag: encNewRefresh.authTag,
+              expiresAt: new Date(Date.now() + 3600 * 1000),
+            },
+          });
+          throw error;
+        });
+
+      const tokenService = new TokenService(prisma);
+      const creds = await tokenService.getExecutionCredentials(account.id);
+
+      expect(creds.accessToken).toBe('fresh-token-from-worker-a-2');
+
+      const updatedAccount = await prisma.socialAccount.findUniqueOrThrow({
+        where: { id: account.id },
+      });
+      expect(updatedAccount.status).toBe(SocialAccountStatus.ACTIVE);
+
+      refreshSpy.mockRestore();
+    });
+
+    it('3. concurrent manual OAuth reconnect: DB connection updatedAt/tokens changed -> account remains ACTIVE, stale failure does NOT set REAUTH_REQUIRED', async () => {
+      const expiredDate = new Date(Date.now() - 60 * 1000);
+      const { account } = await createAccountWithConnection({
+        provider: 'YOUTUBE',
+        accessToken: 'expired-token-3',
+        refreshToken: 'stale-refresh-token-3',
+        expiresAt: expiredDate,
+      });
+
+      const ytProvider = providerRegistry.get('youtube');
+      const error: any = new Error('invalid_grant: Token expired or revoked');
+      error.statusCode = 400;
+
+      const refreshSpy = jest
+        .spyOn(ytProvider as any, 'refreshCredentials')
+        .mockImplementation(async () => {
+          // Simulate user manually reconnecting in UI, writing new tokens and future expiresAt
+          const encReconnected = encrypt('user-reconnected-access-token-3');
+          const encReconnectedRefresh = encrypt(
+            'user-reconnected-refresh-token-3',
+          );
+          await prisma.socialConnection.update({
+            where: { socialAccountId: account.id },
+            data: {
+              encryptedAccessToken: encReconnected.encrypted,
+              accessTokenIv: encReconnected.iv,
+              accessTokenAuthTag: encReconnected.authTag,
+              keyVersion: encReconnected.keyVersion,
+              encryptedRefreshToken: encReconnectedRefresh.encrypted,
+              refreshTokenIv: encReconnectedRefresh.iv,
+              refreshTokenAuthTag: encReconnectedRefresh.authTag,
+              expiresAt: new Date(Date.now() + 7200 * 1000),
+            },
+          });
+          throw error;
+        });
+
+      const tokenService = new TokenService(prisma);
+      const creds = await tokenService.getExecutionCredentials(account.id);
+
+      expect(creds.accessToken).toBe('user-reconnected-access-token-3');
+
+      const updatedAccount = await prisma.socialAccount.findUniqueOrThrow({
+        where: { id: account.id },
+      });
+      expect(updatedAccount.status).toBe(SocialAccountStatus.ACTIVE);
+
+      refreshSpy.mockRestore();
+    });
+
+    it('4. refresh-token rotation: encryptedRefreshToken no longer matches failed snapshot -> stale failure cannot mutate account status', async () => {
+      const expiredDate = new Date(Date.now() - 60 * 1000);
+      const { account } = await createAccountWithConnection({
+        provider: 'YOUTUBE',
+        accessToken: 'expired-token-4',
+        refreshToken: 'old-refresh-token-4',
+        expiresAt: expiredDate,
+      });
+
+      const ytProvider = providerRegistry.get('youtube');
+      const error: any = new Error('invalid_grant: Stale refresh token');
+      error.statusCode = 400;
+
+      const refreshSpy = jest
+        .spyOn(ytProvider as any, 'refreshCredentials')
+        .mockImplementation(async () => {
+          // Rotate refresh token in DB, but expiresAt remains in the past
+          const encRotatedRefresh = encrypt('new-rotated-refresh-token-4');
+          await prisma.socialConnection.update({
+            where: { socialAccountId: account.id },
+            data: {
+              encryptedRefreshToken: encRotatedRefresh.encrypted,
+              refreshTokenIv: encRotatedRefresh.iv,
+              refreshTokenAuthTag: encRotatedRefresh.authTag,
+            },
+          });
+          throw error;
+        });
+
+      const tokenService = new TokenService(prisma);
+      await expect(
+        tokenService.getExecutionCredentials(account.id),
+      ).rejects.toThrow(AuthRequiredError);
+
+      // Status must NOT be changed to REAUTH_REQUIRED because credential snapshot changed
+      const updatedAccount = await prisma.socialAccount.findUniqueOrThrow({
+        where: { id: account.id },
+      });
+      expect(updatedAccount.status).toBe(SocialAccountStatus.ACTIVE);
+
+      refreshSpy.mockRestore();
+    });
+
+    it('5. disconnect race: latest account status DISCONNECTED -> stale failure leaves DISCONNECTED unchanged', async () => {
+      const expiredDate = new Date(Date.now() - 60 * 1000);
+      const { account } = await createAccountWithConnection({
+        provider: 'YOUTUBE',
+        accessToken: 'expired-token-5',
+        refreshToken: 'refresh-token-5',
+        expiresAt: expiredDate,
+      });
+
+      const ytProvider = providerRegistry.get('youtube');
+      const error: any = new Error('invalid_grant: Disconnected account');
+      error.statusCode = 400;
+
+      const refreshSpy = jest
+        .spyOn(ytProvider as any, 'refreshCredentials')
+        .mockImplementation(async () => {
+          // User disconnected account while refresh was in flight
+          await prisma.socialAccount.update({
+            where: { id: account.id },
+            data: { status: SocialAccountStatus.DISCONNECTED },
+          });
+          throw error;
+        });
+
+      const tokenService = new TokenService(prisma);
+      await expect(
+        tokenService.getExecutionCredentials(account.id),
+      ).rejects.toThrow(AuthRequiredError);
+
+      const updatedAccount = await prisma.socialAccount.findUniqueOrThrow({
+        where: { id: account.id },
+      });
+      // Crucial: Must NOT be resurrected to REAUTH_REQUIRED
+      expect(updatedAccount.status).toBe(SocialAccountStatus.DISCONNECTED);
+
+      refreshSpy.mockRestore();
+    });
+
+    it('6. genuine invalid_grant regression: unchanged snapshot still transitions to REAUTH_REQUIRED', async () => {
+      const expiredDate = new Date(Date.now() - 60 * 1000);
+      const { account } = await createAccountWithConnection({
+        provider: 'LINKEDIN',
+        accessToken: 'expired-token-6',
+        refreshToken: 'valid-refresh-token-6',
+        expiresAt: expiredDate,
+      });
+
+      const liProvider = providerRegistry.get('linkedin');
+      const error: any = new Error('invalid_grant: Refresh token has expired');
+      error.statusCode = 400;
+
+      const refreshSpy = jest
+        .spyOn(liProvider as any, 'refreshCredentials')
+        .mockRejectedValueOnce(error);
+
+      const tokenService = new TokenService(prisma);
+      await expect(
+        tokenService.getExecutionCredentials(account.id),
+      ).rejects.toThrow(AuthRequiredError);
+
+      const updatedAccount = await prisma.socialAccount.findUniqueOrThrow({
+        where: { id: account.id },
+      });
+      expect(updatedAccount.status).toBe(SocialAccountStatus.REAUTH_REQUIRED);
+
+      refreshSpy.mockRestore();
+    });
+
+    it('7. non-refreshable expired token: unchanged snapshot transitions to REAUTH_REQUIRED', async () => {
+      const expiredDate = new Date(Date.now() - 60 * 1000);
+      const { account } = await createAccountWithConnection({
+        provider: 'INSTAGRAM',
+        accessToken: 'expired-token-7',
+        refreshToken: null,
+        expiresAt: expiredDate,
+      });
+
+      const tokenService = new TokenService(prisma);
+      await expect(
+        tokenService.getExecutionCredentials(account.id),
+      ).rejects.toThrow(AuthRequiredError);
+
+      const updatedAccount = await prisma.socialAccount.findUniqueOrThrow({
+        where: { id: account.id },
+      });
+      expect(updatedAccount.status).toBe(SocialAccountStatus.REAUTH_REQUIRED);
+    });
+
+    it('8. non-refreshable expired token + concurrent reconnect: stale worker must not overwrite ACTIVE', async () => {
+      const expiredDate = new Date(Date.now() - 60 * 1000);
+      const { account, connection } = await createAccountWithConnection({
+        provider: 'INSTAGRAM',
+        accessToken: 'expired-token-8',
+        refreshToken: null,
+        expiresAt: expiredDate,
+      });
+
+      // User reconnects concurrently in UI:
+      const encReconnected = encrypt('reconnected-instagram-token-8');
+      await prisma.socialConnection.update({
+        where: { socialAccountId: account.id },
+        data: {
+          encryptedAccessToken: encReconnected.encrypted,
+          accessTokenIv: encReconnected.iv,
+          accessTokenAuthTag: encReconnected.authTag,
+          keyVersion: encReconnected.keyVersion,
+          expiresAt: new Date(Date.now() + 3600 * 1000),
+        },
+      });
+
+      const tokenService = new TokenService(prisma);
+      // Stale worker executes handlePermanentAuthFailure with the old snapshot connection
+      const creds = await (tokenService as any).handlePermanentAuthFailure({
+        socialAccountId: account.id,
+        workspaceId: account.workspaceId,
+        accountProvider: 'INSTAGRAM',
+        snapshotConnection: connection,
+        snapshotAccount: account,
+        errorMessage: 'Token expired and cannot be refreshed',
+      });
+
+      expect(creds.accessToken).toBe('reconnected-instagram-token-8');
+
+      const updatedAccount = await prisma.socialAccount.findUniqueOrThrow({
+        where: { id: account.id },
+      });
+      expect(updatedAccount.status).toBe(SocialAccountStatus.ACTIVE);
+    });
+
+    it('9. account CAS conflict: updateMany returns count 0 -> no blind fallback update, latest state preserved', async () => {
+      const expiredDate = new Date(Date.now() - 60 * 1000);
+      const { account } = await createAccountWithConnection({
+        provider: 'YOUTUBE',
+        accessToken: 'expired-token-9',
+        refreshToken: 'valid-refresh-token-9',
+        expiresAt: expiredDate,
+      });
+
+      const ytProvider = providerRegistry.get('youtube');
+      const error: any = new Error('invalid_grant: token revoked');
+      error.statusCode = 400;
+
+      const refreshSpy = jest
+        .spyOn(ytProvider as any, 'refreshCredentials')
+        .mockRejectedValueOnce(error);
+
+      // Intercept the prisma transaction to simulate a concurrent CAS conflict on SocialAccount
+      const origTx = prisma.$transaction.bind(prisma);
+      const txSpy = jest
+        .spyOn(prisma, '$transaction')
+        .mockImplementation(async (cb: any) => {
+          return origTx(async (tx: any) => {
+            tx.socialAccount.updateMany = jest
+              .fn()
+              .mockResolvedValue({ count: 0 });
+            return cb(tx);
+          });
+        });
+
+      const tokenService = new TokenService(prisma);
+      await expect(
+        tokenService.getExecutionCredentials(account.id),
+      ).rejects.toThrow(AuthRequiredError);
+
+      const updatedAccount = await prisma.socialAccount.findUniqueOrThrow({
+        where: { id: account.id },
+      });
+      // The account must NOT have been updated to REAUTH_REQUIRED because CAS count was 0
+      expect(updatedAccount.status).toBe(SocialAccountStatus.ACTIVE);
+
+      txSpy.mockRestore();
+      refreshSpy.mockRestore();
+    });
+
+    it('10. no stale ACTIVE restoration: helper must never force ACTIVE merely because stale worker found changed state', async () => {
+      const expiredDate = new Date(Date.now() - 60 * 1000);
+      const { account, connection } = await createAccountWithConnection({
+        provider: 'YOUTUBE',
+        status: SocialAccountStatus.REAUTH_REQUIRED,
+        accessToken: 'expired-token-10',
+        refreshToken: 'old-refresh-token-10',
+        expiresAt: expiredDate,
+      });
+
+      // Another actor changed connection in DB, but the token is STILL expired
+      const encNewAccess = encrypt('still-expired-token-10');
+      await prisma.socialConnection.update({
+        where: { socialAccountId: account.id },
+        data: {
+          encryptedAccessToken: encNewAccess.encrypted,
+          accessTokenIv: encNewAccess.iv,
+          accessTokenAuthTag: encNewAccess.authTag,
+          keyVersion: encNewAccess.keyVersion,
+          expiresAt: new Date(Date.now() - 30 * 1000), // Still in the past
+        },
+      });
+
+      const tokenService = new TokenService(prisma);
+      // Stale worker executes handlePermanentAuthFailure with the old snapshot connection
+      await expect(
+        (tokenService as any).handlePermanentAuthFailure({
+          socialAccountId: account.id,
+          workspaceId: account.workspaceId,
+          accountProvider: 'YOUTUBE',
+          snapshotConnection: connection,
+          snapshotAccount: account,
+          errorMessage: 'Stale worker failure',
+        }),
+      ).rejects.toThrow(AuthRequiredError);
+
+      const updatedAccount = await prisma.socialAccount.findUniqueOrThrow({
+        where: { id: account.id },
+      });
+      // Must remain REAUTH_REQUIRED, must NOT be forced to ACTIVE
+      expect(updatedAccount.status).toBe(SocialAccountStatus.REAUTH_REQUIRED);
+    });
+  });
 });
