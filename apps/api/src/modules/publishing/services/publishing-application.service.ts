@@ -68,7 +68,14 @@ export class PublishingApplicationService {
       include: { media: true, variants: true },
     });
 
-    // await this.audit.log(workspaceId, 'POST_CREATED', { postId: post.id }, authorId);
+    await this.audit.logAction({
+      workspaceId,
+      actorId: authorId,
+      action: AuditAction.POST_CREATED,
+      targetType: 'POST',
+      targetId: post.id,
+      metadata: { postId: post.id },
+    });
     return post;
   }
 
@@ -167,7 +174,14 @@ export class PublishingApplicationService {
       });
     });
 
-    // await this.audit.log(workspaceId, 'POST_UPDATED', { postId }, authorId);
+    await this.audit.logAction({
+      workspaceId,
+      actorId: authorId,
+      action: AuditAction.POST_UPDATED,
+      targetType: 'POST',
+      targetId: postId,
+      metadata: { postId },
+    });
     return updated;
   }
 
@@ -194,7 +208,14 @@ export class PublishingApplicationService {
     }
 
     await repo.posts.delete({ where: { id: postId } });
-    // await this.audit.log(workspaceId, 'POST_DELETED', { postId }, authorId);
+    await this.audit.logAction({
+      workspaceId,
+      actorId: authorId,
+      action: AuditAction.POST_DELETED,
+      targetType: 'POST',
+      targetId: postId,
+      metadata: { postId },
+    });
     return true;
   }
 
@@ -232,7 +253,18 @@ export class PublishingApplicationService {
       } as any,
     });
 
-    // await this.audit.log(workspaceId, 'PUBLICATION_TARGET_ADDED', { postId, variantId: variant.id }, authorId);
+    await this.audit.logAction({
+      workspaceId,
+      actorId: authorId,
+      action: AuditAction.PUBLICATION_TARGET_ADDED,
+      targetType: 'PUBLICATION_TARGET',
+      targetId: variant.id,
+      metadata: {
+        postId,
+        variantId: variant.id,
+        socialAccountId: dto.socialAccountId,
+      },
+    });
     return repo.variants.findById(variant.id, {
       include: { socialAccount: true },
     });
@@ -273,7 +305,14 @@ export class PublishingApplicationService {
       },
     });
 
-    // await this.audit.log(workspaceId, 'PUBLICATION_TARGET_UPDATED', { postId: variant.postId, variantId }, authorId);
+    await this.audit.logAction({
+      workspaceId,
+      actorId: authorId,
+      action: AuditAction.PUBLICATION_TARGET_UPDATED,
+      targetType: 'PUBLICATION_TARGET',
+      targetId: variantId,
+      metadata: { postId: variant.postId, variantId },
+    });
     return repo.variants.findById(variantId, {
       include: { socialAccount: true },
     });
@@ -299,7 +338,14 @@ export class PublishingApplicationService {
     }
 
     await repo.variants.delete({ where: { id: variantId } });
-    // await this.audit.log(workspaceId, 'PUBLICATION_TARGET_REMOVED', { postId: variant.postId, variantId }, authorId);
+    await this.audit.logAction({
+      workspaceId,
+      actorId: authorId,
+      action: AuditAction.PUBLICATION_TARGET_REMOVED,
+      targetType: 'PUBLICATION_TARGET',
+      targetId: variantId,
+      metadata: { postId: variant.postId, variantId },
+    });
     return true;
   }
 
@@ -344,7 +390,14 @@ export class PublishingApplicationService {
       );
     }
 
-    // await this.audit.log(workspaceId, 'PUBLICATION_REQUESTED', { variantId }, authorId);
+    await this.audit.logAction({
+      workspaceId,
+      actorId: authorId,
+      action: AuditAction.PUBLICATION_REQUESTED,
+      targetType: 'PUBLICATION_TARGET',
+      targetId: variantId,
+      metadata: { variantId },
+    });
     return repo.variants.findById(variantId, {
       include: { socialAccount: true },
     });
@@ -366,11 +419,11 @@ export class PublishingApplicationService {
     const success = await repo.queueForDeletion(variantId);
     if (!success)
       throw new ConflictException('Cannot delete variant in this state');
-    this.audit.logAction({
+    await this.audit.logAction({
       workspaceId,
       actorId: authorId,
-      action: 'PUBLICATION_DELETE_REQUESTED' as any,
-      targetType: 'Publication',
+      action: AuditAction.PUBLICATION_DELETE_REQUESTED,
+      targetType: 'PUBLICATION_TARGET',
       targetId: variantId,
       metadata: { publicationId: variantId },
     });
@@ -402,7 +455,14 @@ export class PublishingApplicationService {
       );
     }
 
-    // await this.audit.log(workspaceId, 'PUBLICATION_RETRY_REQUESTED', { variantId }, authorId);
+    await this.audit.logAction({
+      workspaceId,
+      actorId: authorId,
+      action: AuditAction.PUBLICATION_RETRY_REQUESTED,
+      targetType: 'PUBLICATION_TARGET',
+      targetId: variantId,
+      metadata: { variantId },
+    });
     return repo.variants.findById(variantId, {
       include: { socialAccount: true },
     });
@@ -452,7 +512,14 @@ export class PublishingApplicationService {
       });
     }
 
-    // await this.audit.log(workspaceId, 'PUBLICATION_SCHEDULED', { variantId, scheduledAt }, authorId);
+    await this.audit.logAction({
+      workspaceId,
+      actorId: authorId,
+      action: AuditAction.PUBLICATION_SCHEDULED,
+      targetType: 'PUBLICATION_TARGET',
+      targetId: variantId,
+      metadata: { variantId, scheduledAt: scheduledAt.toISOString() },
+    });
     return repo.variants.findById(variantId, {
       include: { socialAccount: true },
     });
@@ -485,7 +552,14 @@ export class PublishingApplicationService {
     );
     if (!success) throw new ConflictException('Reschedule failed');
 
-    // await this.audit.log(workspaceId, 'PUBLICATION_RESCHEDULED', { variantId, scheduledAt }, authorId);
+    await this.audit.logAction({
+      workspaceId,
+      actorId: authorId,
+      action: AuditAction.PUBLICATION_RESCHEDULED,
+      targetType: 'PUBLICATION_TARGET',
+      targetId: variantId,
+      metadata: { variantId, scheduledAt: scheduledAt.toISOString() },
+    });
     return repo.variants.findById(variantId, {
       include: { socialAccount: true },
     });
@@ -496,7 +570,14 @@ export class PublishingApplicationService {
     const success = await repo.unschedule(variantId);
     if (!success) throw new ConflictException('Target is not SCHEDULED');
 
-    // await this.audit.log(workspaceId, 'PUBLICATION_UNSCHEDULED', { variantId }, authorId);
+    await this.audit.logAction({
+      workspaceId,
+      actorId: authorId,
+      action: AuditAction.PUBLICATION_UNSCHEDULED,
+      targetType: 'PUBLICATION_TARGET',
+      targetId: variantId,
+      metadata: { variantId },
+    });
     return repo.variants.findById(variantId, {
       include: { socialAccount: true },
     });
@@ -507,7 +588,14 @@ export class PublishingApplicationService {
     const success = await repo.cancelQueued(variantId);
     if (!success) throw new ConflictException('Target is not QUEUED');
 
-    // await this.audit.log(workspaceId, 'PUBLICATION_CANCELLED', { variantId }, authorId);
+    await this.audit.logAction({
+      workspaceId,
+      actorId: authorId,
+      action: AuditAction.PUBLICATION_CANCELLED,
+      targetType: 'PUBLICATION_TARGET',
+      targetId: variantId,
+      metadata: { variantId },
+    });
     return repo.variants.findById(variantId, {
       include: { socialAccount: true },
     });

@@ -8,11 +8,13 @@ import { PermissionGuard } from '../auth/guards/permission.guard';
 import { AuthGuard } from '../auth/guards/auth.guard';
 import { WorkspaceGuard } from '../auth/guards/workspace.guard';
 import { AuditService } from '../core/audit.service';
+import { AuditAction } from '@agency-os/database';
 
 describe('AccountsController', () => {
   let controller: AccountsController;
   let queueMock: any;
   let accountsServiceMock: any;
+  let mockAuditService: any;
 
   beforeEach(async () => {
     queueMock = {
@@ -24,6 +26,11 @@ describe('AccountsController', () => {
       getWorkspaceAccount: vi
         .fn()
         .mockResolvedValue({ id: 'acc-1', workspaceId: 'ws-1' }),
+    };
+
+    mockAuditService = {
+      logAction: vi.fn(),
+      logActionBestEffort: vi.fn(),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -39,7 +46,7 @@ describe('AccountsController', () => {
         },
         {
           provide: AuditService,
-          useValue: { logAction: vi.fn() },
+          useValue: mockAuditService,
         },
       ],
     })
@@ -72,6 +79,15 @@ describe('AccountsController', () => {
       },
       expect.any(Object),
     );
+    expect(mockAuditService.logActionBestEffort).toHaveBeenCalledWith({
+      action: AuditAction.ACCOUNT_SYNC_TRIGGERED,
+      workspaceId: 'ws-1',
+      actorId: 'u-1',
+      targetType: 'SocialAccount',
+      targetId: 'acc-1',
+      requestId: 'req-1',
+      metadata: { jobId: 'job-123' },
+    });
     expect(res).toEqual({ queued: true, jobId: 'job-123' });
   });
 
