@@ -506,33 +506,42 @@ Following the project's 7-tier prioritization hierarchy:
 | **Tier 3: Publishing / Data Loss** | **Ambiguous Publication Reconciliation Transactionality, Metadata Synchronization, and Attributed RBAC** | [`apps/api/src/modules/publishing/services/publishing-application.service.ts`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/publishing/services/publishing-application.service.ts#L496-L623), [`apps/api/src/modules/publishing/controllers/publications.controller.ts`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/publishing/controllers/publications.controller.ts#L194-L207), [`docs/AMBIGUOUS_PUBLICATION_RECONCILIATION_ARCHITECTURE.md`](file:///C:/Users/bappa/agency-os/docs/AMBIGUOUS_PUBLICATION_RECONCILIATION_ARCHITECTURE.md) | **MERGED** (PR #7, `d7f2d71`) | High / Resolved & Hardened | Complete |
 | **Tier 4: Provider Token** | Centralized worker token refresh & lifecycle management | `packages/providers/`, `apps/worker/src/publishing/token.service.ts` | **MERGED** (PR #5, `0d862ca`) | High / Resolved | Complete |
 | **Tier 5: API / OAuth Contract** | Deterministic `API_PUBLIC_URL` for OAuth callbacks | `apps/api/src/config/public-url.ts`, `apps/api/src/modules/oauth/oauth.controller.ts` | **MERGED** (PR #4, `28b9a2c`) | Medium / Resolved | Complete |
-| **Tier 6: Deployment Hardening** | Cross-Subdomain CSRF Deployment Architecture | `apps/api/src/modules/auth/auth.controller.ts`, `docs/phase-6-readiness.md` | **OPEN** | Medium / Architectural Deployment Decision | Ingress topology documentation / Optional token endpoint |
-| **Tier 6: Deployment Hardening** | Security Event Audit Logging Interceptors | `apps/api/src/modules/audit/`, `docs/phase6_gap_audit.md` | **OPEN** | Medium / Compliance Hardening | Implement global audit interceptor for auth/provider mutations |
+| **Tier 6: Deployment Hardening** | **Security Event Audit Logging Coverage & Interceptors** | [`apps/api/src/modules/core/audit.service.ts`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/core/audit.service.ts), [`apps/api/src/modules/publishing/controllers/posts.controller.ts`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/publishing/controllers/posts.controller.ts), [`docs/phase6_gap_audit.md`](file:///C:/Users/bappa/agency-os/docs/phase6_gap_audit.md) | **OPEN** | Medium / Compliance & Governance | Audit sensitive resource mutations (posts, members, roles) and evaluate global audit interceptor |
+| **Tier 6: Deployment Hardening** | Cross-Subdomain CSRF Deployment Architecture | `apps/api/src/modules/auth/auth.controller.ts`, `docs/phase-6-readiness.md` | **DOCUMENTED ARCHITECTURE CONSTRAINT** | Informational / Ingress Topology Requirement | Front web & API under unified reverse proxy or configure parent domain |
 | **Tier 6: Deployment Hardening** | Global Distributed Rate Limiting via Redis Throttler | `apps/api/src/app.module.ts`, `apps/api/src/modules/core/redis-throttler.storage.ts` | **VERIFIED COMPLETE** | Medium / Ingress Abuse Prevention | Complete (`APP_GUARD` + Redis store verified) |
+| **Tier 7: Concurrency & Data Integrity** | **Token Refresh `REAUTH_REQUIRED` CAS TOCTOU Fencing** | [`apps/worker/src/publishing/token.service.ts`](file:///C:/Users/bappa/agency-os/apps/worker/src/publishing/token.service.ts#L359-L540), [`apps/worker/src/publishing/token.service.spec.ts`](file:///C:/Users/bappa/agency-os/apps/worker/src/publishing/token.service.spec.ts#L688-L1075) | **MERGED** (PR #9, `4752a15`) | High / Resolved & Fenced | Complete |
 | **Tier 7: Cleanup / Optimization** | Container Runtime Transpilation (`tsx` vs compiled `dist`) | `apps/api/Dockerfile`, `apps/worker/Dockerfile`, `docs/phase-6-readiness.md` | **OPEN** | Low / Performance & Startup Optimization | Add build output transpilation for monorepo internal packages |
-| **Tier 7: Concurrency & Data Integrity** | **Token Refresh `REAUTH_REQUIRED` CAS TOCTOU Fencing** | [`apps/worker/src/publishing/token.service.ts`](file:///C:/Users/bappa/agency-os/apps/worker/src/publishing/token.service.ts#L359-L540), [`apps/worker/src/publishing/token.service.spec.ts`](file:///C:/Users/bappa/agency-os/apps/worker/src/publishing/token.service.spec.ts#L688-L1075) | **IMPLEMENTED & VERIFIED** (Branch `fix/token-refresh-reauth-toctou`) | High / Concurrency Data Integrity | Centralized transactional CAS fencing with credential snapshot validation |
+| **Tier 7: Non-Blocking Follow-Ups** | TokenService CAS Failure Recheck `DISCONNECTED` Guard | `apps/worker/src/publishing/token.service.ts` | **QUEUED (NON-BLOCKING)** | Low / Theoretical Edge Case | Check `recheckAccount.status !== DISCONNECTED` before returning recovered |
+| **Tier 7: Non-Blocking Follow-Ups** | TokenService Integration Test via `SocialAccountRepository.upsertWithConnection` | `apps/worker/src/publishing/token.service.spec.ts` | **QUEUED (NON-BLOCKING)** | Low / Test-Only Hardening | Exercise real repository upsert against stale failure handler |
+| **Tier 7: Future Feature Dependency** | Worker `PublishingProcessor` Catch-Path Disconnect Fencing | `apps/worker/src/publishing/publishing.processor.ts` | **FUTURE DEPENDENCY** | Low / Dependent on Future Disconnect API | Guard processor catch paths against resurrecting `DISCONNECTED` accounts |
+| **Tier 7: CI / Test Optimization** | CI PostgreSQL Service E2E Test Execution Gap | `apps/api/test/publishing.e2e-spec.ts`, `.github/workflows/ci.yml` | **OPEN** | Low / Pipeline Test Breadth | Add Jest E2E execution step against CI Postgres container |
 
 ---
 
-### 4. Single Highest-Priority Next Focus Area: Cross-Subdomain CSRF Deployment Architecture & Ingress Cookie Topology
+### 4. Single Highest-Priority Next Focus Area: Security Event Audit Logging Coverage & Unified Interceptor Hardening
 
-- **Priority Tier**: **Tier 6 (Deployment Hardening / Ingress Topology & Auth Reliability)**
-- **Component**: [`apps/api/src/modules/auth/auth.controller.ts`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/auth/auth.controller.ts), [`apps/api/src/modules/auth/guards/auth.guard.ts`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/auth/guards/auth.guard.ts), [`apps/web/src/lib/api/client.ts`](file:///C:/Users/bappa/agency-os/apps/web/src/lib/api/client.ts)
-- **Specification / Documentation**: [`docs/phase-6-readiness.md`](file:///C:/Users/bappa/agency-os/docs/phase-6-readiness.md)
-- **Core Risk**:
-  In [`apps/api/src/modules/auth/auth.controller.ts`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/auth/auth.controller.ts#L76-L88), `res.cookie('csrfToken', ...)` sets `sameSite: 'lax'` without an explicit `domain` attribute (defaulting to host-only). In [`apps/web/src/lib/api/client.ts`](file:///C:/Users/bappa/agency-os/apps/web/src/lib/api/client.ts#L60-L65), client-side CSRF handling attempts to read `document.cookie` for `csrfToken` to populate the `x-csrf-token` request header.
-  - **Single-Origin / Ingress Reverse Proxy Topology**: If the production architecture fronts web and API behind a unified reverse proxy (e.g. `example.com` and `example.com/api/v1`), this setup works seamlessly and securely.
-  - **Separate Subdomains Topology**: If web and API are hosted on distinct subdomains (e.g. `app.example.com` and `api.example.com`), browser Same-Origin Policy prevents `document.cookie` on `app.example.com` from reading host-only cookies set by `api.example.com`. Consequently, `x-csrf-token` header is omitted, causing [`AuthGuard`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/auth/guards/auth.guard.ts#L42-L48) to reject all state-changing requests with `403 Forbidden ('CSRF token mismatch')`.
+- **Priority Tier**: **Tier 6 (Deployment Hardening / Compliance & Governance)**
+- **Components**: [`apps/api/src/modules/core/audit.service.ts`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/core/audit.service.ts), [`apps/api/src/modules/publishing/controllers/posts.controller.ts`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/publishing/controllers/posts.controller.ts), [`apps/api/src/modules/accounts/accounts.controller.ts`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/accounts/accounts.controller.ts), [`packages/database/src/repositories/AuditLogRepository.ts`](file:///C:/Users/bappa/agency-os/packages/database/src/repositories/AuditLogRepository.ts)
+- **Specification / Documentation**: [`docs/phase6_gap_audit.md`](file:///C:/Users/bappa/agency-os/docs/phase6_gap_audit.md#L94-L98)
+- **Core Gap**:
+  [`AuditService`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/core/audit.service.ts) is currently invoked via ad-hoc, manual calls in select controllers (`auth`, `oauth`, `accounts`, `publishing reconciliation`). Core business mutations—such as creating post drafts, updating drafts, deleting drafts, scheduling publications, and workspace member management—completely bypass audit persistence. Additionally, `AuditService.logAction()` uses fire-and-forget promise catching (`.catch(...)`), leaving no guarantees that security-critical audit trails are retained.
 - **Target Verification Plan**:
-  A verification-only audit is required to inspect ingress specifications, staging deployment topologies, and evaluate whether to:
-  1. Formalize single-origin reverse proxy routing in staging/production deployment guides.
-  2. Or configure a configurable parent cookie domain (`COOKIE_DOMAIN=.example.com`) and/or provide a lightweight `GET /api/v1/auth/csrf` token endpoint.
+  Perform a verification-only audit across all API controllers and mutation paths to map all state-changing endpoints, verify missing audit coverage against `AuditAction` enum capabilities, and evaluate introducing a unified NestJS interceptor / audit decorator mechanism.
 
 ---
 
 ## Token Refresh `REAUTH_REQUIRED` CAS TOCTOU Fencing (Branch `fix/token-refresh-reauth-toctou`)
 
-### 1. Defect Root Cause & Concurrency Hazard
+### 1. Verification & Hardening Summary
+- **Status**: **MERGED** (PR #9, merge commit [`4752a15f858b7a9e8c472951121bcc98573ae4a7`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/4752a15f858b7a9e8c472951121bcc98573ae4a7))
+- **Pull Request**: [#9](https://github.com/AbhishekGadmale/Social-Media-Handler/pull/9)
+- **Approved Head SHA**: [`d036e2bd48af5a30012cc4befb0119057c60544a`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/d036e2bd48af5a30012cc4befb0119057c60544a) (`d036e2b`)
+- **Reviewer**: Muse (APPROVED)
+- **CI Status**: All 5/5 GitHub Actions check-runs completed GREEN (`GitGuardian`, `Code Quality`, `Tests`, `Docker Build & Smoke Test`, `Application Builds`).
+- **Worker Tests**: 115/115 passed across 9 suites (+10 new tests in `token.service.spec.ts`).
+- **Monorepo Verification**: 100% PASS across test, typecheck, lint (0 errors), and build across all packages.
+
+### 2. Defect Root Cause & Concurrency Hazard
 - **The Defect**:
   When a token refresh failed with a permanent auth error (e.g. `invalid_grant` / 401) or when a non-refreshable expired token was encountered, `TokenService` previously performed an un-fenced database write:
   `SocialAccount.status = REAUTH_REQUIRED`
@@ -541,22 +550,20 @@ Following the project's 7-tier prioritization hierarchy:
   Under high concurrency, if Worker A called provider refresh while Worker B successfully completed refresh, or while an end-user reconnected their social account in the web UI, Worker A's stale failure response would arrive later and blindly overwrite `SocialAccount.status = REAUTH_REQUIRED`. This forced active, freshly-authenticated connections back into broken reauth states, disrupting ongoing publishing and sync pipelines.
   Furthermore, if an account was intentionally disconnected by a user (`status = DISCONNECTED`), a stale worker refresh failure could resurrect the account to `REAUTH_REQUIRED`.
 
-### 2. Architectural Hardening
-1. **Centralized Failure Helper (`handlePermanentAuthFailure`)**:
-   - Both permanent provider refresh failures (`invalid_grant`, 401) and non-refreshable expired token paths are routed through a single transactional helper in `TokenService`.
-2. **Interactive Transaction (`this.prisma.$transaction`)**:
-   - Re-reads latest `SocialConnection` and associated parent `SocialAccount` inside the transaction with strong consistency.
-3. **Explicit `DISCONNECTED` Fence**:
-   - If `latestConnection.account.status === DISCONNECTED`, the helper aborts status mutation, throws `AuthRequiredError`, and guarantees disconnected accounts are never resurrected.
-4. **Credential Snapshot Delta & Automatic Recovery**:
-   - Compares the failed worker's initial snapshot against the latest persisted state in PostgreSQL:
-     - `encryptedRefreshToken`
-     - `encryptedAccessToken`
-     - `updatedAt`
-     - `expiresAt`
-   - If any credential attribute changed AND the latest credentials have future validity (`expiresAt > Date.now()`), the helper automatically recovers and returns fresh credentials, allowing the calling job to succeed without failure.
-   - If credentials changed but are not valid, status mutation is skipped (`stale_credentials_skip`).
-5. **Atomic Compare-And-Swap (CAS)**:
+### 3. Actual Concurrency Architecture & Fencing Guarantees
+The final architecture employs a two-tier fencing model:
+
+1. **PRIMARY FENCE — Credential Snapshot Comparison (`SocialConnection`)**:
+   - Compares the failed worker's snapshot against the latest persisted state in PostgreSQL:
+     - `encryptedRefreshToken` (detects token rotation / reconnection)
+     - `encryptedAccessToken` (detects fresh token issuance / reconnection)
+     - `updatedAt` (connection record timestamp)
+     - `expiresAt` (validity window)
+   - If any credential attribute changed AND the latest credentials have future validity (`expiresAt > Date.now()`), the helper automatically recovers and returns fresh credentials without failing the caller.
+   - If credentials changed but are not valid, status mutation is safely skipped (`stale_credentials_skip`).
+   - **Crucial Architectural Note**: A successful credential refresh may update `SocialConnection` without changing `SocialAccount.updatedAt` when the account is already `ACTIVE`. This design is safe because the primary credential snapshot comparison runs first and detects the connection change independently of account timestamp updates.
+
+2. **SECONDARY ACCOUNT FENCE — Status CAS (`SocialAccount`)**:
    - When credentials match the failed snapshot, updates `SocialAccount` using conditional CAS:
      ```typescript
      await tx.socialAccount.updateMany({
@@ -569,11 +576,37 @@ Following the project's 7-tier prioritization hierarchy:
        data: { status: SocialAccountStatus.REAUTH_REQUIRED },
      });
      ```
-   - If `casResult.count === 0`, another actor concurrently updated the account; the helper re-reads account state and safely aborts (`cas_conflict_skip`).
-6. **PostgreSQL Commit Before Error Throw**:
-   - Crucial Prisma Client guarantee: In Prisma interactive transactions, throwing an exception inside the callback automatically triggers a PostgreSQL `ROLLBACK`. The helper returns an outcome descriptor (`'reauth_marked' | 'recovered' | 'disconnected' | 'stale_credentials_skip' | 'cas_conflict_skip'`) to allow the transaction to `COMMIT` to PostgreSQL, and then throws `AuthRequiredError` outside the transaction callback.
+   - Matches the exact `updatedAt` observed within the transaction.
+   - Excludes `DISCONNECTED` accounts so that the `TokenService` failure-fencing helper never mutates an account whose latest observed status is `DISCONNECTED`.
+   - Incorporates `workspaceId` when provided as defense-in-depth tenant isolation.
+   - If `casResult.count === 0`, detects concurrent account modification and safely aborts (`cas_conflict_skip`).
 
-### 3. Test Coverage & Verification
+3. **Database Precision & Timestamp Invariants**:
+   - `SocialAccount.updatedAt` in PostgreSQL / Prisma uses millisecond-level precision (`Timestamp(3)`).
+   - Theoretical timestamp collisions within the same millisecond remain possible, but do not materially weaken the combined multi-layer fencing model because credential snapshot comparison on `SocialConnection` operates as the primary gate.
+   - No dedicated version column or schema migration is currently required.
+   - Does not claim mathematically perfect global serialization or exactly-once execution; relies on a fresh `READ COMMITTED` snapshot plus credential-state fencing within an interactive transaction.
+
+4. **PostgreSQL Commit Before Error Throw**:
+   - In Prisma interactive transactions, throwing an exception inside the callback automatically triggers a PostgreSQL `ROLLBACK`. The helper returns an outcome descriptor (`'reauth_marked' | 'recovered' | 'disconnected' | 'stale_credentials_skip' | 'cas_conflict_skip'`) to allow the transaction to `COMMIT` to PostgreSQL, and then throws `AuthRequiredError` outside the transaction callback.
+
+### 4. Non-Blocking Follow-Ups & Future Dependencies
+
+- **Follow-Up A — CAS-Failure Recheck `DISCONNECTED` Guard**:
+  - *Context*: In `TokenService.handlePermanentAuthFailure()`, if `tx.socialAccount.updateMany` returns `count: 0` (indicating a CAS conflict), the helper re-reads `recheckAccount`. If `recheckAccount.connection` has valid credentials, it currently returns `recovered`.
+  - *Hardening*: Before returning `recovered`, explicitly verify that `recheckAccount.status !== SocialAccountStatus.DISCONNECTED`.
+  - *Status*: NON-BLOCKING. The race window between earlier disconnect check and CAS conflict recheck is practically infinitesimal.
+- **Follow-Up B — Integration Test Through Real `upsertWithConnection`**:
+  - *Context*: Existing unit tests in `token.service.spec.ts` simulate concurrent reconnect by writing directly to Prisma.
+  - *Hardening*: Author an integration test exercising OAuth reconnect / credential replacement via the actual `SocialAccountRepository.upsertWithConnection()` method, followed by a stale worker permanent failure call. Verify that new credentials win, the account remains `ACTIVE`, and no `REAUTH_REQUIRED` transition occurs.
+  - *Status*: NON-BLOCKING TEST HARDENING.
+- **Follow-Up C — Future Disconnect Endpoint Worker Handling**:
+  - *Context*: No disconnect API endpoint currently exists in the application.
+  - *Future Dependency*: When account disconnect functionality is implemented, review the `PublishingProcessor` `AuthRequiredError` catch handlers. Those handlers currently perform unconditional status updates to `REAUTH_REQUIRED`. If a user disconnects an account while a publication job is in flight, the processor could resurrect `DISCONNECTED` to `REAUTH_REQUIRED`.
+  - *Requirement*: Before shipping a disconnect endpoint, fence worker-level `REAUTH_REQUIRED` transitions in `publishing.processor.ts` against `status: { not: DISCONNECTED }`.
+  - *Status*: FUTURE FEATURE DEPENDENCY.
+
+### 5. Test Coverage & Verification
 - **10 Focused Concurrency & Concurrency-Fence Tests Added in `apps/worker/src/publishing/token.service.spec.ts`**:
   1. *Genuine permanent refresh failure*: Unchanged credential snapshot transitions account to `REAUTH_REQUIRED` and throws `AuthRequiredError`.
   2. *Concurrent successful refresh*: Newer DB credentials allow stale worker to recover fresh access token without marking `REAUTH_REQUIRED`.
@@ -588,7 +621,7 @@ Following the project's 7-tier prioritization hierarchy:
 - **Test Suite Results**:
   - Worker Unit & Integration Tests (`pnpm --filter @agency-os/worker test`): **PASS** (9/9 suites, 115/115 tests passing, +10 new tests).
   - Monorepo Tests (`pnpm turbo run test`): **PASS** (5/5 tasks successful across worker, api, providers, database, web).
-  - Monorepo Typecheck (`pnpm turbo run typecheck`): **PASS** (5/5 tasks successful).
+  - Monorepo Typecheck (`pnpm turbo run typecheck`): **PASS** (5/5 tasks successful across all 9 packages).
   - Monorepo Lint (`pnpm turbo run lint`): **PASS** (5/5 tasks successful, 0 errors).
   - Production Builds (`pnpm turbo run build`): **PASS** (3/3 builds successful across api, web, and worker).
 
