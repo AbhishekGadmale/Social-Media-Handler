@@ -1,4 +1,3 @@
-/* eslint-disable */
 import {
   Injectable,
   Inject,
@@ -102,7 +101,7 @@ export class MediaService {
     }
 
     // 3. Audit log
-    await this.audit.logAction({
+    this.audit.logActionBestEffort({
       action: AuditAction.MEDIA_UPLOAD_INITIATED,
       workspaceId,
       actorId: userId,
@@ -217,7 +216,7 @@ export class MediaService {
         );
       });
 
-      await this.audit.logAction({
+      this.audit.logActionBestEffort({
         action: AuditAction.MEDIA_UPLOAD_COMPLETED,
         workspaceId,
         actorId: userId,

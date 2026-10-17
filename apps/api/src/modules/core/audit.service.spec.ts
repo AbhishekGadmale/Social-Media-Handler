@@ -25,12 +25,16 @@ describe('AuditService', () => {
     vi.spyOn(Logger.prototype, 'error').mockImplementation(() => {});
   });
 
-  it('should call auditRepo.create on logAction', () => {
-    service.logAction({
-      action: AuditAction.AUTH_LOGIN_SUCCEEDED,
-      targetType: 'User',
-      metadata: { safe: true },
-    });
+  it('awaited logAction: resolves after repository insert resolves', async () => {
+    mockAuditRepo.create.mockResolvedValueOnce({ id: 'audit-1' });
+
+    await expect(
+      service.logAction({
+        action: AuditAction.AUTH_LOGIN_SUCCEEDED,
+        targetType: 'User',
+        metadata: { safe: true },
+      }),
+    ).resolves.toBeUndefined();
 
     expect(mockAuditRepo.create).toHaveBeenCalledWith({
       action: AuditAction.AUTH_LOGIN_SUCCEEDED,
@@ -39,21 +43,55 @@ describe('AuditService', () => {
     });
   });
 
-  it('should not throw if auditRepo.create rejects (fire-and-forget)', async () => {
-    mockAuditRepo.create.mockRejectedValueOnce(new Error('DB Error'));
+  it('awaited logAction: rejects when repository insert fails', async () => {
+    const dbError = new Error('DB connection failure');
+    mockAuditRepo.create.mockRejectedValueOnce(dbError);
 
-    // This should not throw synchronously or asynchronously to the caller
-    expect(() => {
+    await expect(
       service.logAction({
+        action: AuditAction.POST_CREATED,
+        targetType: 'POST',
+      }),
+    ).rejects.toThrow('DB connection failure');
+
+    expect(mockAuditRepo.create).toHaveBeenCalledWith({
+      action: AuditAction.POST_CREATED,
+      targetType: 'POST',
+    });
+  });
+
+  it('best-effort logActionBestEffort: calls repository and does not throw if insert rejects, logging error', async () => {
+    mockAuditRepo.create.mockRejectedValueOnce(
+      new Error('Transient DB timeout'),
+    );
+
+    expect(() => {
+      service.logActionBestEffort({
+        action: AuditAction.AUTH_LOGIN_FAILED,
+        targetType: 'User',
+      });
+    }).not.toThrow();
+
+    // Wait a tick for the promise catch handler
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect((Logger.prototype.error as any).mock.calls.length).toBeGreaterThan(
+      0,
+    );
+  });
+
+  it('best-effort logActionBestEffort: calls repository on success without throwing', async () => {
+    mockAuditRepo.create.mockResolvedValueOnce({ id: 'audit-2' });
+
+    expect(() => {
+      service.logActionBestEffort({
         action: AuditAction.AUTH_LOGIN_SUCCEEDED,
         targetType: 'User',
       });
     }).not.toThrow();
 
-    // Wait a tick for the unhandled promise catch
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect((Logger.prototype.error as any).mock.calls.length).toBeGreaterThan(
-      0,
-    );
+    expect(mockAuditRepo.create).toHaveBeenCalledWith({
+      action: AuditAction.AUTH_LOGIN_SUCCEEDED,
+      targetType: 'User',
+    });
   });
 });

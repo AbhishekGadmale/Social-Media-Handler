@@ -63,7 +63,7 @@ export class AccountsController {
     );
 
     const userId = (req as any).user?.id;
-    this.auditService.logAction({
+    this.auditService.logActionBestEffort({
       action: AuditAction.ACCOUNT_SYNC_TRIGGERED,
       workspaceId,
       actorId: userId,

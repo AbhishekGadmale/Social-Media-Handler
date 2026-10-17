@@ -69,7 +69,7 @@ export class OAuthController {
       requestedScopes,
     );
 
-    this.auditService.logAction({
+    this.auditService.logActionBestEffort({
       action: AuditAction.OAUTH_CONNECTION_STARTED,
       workspaceId,
       actorId: userId,
@@ -96,7 +96,7 @@ export class OAuthController {
     const userId = req.user!.id;
 
     if (error) {
-      this.auditService.logAction({
+      this.auditService.logActionBestEffort({
         action: AuditAction.OAUTH_CONNECTION_FAILED,
         actorId: userId,
         targetType: 'SocialProvider',
@@ -133,7 +133,7 @@ export class OAuthController {
 
       const { workspaceId, socialAccountId, isNew } = result;
 
-      this.auditService.logAction({
+      this.auditService.logActionBestEffort({
         action: isNew
           ? AuditAction.OAUTH_CONNECTION_SUCCEEDED
           : AuditAction.OAUTH_RECONNECTED,
@@ -155,7 +155,7 @@ export class OAuthController {
         errorCode: err?.statusCode || err?.code,
         errorMessage: err?.message,
       });
-      this.auditService.logAction({
+      this.auditService.logActionBestEffort({
         action: AuditAction.OAUTH_CONNECTION_FAILED,
         actorId: userId,
         targetType: 'SocialProvider',
@@ -222,7 +222,7 @@ export class OAuthController {
     );
 
     for (const res of results) {
-      this.auditService.logAction({
+      this.auditService.logActionBestEffort({
         action: res.isNew
           ? AuditAction.OAUTH_CONNECTION_SUCCEEDED
           : AuditAction.OAUTH_RECONNECTED,
