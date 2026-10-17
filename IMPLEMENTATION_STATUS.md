@@ -503,59 +503,52 @@ Following the project's 7-tier prioritization hierarchy:
 | **Tier 2: Auth Bypass** | Open redirect on login (`returnUrl`) | `apps/api/src/modules/auth/auth.controller.ts` | **MERGED** (PR #2, `862372c`) | High / Resolved | Complete |
 | **Tier 2: Auth Bypass** | Trust Proxy unconfigured spoofing & rate-limit defeat | `apps/api/src/config/trust-proxy.ts`, `apps/api/src/main.ts` | **MERGED** (PR #3, `f382a93`) | High / Resolved | Complete |
 | **Tier 2: Auth Bypass** | Logout cookie clear omitting `Secure`/`SameSite` | `apps/api/src/modules/auth/auth.controller.ts` | **DISMISSED** | **FALSE POSITIVE** (RFC 6265 Section 5.3 + Redis revocation) | None (Closed) |
-| **Tier 3: Publishing / Data Loss** | **Ambiguous Publication Reconciliation Transactionality, Metadata Synchronization, and Attributed RBAC** | [`apps/api/src/modules/publishing/services/publishing-application.service.ts`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/publishing/services/publishing-application.service.ts#L496-L623), [`apps/api/src/modules/publishing/controllers/publications.controller.ts`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/publishing/controllers/publications.controller.ts#L194-L207), [`docs/AMBIGUOUS_PUBLICATION_RECONCILIATION_ARCHITECTURE.md`](file:///C:/Users/bappa/agency-os/docs/AMBIGUOUS_PUBLICATION_RECONCILIATION_ARCHITECTURE.md) | **HARDENED & TESTED** (PR pending) | High / Resolved & Hardened | Vitest Suite & CI Verification |
-| **Tier 4: Provider Token** | Centralized worker token refresh & lifecycle management | `packages/providers/`, `apps/worker/src/publishing/token.service.ts` | **MERGED** (PR #5, `0d862ca`) | High / Resolved | PR #6 Docs Tracking (Current) |
+| **Tier 3: Publishing / Data Loss** | **Ambiguous Publication Reconciliation Transactionality, Metadata Synchronization, and Attributed RBAC** | [`apps/api/src/modules/publishing/services/publishing-application.service.ts`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/publishing/services/publishing-application.service.ts#L496-L623), [`apps/api/src/modules/publishing/controllers/publications.controller.ts`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/publishing/controllers/publications.controller.ts#L194-L207), [`docs/AMBIGUOUS_PUBLICATION_RECONCILIATION_ARCHITECTURE.md`](file:///C:/Users/bappa/agency-os/docs/AMBIGUOUS_PUBLICATION_RECONCILIATION_ARCHITECTURE.md) | **MERGED** (PR #7, `d7f2d71`) | High / Resolved & Hardened | Complete |
+| **Tier 4: Provider Token** | Centralized worker token refresh & lifecycle management | `packages/providers/`, `apps/worker/src/publishing/token.service.ts` | **MERGED** (PR #5, `0d862ca`) | High / Resolved | Complete |
 | **Tier 5: API / OAuth Contract** | Deterministic `API_PUBLIC_URL` for OAuth callbacks | `apps/api/src/config/public-url.ts`, `apps/api/src/modules/oauth/oauth.controller.ts` | **MERGED** (PR #4, `28b9a2c`) | Medium / Resolved | Complete |
 | **Tier 6: Deployment Hardening** | Cross-Subdomain CSRF Deployment Architecture | `apps/api/src/modules/auth/auth.controller.ts`, `docs/phase-6-readiness.md` | **OPEN** | Medium / Architectural Deployment Decision | Ingress topology documentation / Optional token endpoint |
 | **Tier 6: Deployment Hardening** | Security Event Audit Logging Interceptors | `apps/api/src/modules/audit/`, `docs/phase6_gap_audit.md` | **OPEN** | Medium / Compliance Hardening | Implement global audit interceptor for auth/provider mutations |
-| **Tier 6: Deployment Hardening** | Global Distributed Rate Limiting via Redis Throttler | `apps/api/src/app.module.ts`, `apps/api/src/modules/core/redis-throttler.storage.ts` | **OPEN** | Medium / Ingress Abuse Prevention | Apply throttler globally across all non-exempt API endpoints |
+| **Tier 6: Deployment Hardening** | Global Distributed Rate Limiting via Redis Throttler | `apps/api/src/app.module.ts`, `apps/api/src/modules/core/redis-throttler.storage.ts` | **VERIFIED COMPLETE** | Medium / Ingress Abuse Prevention | Complete (`APP_GUARD` + Redis store verified) |
 | **Tier 7: Cleanup / Optimization** | Container Runtime Transpilation (`tsx` vs compiled `dist`) | `apps/api/Dockerfile`, `apps/worker/Dockerfile`, `docs/phase-6-readiness.md` | **OPEN** | Low / Performance & Startup Optimization | Add build output transpilation for monorepo internal packages |
 | **Tier 7: Cleanup / Optimization** | Token Refresh `REAUTH_REQUIRED` CAS TOCTOU Fencing | `apps/worker/src/publishing/token.service.ts` | **OPEN** | Low / Concurrency Follow-Up | Add CAS check to status mutation on refresh auth failures |
 
 ---
 
-### 4. Single Highest-Priority Next Focus Area: Ambiguous Publication Reconciliation Hardening
+### 4. Single Highest-Priority Next Focus Area: Cross-Subdomain CSRF Deployment Architecture & Ingress Cookie Topology
 
-- **Priority Tier**: **Tier 3 (Publishing / Worker Data Loss / State Corruption)**
-- **Component**: [`apps/api/src/modules/publishing/services/publishing-application.service.ts`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/publishing/services/publishing-application.service.ts#L496-L623)
-- **Controller**: [`apps/api/src/modules/publishing/controllers/publications.controller.ts`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/publishing/controllers/publications.controller.ts#L194-L207)
-- **Specification**: [`docs/AMBIGUOUS_PUBLICATION_RECONCILIATION_ARCHITECTURE.md`](file:///C:/Users/bappa/agency-os/docs/AMBIGUOUS_PUBLICATION_RECONCILIATION_ARCHITECTURE.md)
+- **Priority Tier**: **Tier 6 (Deployment Hardening / Ingress Topology & Auth Reliability)**
+- **Component**: [`apps/api/src/modules/auth/auth.controller.ts`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/auth/auth.controller.ts), [`apps/api/src/modules/auth/guards/auth.guard.ts`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/auth/guards/auth.guard.ts), [`apps/web/src/lib/api/client.ts`](file:///C:/Users/bappa/agency-os/apps/web/src/lib/api/client.ts)
+- **Specification / Documentation**: [`docs/phase-6-readiness.md`](file:///C:/Users/bappa/agency-os/docs/phase-6-readiness.md)
 - **Core Risk**:
-  When a dangerous provider mutation times out or returns an ambiguous result (e.g. HTTP 5xx or dropped connection), execution enters `AMBIGUOUS` and `PostPlatformVariant` enters `UNKNOWN`.
-  If manual reconciliation logic lacks strict transactional guarantees, missing audit logs, or desynchronized `PublicationAttempt` / `executionMetadata` records, operators could inadvertently re-trigger duplicate publishing, create torn database states, or bypass RBAC authorization controls.
-- **Current State Analysis**:
-  Prior commits (`2a6de50`, `91159e0`, `181b587`) implemented atomic transactions covering `PostPlatformVariant`, `PublicationAttempt`, and `AuditLog`, and applied `@RequirePermission('publishing.reconcile')`. However:
-  1. **Zero Test Coverage**: No unit or integration tests currently exist for `PublishingApplicationService.reconcile` in `apps/api/src/modules/publishing`.
-  2. **Invariant Verification Required**: R1 through R10 invariants from [`docs/AMBIGUOUS_PUBLICATION_RECONCILIATION_ARCHITECTURE.md`](file:///C:/Users/bappa/agency-os/docs/AMBIGUOUS_PUBLICATION_RECONCILIATION_ARCHITECTURE.md) (CAS concurrency fencing, required `externalPostId` on `CONFIRM_PUBLISHED`, multi-attempt conflict detection, and audit trail atomicity) have not been formally verified against automated test suites.
-- **Verification-Only Plan (Next Steps)**:
-  1. **Phase A — Static Code Audit**:
-     - Inspect `PublishingApplicationService.reconcile` lines 496–623 against the 10 safety invariants (R1–R10).
-     - Verify `@RequirePermission('publishing.reconcile')` enforcement in `PermissionGuard` and `publications.controller.ts:195`.
-     - Confirm that `externalPostId` is strictly non-empty when `decision === 'CONFIRM_PUBLISHED'`.
-     - Check error classification (`ConflictException` for concurrency/state mismatches, `UnprocessableEntityException` for invalid payloads).
-  2. **Phase B — Test Gap Analysis**:
-     - Design a comprehensive test suite for `PublishingApplicationService.reconcile` covering:
-       - Successful `CONFIRM_PUBLISHED` atomic commit (variant `PUBLISHED`, attempt `SUCCESS`, audit log created).
-       - Successful `CONFIRM_FAILED` atomic commit (variant `FAILED`, attempt `FAILED`, audit log created).
-       - Non-`UNKNOWN` variant rejection (`ConflictException`).
-       - Non-`AMBIGUOUS` execution metadata rejection (`ConflictException`).
-       - Missing `externalPostId` rejection for `CONFIRM_PUBLISHED` (`UnprocessableEntityException`).
-       - CAS concurrency collision handling (`updated.count === 0` -> `ConflictException`).
-       - Non-unique publication attempt detection (`ConflictException`).
-       - Transaction callback error propagation if any step (e.g. audit log creation) fails (with real database rollback verified by existing E2E test).
-  3. **Phase C — Execution & Reporting**:
-     - Run existing test suites (`pnpm --filter @agency-os/api test`) to confirm zero regressions before authoring new test coverage.
-
-
+  In [`apps/api/src/modules/auth/auth.controller.ts`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/auth/auth.controller.ts#L76-L88), `res.cookie('csrfToken', ...)` sets `sameSite: 'lax'` without an explicit `domain` attribute (defaulting to host-only). In [`apps/web/src/lib/api/client.ts`](file:///C:/Users/bappa/agency-os/apps/web/src/lib/api/client.ts#L60-L65), client-side CSRF handling attempts to read `document.cookie` for `csrfToken` to populate the `x-csrf-token` request header.
+  - **Single-Origin / Ingress Reverse Proxy Topology**: If the production architecture fronts web and API behind a unified reverse proxy (e.g. `example.com` and `example.com/api/v1`), this setup works seamlessly and securely.
+  - **Separate Subdomains Topology**: If web and API are hosted on distinct subdomains (e.g. `app.example.com` and `api.example.com`), browser Same-Origin Policy prevents `document.cookie` on `app.example.com` from reading host-only cookies set by `api.example.com`. Consequently, `x-csrf-token` header is omitted, causing [`AuthGuard`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/auth/guards/auth.guard.ts#L42-L48) to reject all state-changing requests with `403 Forbidden ('CSRF token mismatch')`.
+- **Target Verification Plan**:
+  A verification-only audit is required to inspect ingress specifications, staging deployment topologies, and evaluate whether to:
+  1. Formalize single-origin reverse proxy routing in staging/production deployment guides.
+  2. Or configure a configurable parent cookie domain (`COOKIE_DOMAIN=.example.com`) and/or provide a lightweight `GET /api/v1/auth/csrf` token endpoint.
 
 ---
 
 ## Ambiguous Publication Reconciliation Hardening (Branch `fix/reconciliation-hardening`)
 
 ### 1. Verification & Hardening Summary
-- **Branch**: `fix/reconciliation-hardening`
-- **Scope**: Direct Vitest unit test coverage, audit log metadata enrichment, static import cleanup, and CAS workspace defense-in-depth.
-- **Architectural Invariants Verified**: All core safety invariants R1 through R8 and R10 from [`docs/AMBIGUOUS_PUBLICATION_RECONCILIATION_ARCHITECTURE.md`](file:///C:/Users/bappa/agency-os/docs/AMBIGUOUS_PUBLICATION_RECONCILIATION_ARCHITECTURE.md) were verified as architecturally sound and preserved.
+- **Status**: **MERGED** (PR #7, merge commit [`d7f2d71313cf99134ec133eecb880ad4b74a4a8f`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/d7f2d71313cf99134ec133eecb880ad4b74a4a8f))
+- **Pull Request**: [#7](https://github.com/AbhishekGadmale/Social-Media-Handler/pull/7)
+- **Approved Head SHA**: [`8c45e4c506f8ea7ac032871bfd1b30964ea46781`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/8c45e4c506f8ea7ac032871bfd1b30964ea46781) (`8c45e4c`)
+- **Reviewer**: Muse (APPROVED)
+- **CI Status**: All 5/5 GitHub Actions check-runs completed GREEN (`GitGuardian`, `Code Quality`, `Tests`, `Docker Build & Smoke Test`, `Application Builds`).
+- **Scope**: Direct Vitest unit test coverage, audit log metadata enrichment, static import cleanup, CAS workspace defense-in-depth, and test semantics precision.
+- **Architectural Soundness**:
+  - The core reconciliation business logic implemented in previous commits was already architecturally sound.
+  - PR #7 primarily closed the CI regression coverage gap so that reconciliation logic is tested automatically on every commit in the Vitest CI suite (`pnpm turbo run test`).
+  - Vitest now directly covers `PublishingApplicationService.reconcile()` (29 unit tests in `publishing-application.service.spec.ts`, 3 unit tests in `publications.controller.spec.ts`, bringing API total to 149 tests across 16 files).
+  - Existing live PostgreSQL Jest E2E tests ([`apps/api/test/publishing.e2e-spec.ts`](file:///C:/Users/bappa/agency-os/apps/api/test/publishing.e2e-spec.ts) -> `proves database rollback if AuditLog insertion fails`) remain the real proof of PostgreSQL database rollback behavior and atomicity.
+  - The unit test transaction mock (`cb(txMock)`) specifically proves error propagation and exception mapping to `InternalServerErrorException`.
+  - Audit metadata now captures operator-supplied `externalPostId` and `canonicalUrl` for traceability without leaking tokens or credentials.
+  - Proved that `CONFIRM_FAILED` records operator-supplied identifiers in `AuditLog.metadata` while strictly preventing synthesis of publication fields (`publishedAt`, `externalPostId`, `canonicalUrl`) on `PostPlatformVariant`.
+  - CAS update includes `workspaceId` in the WHERE clause as defense-in-depth tenant isolation.
+  - RBAC unit tests confirm that `publishing.reconcile` requires `OWNER` or `MANAGER` role, rejecting `EDITOR`, `CLIENT_APPROVER`, and `VIEWER`.
 
 ### 2. Applied Hardening & Cleanups
 1. **CI Vitest Test Suite Added**:
