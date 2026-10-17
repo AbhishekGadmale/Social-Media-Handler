@@ -327,7 +327,10 @@ export class PublishingApplicationService {
 
     const validation = await this.validateTarget(workspaceId, variantId);
     if (!validation.valid) {
-      console.error('Validation failed:', JSON.stringify(validation.issues, null, 2));
+      console.error(
+        'Validation failed:',
+        JSON.stringify(validation.issues, null, 2),
+      );
       throw new UnprocessableEntityException({
         message: 'PUBLISHABILITY_FAILED',
         issues: validation.issues,
@@ -347,16 +350,33 @@ export class PublishingApplicationService {
     });
   }
 
-  async requestRemoteDelete(workspaceId: string, authorId: string, variantId: string) {
+  async requestRemoteDelete(
+    workspaceId: string,
+    authorId: string,
+    variantId: string,
+  ) {
     const repo = this.getRepo(workspaceId);
     const variant = (await repo.variants.findById(variantId)) as any;
     if (!variant) throw new NotFoundException('Publication not found');
     if (variant.status === 'DELETED') return variant;
-    if (!variant.externalPostId) throw new UnprocessableEntityException('Cannot delete publication without an external ID');
+    if (!variant.externalPostId)
+      throw new UnprocessableEntityException(
+        'Cannot delete publication without an external ID',
+      );
     const success = await repo.queueForDeletion(variantId);
-    if (!success) throw new ConflictException('Cannot delete variant in this state');
-    this.audit.logAction({ workspaceId, actorId: authorId, action: 'PUBLICATION_DELETE_REQUESTED' as any, targetType: 'Publication', targetId: variantId, metadata: { publicationId: variantId } });
-    return repo.variants.findById(variantId, { include: { socialAccount: true } });
+    if (!success)
+      throw new ConflictException('Cannot delete variant in this state');
+    this.audit.logAction({
+      workspaceId,
+      actorId: authorId,
+      action: 'PUBLICATION_DELETE_REQUESTED' as any,
+      targetType: 'Publication',
+      targetId: variantId,
+      metadata: { publicationId: variantId },
+    });
+    return repo.variants.findById(variantId, {
+      include: { socialAccount: true },
+    });
   }
 
   async requestRetry(workspaceId: string, authorId: string, variantId: string) {
@@ -519,12 +539,17 @@ export class PublishingApplicationService {
       reconciledAt: now,
       reconciledBy: authorId,
       reconciliationReason: dto.reason,
-      status: dto.decision === 'CONFIRM_PUBLISHED' ? PostStatus.PUBLISHED : PostStatus.FAILED,
+      status:
+        dto.decision === 'CONFIRM_PUBLISHED'
+          ? PostStatus.PUBLISHED
+          : PostStatus.FAILED,
     };
 
     const execMeta = variant.executionMetadata as ExecutionMetadata | null;
     if (!execMeta || execMeta.phase !== 'AMBIGUOUS') {
-      throw new ConflictException('Reconciliation requires executionMetadata in AMBIGUOUS phase');
+      throw new ConflictException(
+        'Reconciliation requires executionMetadata in AMBIGUOUS phase',
+      );
     }
 
     let nextExecMeta: ExecutionMetadata;
@@ -532,7 +557,9 @@ export class PublishingApplicationService {
 
     if (dto.decision === 'CONFIRM_PUBLISHED') {
       if (!dto.externalPostId || dto.externalPostId.trim() === '') {
-        throw new UnprocessableEntityException('externalPostId is required for CONFIRM_PUBLISHED');
+        throw new UnprocessableEntityException(
+          'externalPostId is required for CONFIRM_PUBLISHED',
+        );
       }
       updateData.publishedAt = now;
       updateData.externalPostId = dto.externalPostId;
@@ -556,16 +583,19 @@ export class PublishingApplicationService {
         const updated = await tx.postPlatformVariant.updateMany({
           where: {
             id: variantId,
+            workspaceId,
             status: PostStatus.UNKNOWN,
           },
           data: {
             ...updateData,
-            executionMetadata: nextExecMeta as Prisma.InputJsonValue
-          }
+            executionMetadata: nextExecMeta as Prisma.InputJsonValue,
+          },
         });
 
         if (updated.count === 0) {
-          throw new ConflictException('Reconciliation failed due to concurrent modification');
+          throw new ConflictException(
+            'Reconciliation failed due to concurrent modification',
+          );
         }
 
         // 2. Publication Attempt sync
@@ -573,12 +603,14 @@ export class PublishingApplicationService {
           where: {
             variantId,
             status: 'FAILED',
-            failureCategory: 'UNKNOWN_RESULT'
-          }
+            failureCategory: 'UNKNOWN_RESULT',
+          },
         });
 
         if (attempts.length !== 1) {
-          throw new ConflictException(`Expected exactly 1 eligible publication attempt, found ${attempts.length}`);
+          throw new ConflictException(
+            `Expected exactly 1 eligible publication attempt, found ${attempts.length}`,
+          );
         }
 
         const attempt = attempts[0];
@@ -587,13 +619,13 @@ export class PublishingApplicationService {
           where: { id: attempt.id },
           data: {
             status: dto.decision === 'CONFIRM_PUBLISHED' ? 'SUCCESS' : 'FAILED',
-            failureCategory: dto.decision === 'CONFIRM_PUBLISHED' ? null : 'PERMANENT',
+            failureCategory:
+              dto.decision === 'CONFIRM_PUBLISHED' ? null : 'PERMANENT',
             completedAt: now,
-          }
+          },
         });
 
         // 3. Audit Log
-        const { generateId } = require('@agency-os/database');
         await tx.auditLog.create({
           data: {
             id: generateId(),
@@ -602,18 +634,27 @@ export class PublishingApplicationService {
               dto.decision === 'CONFIRM_PUBLISHED'
                 ? AuditAction.PUBLICATION_RECONCILED_PUBLISHED
                 : AuditAction.PUBLICATION_RECONCILED_FAILED,
-            metadata: { variantId, decision: dto.decision, reason: dto.reason },
+            metadata: {
+              variantId,
+              decision: dto.decision,
+              reason: dto.reason,
+              ...(dto.externalPostId && { externalPostId: dto.externalPostId }),
+              ...(dto.canonicalUrl && { canonicalUrl: dto.canonicalUrl }),
+            },
             actorId: authorId,
             targetType: 'PUBLICATION_TARGET',
             targetId: variantId,
             createdAt: now,
-          }
+          },
         });
       });
     } catch (err) {
       if (err instanceof HttpException) throw err;
-      if (err?.code === 'P2002' || err?.code === 'P2034') throw new ConflictException('Concurrent transaction conflict');
-      throw new InternalServerErrorException('Failed to execute reconciliation transaction');
+      if (err?.code === 'P2002' || err?.code === 'P2034')
+        throw new ConflictException('Concurrent transaction conflict');
+      throw new InternalServerErrorException(
+        'Failed to execute reconciliation transaction',
+      );
     }
 
     return repo.variants.findById(variantId, {
@@ -621,6 +662,3 @@ export class PublishingApplicationService {
     });
   }
 }
-
-
-

@@ -503,7 +503,7 @@ Following the project's 7-tier prioritization hierarchy:
 | **Tier 2: Auth Bypass** | Open redirect on login (`returnUrl`) | `apps/api/src/modules/auth/auth.controller.ts` | **MERGED** (PR #2, `862372c`) | High / Resolved | Complete |
 | **Tier 2: Auth Bypass** | Trust Proxy unconfigured spoofing & rate-limit defeat | `apps/api/src/config/trust-proxy.ts`, `apps/api/src/main.ts` | **MERGED** (PR #3, `f382a93`) | High / Resolved | Complete |
 | **Tier 2: Auth Bypass** | Logout cookie clear omitting `Secure`/`SameSite` | `apps/api/src/modules/auth/auth.controller.ts` | **DISMISSED** | **FALSE POSITIVE** (RFC 6265 Section 5.3 + Redis revocation) | None (Closed) |
-| **Tier 3: Publishing / Data Loss** | **Ambiguous Publication Reconciliation Transactionality, Metadata Synchronization, and Attributed RBAC** | [`apps/api/src/modules/publishing/services/publishing-application.service.ts`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/publishing/services/publishing-application.service.ts#L496-L623), [`apps/api/src/modules/publishing/controllers/publications.controller.ts`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/publishing/controllers/publications.controller.ts#L194-L207), [`docs/AMBIGUOUS_PUBLICATION_RECONCILIATION_ARCHITECTURE.md`](file:///C:/Users/bappa/agency-os/docs/AMBIGUOUS_PUBLICATION_RECONCILIATION_ARCHITECTURE.md) | **OPEN (TOP PRIORITY)** | **HIGH** / Data Integrity & Operator State Inconsistency | **Verification & Unit Test Hardening (R1–R10 Invariants)** |
+| **Tier 3: Publishing / Data Loss** | **Ambiguous Publication Reconciliation Transactionality, Metadata Synchronization, and Attributed RBAC** | [`apps/api/src/modules/publishing/services/publishing-application.service.ts`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/publishing/services/publishing-application.service.ts#L496-L623), [`apps/api/src/modules/publishing/controllers/publications.controller.ts`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/publishing/controllers/publications.controller.ts#L194-L207), [`docs/AMBIGUOUS_PUBLICATION_RECONCILIATION_ARCHITECTURE.md`](file:///C:/Users/bappa/agency-os/docs/AMBIGUOUS_PUBLICATION_RECONCILIATION_ARCHITECTURE.md) | **HARDENED & TESTED** (PR pending) | High / Resolved & Hardened | Vitest Suite & CI Verification |
 | **Tier 4: Provider Token** | Centralized worker token refresh & lifecycle management | `packages/providers/`, `apps/worker/src/publishing/token.service.ts` | **MERGED** (PR #5, `0d862ca`) | High / Resolved | PR #6 Docs Tracking (Current) |
 | **Tier 5: API / OAuth Contract** | Deterministic `API_PUBLIC_URL` for OAuth callbacks | `apps/api/src/config/public-url.ts`, `apps/api/src/modules/oauth/oauth.controller.ts` | **MERGED** (PR #4, `28b9a2c`) | Medium / Resolved | Complete |
 | **Tier 6: Deployment Hardening** | Cross-Subdomain CSRF Deployment Architecture | `apps/api/src/modules/auth/auth.controller.ts`, `docs/phase-6-readiness.md` | **OPEN** | Medium / Architectural Deployment Decision | Ingress topology documentation / Optional token endpoint |
@@ -547,3 +547,44 @@ Following the project's 7-tier prioritization hierarchy:
      - Run existing test suites (`pnpm --filter @agency-os/api test`) to confirm zero regressions before authoring new test coverage.
 
 
+
+---
+
+## Ambiguous Publication Reconciliation Hardening (Branch `fix/reconciliation-hardening`)
+
+### 1. Verification & Hardening Summary
+- **Branch**: `fix/reconciliation-hardening`
+- **Scope**: Direct Vitest unit test coverage, audit log metadata enrichment, static import cleanup, and CAS workspace defense-in-depth.
+- **Architectural Invariants Verified**: All core safety invariants R1 through R8 and R10 from [`docs/AMBIGUOUS_PUBLICATION_RECONCILIATION_ARCHITECTURE.md`](file:///C:/Users/bappa/agency-os/docs/AMBIGUOUS_PUBLICATION_RECONCILIATION_ARCHITECTURE.md) were verified as architecturally sound and preserved.
+
+### 2. Applied Hardening & Cleanups
+1. **CI Vitest Test Suite Added**:
+   - Authored [`apps/api/src/modules/publishing/services/publishing-application.service.spec.ts`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/publishing/services/publishing-application.service.spec.ts) containing 28 rigorous unit tests executed by Vitest in CI.
+   - Closed the CI test gap where previously only Jest E2E tests existed in `test/publishing.e2e-spec.ts` (which are excluded from `pnpm turbo run test`).
+2. **Audit Log Metadata Enrichment**:
+   - In [`apps/api/src/modules/publishing/services/publishing-application.service.ts`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/publishing/services/publishing-application.service.ts#L605-L611), enriched `AuditLog.metadata` to capture operator-supplied publication identifiers when present:
+     ```typescript
+     metadata: {
+       variantId,
+       decision: dto.decision,
+       reason: dto.reason,
+       ...(dto.externalPostId && { externalPostId: dto.externalPostId }),
+       ...(dto.canonicalUrl && { canonicalUrl: dto.canonicalUrl }),
+     }
+     ```
+   - Confirmed no secrets, tokens, or credentials are leaked into the audit trail.
+3. **Static Import Cleanup**:
+   - Removed dynamic `const { generateId } = require('@agency-os/database');` inside the transaction block; relies cleanly on static top-level import.
+4. **CAS Workspace Defense-in-Depth**:
+   - Added `workspaceId` to the `where` condition in `tx.postPlatformVariant.updateMany` alongside `id: variantId` and `status: PostStatus.UNKNOWN`.
+5. **Controller RBAC Unit Tests**:
+   - In [`apps/api/src/modules/publishing/controllers/publications.controller.spec.ts`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/publishing/controllers/publications.controller.spec.ts#L85-L136), added 3 unit tests verifying:
+     - `@RequirePermission('publishing.reconcile')` is decorated on `reconcileTarget` (and not `publishing.publish`).
+     - `PermissionMatrix['publishing.reconcile']` grants access to `OWNER` and `MANAGER`, while denying `EDITOR`, `CLIENT_APPROVER`, and `VIEWER`.
+     - `controller.reconcileTarget` cleanly delegates parameters to `PublishingApplicationService.reconcile`.
+
+### 3. Local Verification Results
+- **Vitest Suite (`pnpm --filter @agency-os/api test`)**: **PASS** (16/16 test files passed, 148/148 tests passing, +31 new unit tests).
+- **TypeScript Typecheck (`pnpm turbo run typecheck`)**: **PASS** (5/5 tasks successful).
+- **Lint (`pnpm turbo run lint`)**: **PASS** (5/5 tasks successful, 0 errors, 37 warnings).
+- **Production Builds (`pnpm turbo run build`)**: **PASS** (3/3 builds successful across API, Web, and Worker).
