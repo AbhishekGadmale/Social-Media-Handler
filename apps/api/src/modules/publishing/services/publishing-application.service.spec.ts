@@ -211,6 +211,77 @@ describe('PublishingApplicationService - reconcile()', () => {
     });
   });
 
+  it('CONFIRM_FAILED records operator-supplied externalPostId and canonicalUrl in AuditLog but does NOT synthesize publication fields on Variant', async () => {
+    const dto = {
+      decision: 'CONFIRM_FAILED' as const,
+      reason:
+        'Operator confirmed failure with provider-assigned trace identifiers',
+      externalPostId: 'external-failed-123',
+      canonicalUrl: 'https://provider.example/post/failed-123',
+    };
+
+    await service.reconcile(workspaceId, authorId, variantId, dto);
+
+    // 1. Variant CAS update:
+    // Status is FAILED, executionMetadata.phase is FAILED, but publication fields MUST NOT be synthesized
+    expect(txMock.postPlatformVariant.updateMany).toHaveBeenCalledWith({
+      where: {
+        id: variantId,
+        workspaceId,
+        status: PostStatus.UNKNOWN,
+      },
+      data: expect.objectContaining({
+        status: PostStatus.FAILED,
+        reconciledAt: expect.any(Date),
+        reconciledBy: authorId,
+        reconciliationReason: dto.reason,
+        executionMetadata: {
+          phase: 'FAILED',
+          operationId: 'op-orig-123',
+          containerId: 'container-orig-456',
+          dispatchVersion: 2,
+        },
+      }),
+    });
+
+    const updateCall = txMock.postPlatformVariant.updateMany.mock.calls[0][0];
+    const updateData = updateCall.data;
+    expect(updateData).not.toHaveProperty('externalPostId');
+    expect(updateData).not.toHaveProperty('canonicalUrl');
+    expect(updateData).not.toHaveProperty('publishedAt');
+
+    // 2. PublicationAttempt update
+    expect(txMock.publicationAttempt.update).toHaveBeenCalledWith({
+      where: { id: 'attempt-7777-7777' },
+      data: {
+        status: 'FAILED',
+        failureCategory: 'PERMANENT',
+        completedAt: expect.any(Date),
+      },
+    });
+
+    // 3. AuditLog metadata:
+    // Records operator-supplied externalPostId and canonicalUrl for traceability
+    expect(txMock.auditLog.create).toHaveBeenCalledWith({
+      data: {
+        id: expect.any(String),
+        workspaceId,
+        actorId: authorId,
+        action: AuditAction.PUBLICATION_RECONCILED_FAILED,
+        targetType: 'PUBLICATION_TARGET',
+        targetId: variantId,
+        metadata: {
+          variantId,
+          decision: 'CONFIRM_FAILED',
+          reason: dto.reason,
+          externalPostId: dto.externalPostId,
+          canonicalUrl: dto.canonicalUrl,
+        },
+        createdAt: expect.any(Date),
+      },
+    });
+  });
+
   // 3. Missing externalPostId on CONFIRM_PUBLISHED
   it.each([
     { label: 'undefined', value: undefined },
@@ -345,13 +416,18 @@ describe('PublishingApplicationService - reconcile()', () => {
     expect(txMock.auditLog.create).not.toHaveBeenCalled();
   });
 
-  // 9. Transaction failure rollback behavior
-  it('propagates transaction errors and ensures no partial reconciliation success', async () => {
+  // 9. Transaction callback error propagation
+  // NOTE: This unit test verifies transaction callback error propagation and NestJS exception
+  // mapping to InternalServerErrorException. It does NOT prove real PostgreSQL database rollback
+  // or transaction atomicity (the mocked $transaction behaves as `cb(txMock)`).
+  // Real database rollback and atomicity are proven against PostgreSQL in the Jest E2E test:
+  //   `apps/api/test/publishing.e2e-spec.ts` -> test 'proves database rollback if AuditLog insertion fails'
+  it('propagates transaction callback errors as InternalServerErrorException', async () => {
     txMock.auditLog.create.mockRejectedValue(new Error('Prisma write failure'));
 
     const dto = {
       decision: 'CONFIRM_FAILED' as const,
-      reason: 'Testing transaction rollback',
+      reason: 'Testing transaction callback error propagation',
     };
 
     await expect(

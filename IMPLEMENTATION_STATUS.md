@@ -542,7 +542,7 @@ Following the project's 7-tier prioritization hierarchy:
        - Missing `externalPostId` rejection for `CONFIRM_PUBLISHED` (`UnprocessableEntityException`).
        - CAS concurrency collision handling (`updated.count === 0` -> `ConflictException`).
        - Non-unique publication attempt detection (`ConflictException`).
-       - Transaction rollback if any step (e.g. audit log creation) fails.
+       - Transaction callback error propagation if any step (e.g. audit log creation) fails (with real database rollback verified by existing E2E test).
   3. **Phase C — Execution & Reporting**:
      - Run existing test suites (`pnpm --filter @agency-os/api test`) to confirm zero regressions before authoring new test coverage.
 
@@ -559,8 +559,10 @@ Following the project's 7-tier prioritization hierarchy:
 
 ### 2. Applied Hardening & Cleanups
 1. **CI Vitest Test Suite Added**:
-   - Authored [`apps/api/src/modules/publishing/services/publishing-application.service.spec.ts`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/publishing/services/publishing-application.service.spec.ts) containing 28 rigorous unit tests executed by Vitest in CI.
+   - Authored [`apps/api/src/modules/publishing/services/publishing-application.service.spec.ts`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/publishing/services/publishing-application.service.spec.ts) containing 29 rigorous unit tests executed by Vitest in CI.
    - Closed the CI test gap where previously only Jest E2E tests existed in `test/publishing.e2e-spec.ts` (which are excluded from `pnpm turbo run test`).
+   - Transaction error handling test explicitly validates transaction callback error propagation and exception mapping to `InternalServerErrorException`; real database rollback and atomicity are verified against PostgreSQL by the existing E2E test (`apps/api/test/publishing.e2e-spec.ts` -> `proves database rollback if AuditLog insertion fails`).
+   - Verified that `CONFIRM_FAILED` records operator-supplied identifiers (`externalPostId`, `canonicalUrl`) in `AuditLog.metadata` for traceability while strictly preventing synthesis of publication fields (`publishedAt`, `externalPostId`, `canonicalUrl`) on `PostPlatformVariant`.
 2. **Audit Log Metadata Enrichment**:
    - In [`apps/api/src/modules/publishing/services/publishing-application.service.ts`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/publishing/services/publishing-application.service.ts#L605-L611), enriched `AuditLog.metadata` to capture operator-supplied publication identifiers when present:
      ```typescript
@@ -584,7 +586,7 @@ Following the project's 7-tier prioritization hierarchy:
      - `controller.reconcileTarget` cleanly delegates parameters to `PublishingApplicationService.reconcile`.
 
 ### 3. Local Verification Results
-- **Vitest Suite (`pnpm --filter @agency-os/api test`)**: **PASS** (16/16 test files passed, 148/148 tests passing, +31 new unit tests).
+- **Vitest Suite (`pnpm --filter @agency-os/api test`)**: **PASS** (16/16 test files passed, 149/149 tests passing, +32 new unit tests).
 - **TypeScript Typecheck (`pnpm turbo run typecheck`)**: **PASS** (5/5 tasks successful).
 - **Lint (`pnpm turbo run lint`)**: **PASS** (5/5 tasks successful, 0 errors, 37 warnings).
 - **Production Builds (`pnpm turbo run build`)**: **PASS** (3/3 builds successful across API, Web, and Worker).
