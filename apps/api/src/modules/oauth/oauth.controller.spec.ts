@@ -27,6 +27,7 @@ describe('OAuthController', () => {
 
     mockAuditService = {
       logAction: vi.fn(),
+      logActionBestEffort: vi.fn(),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -225,7 +226,7 @@ describe('OAuthController', () => {
       expect(redirectUrl).not.toContain('valid-state');
       expect(redirectUrl).not.toContain('token');
 
-      expect(mockAuditService.logAction).toHaveBeenCalledWith(
+      expect(mockAuditService.logActionBestEffort).toHaveBeenCalledWith(
         expect.objectContaining({
           action: 'OAUTH_CONNECTION_SUCCEEDED',
         }),
@@ -353,7 +354,7 @@ describe('OAuthController', () => {
         mockRes as Response,
       );
 
-      expect(mockAuditService.logAction).toHaveBeenCalledWith(
+      expect(mockAuditService.logActionBestEffort).toHaveBeenCalledWith(
         expect.objectContaining({
           action: 'OAUTH_RECONNECTED',
         }),
@@ -375,7 +376,7 @@ describe('OAuthController', () => {
       expect(mockRes.redirect).toHaveBeenCalledWith(
         'http://localhost:3000/dashboard?error=oauth_failed',
       );
-      expect(mockAuditService.logAction).toHaveBeenCalledWith(
+      expect(mockAuditService.logActionBestEffort).toHaveBeenCalledWith(
         expect.objectContaining({
           action: 'OAUTH_CONNECTION_FAILED',
           metadata: expect.objectContaining({
@@ -417,7 +418,7 @@ describe('OAuthController', () => {
       expect(mockRes.redirect).toHaveBeenCalledWith(
         'http://localhost:3000/dashboard?error=oauth_failed',
       );
-      expect(mockAuditService.logAction).toHaveBeenCalledWith(
+      expect(mockAuditService.logActionBestEffort).toHaveBeenCalledWith(
         expect.objectContaining({
           action: 'OAUTH_CONNECTION_FAILED',
           metadata: {

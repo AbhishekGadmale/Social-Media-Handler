@@ -53,7 +53,7 @@ export class AuthController {
       sessionId = result.sessionId;
       user = result.user;
 
-      this.auditService.logAction({
+      this.auditService.logActionBestEffort({
         action: AuditAction.AUTH_LOGIN_SUCCEEDED,
         actorId: user.id,
         targetType: 'User',
@@ -61,7 +61,7 @@ export class AuthController {
         requestId,
       });
     } catch (e) {
-      this.auditService.logAction({
+      this.auditService.logActionBestEffort({
         action: AuditAction.AUTH_LOGIN_FAILED,
         targetType: 'User',
         requestId,
@@ -103,7 +103,7 @@ export class AuthController {
     }
 
     if (user) {
-      this.auditService.logAction({
+      this.auditService.logActionBestEffort({
         action: AuditAction.AUTH_LOGOUT,
         actorId: user.id,
         targetType: 'User',

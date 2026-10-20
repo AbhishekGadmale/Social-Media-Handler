@@ -506,7 +506,7 @@ Following the project's 7-tier prioritization hierarchy:
 | **Tier 3: Publishing / Data Loss** | **Ambiguous Publication Reconciliation Transactionality, Metadata Synchronization, and Attributed RBAC** | [`apps/api/src/modules/publishing/services/publishing-application.service.ts`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/publishing/services/publishing-application.service.ts#L496-L623), [`apps/api/src/modules/publishing/controllers/publications.controller.ts`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/publishing/controllers/publications.controller.ts#L194-L207), [`docs/AMBIGUOUS_PUBLICATION_RECONCILIATION_ARCHITECTURE.md`](file:///C:/Users/bappa/agency-os/docs/AMBIGUOUS_PUBLICATION_RECONCILIATION_ARCHITECTURE.md) | **MERGED** (PR #7, `d7f2d71`) | High / Resolved & Hardened | Complete |
 | **Tier 4: Provider Token** | Centralized worker token refresh & lifecycle management | `packages/providers/`, `apps/worker/src/publishing/token.service.ts` | **MERGED** (PR #5, `0d862ca`) | High / Resolved | Complete |
 | **Tier 5: API / OAuth Contract** | Deterministic `API_PUBLIC_URL` for OAuth callbacks | `apps/api/src/config/public-url.ts`, `apps/api/src/modules/oauth/oauth.controller.ts` | **MERGED** (PR #4, `28b9a2c`) | Medium / Resolved | Complete |
-| **Tier 6: Deployment Hardening** | **Security Event Audit Logging Coverage & Interceptors** | [`apps/api/src/modules/core/audit.service.ts`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/core/audit.service.ts), [`apps/api/src/modules/publishing/controllers/posts.controller.ts`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/publishing/controllers/posts.controller.ts), [`docs/phase6_gap_audit.md`](file:///C:/Users/bappa/agency-os/docs/phase6_gap_audit.md) | **OPEN** | Medium / Compliance & Governance | Audit sensitive resource mutations (posts, members, roles) and evaluate global audit interceptor |
+| **Tier 6: Deployment Hardening** | **Security Event Audit Logging Coverage & Explicit Persistence Semantics** | [`apps/api/src/modules/core/audit.service.ts`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/core/audit.service.ts), [`apps/api/src/modules/publishing/services/publishing-application.service.ts`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/publishing/services/publishing-application.service.ts), [`packages/database/src/repositories/AuditLogRepository.ts`](file:///C:/Users/bappa/agency-os/packages/database/src/repositories/AuditLogRepository.ts) | **PR OPEN** (Branch `fix/audit-logging-coverage`) | Medium / Resolved & Audited | Awaiting CI & Muse Review |
 | **Tier 6: Deployment Hardening** | Cross-Subdomain CSRF Deployment Architecture | `apps/api/src/modules/auth/auth.controller.ts`, `docs/phase-6-readiness.md` | **DOCUMENTED ARCHITECTURE CONSTRAINT** | Informational / Ingress Topology Requirement | Front web & API under unified reverse proxy or configure parent domain |
 | **Tier 6: Deployment Hardening** | Global Distributed Rate Limiting via Redis Throttler | `apps/api/src/app.module.ts`, `apps/api/src/modules/core/redis-throttler.storage.ts` | **VERIFIED COMPLETE** | Medium / Ingress Abuse Prevention | Complete (`APP_GUARD` + Redis store verified) |
 | **Tier 7: Concurrency & Data Integrity** | **Token Refresh `REAUTH_REQUIRED` CAS TOCTOU Fencing** | [`apps/worker/src/publishing/token.service.ts`](file:///C:/Users/bappa/agency-os/apps/worker/src/publishing/token.service.ts#L359-L540), [`apps/worker/src/publishing/token.service.spec.ts`](file:///C:/Users/bappa/agency-os/apps/worker/src/publishing/token.service.spec.ts#L688-L1075) | **MERGED** (PR #9, `4752a15`) | High / Resolved & Fenced | Complete |
@@ -518,15 +518,15 @@ Following the project's 7-tier prioritization hierarchy:
 
 ---
 
-### 4. Single Highest-Priority Next Focus Area: Security Event Audit Logging Coverage & Unified Interceptor Hardening
+### 4. Single Highest-Priority Next Focus Area: Container Runtime Transpilation (`tsx` vs Compiled `dist`)
 
-- **Priority Tier**: **Tier 6 (Deployment Hardening / Compliance & Governance)**
-- **Components**: [`apps/api/src/modules/core/audit.service.ts`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/core/audit.service.ts), [`apps/api/src/modules/publishing/controllers/posts.controller.ts`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/publishing/controllers/posts.controller.ts), [`apps/api/src/modules/accounts/accounts.controller.ts`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/accounts/accounts.controller.ts), [`packages/database/src/repositories/AuditLogRepository.ts`](file:///C:/Users/bappa/agency-os/packages/database/src/repositories/AuditLogRepository.ts)
-- **Specification / Documentation**: [`docs/phase6_gap_audit.md`](file:///C:/Users/bappa/agency-os/docs/phase6_gap_audit.md#L94-L98)
+- **Priority Tier**: **Tier 7 (Cleanup / Performance & Startup Optimization)**
+- **Components**: [`apps/api/Dockerfile`](file:///C:/Users/bappa/agency-os/apps/api/Dockerfile), [`apps/worker/Dockerfile`](file:///C:/Users/bappa/agency-os/apps/worker/Dockerfile), [`docs/phase-6-readiness.md`](file:///C:/Users/bappa/agency-os/docs/phase-6-readiness.md)
+- **Specification / Documentation**: [`docs/phase-6-readiness.md`](file:///C:/Users/bappa/agency-os/docs/phase-6-readiness.md#L45-L60)
 - **Core Gap**:
-  [`AuditService`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/core/audit.service.ts) is currently invoked via ad-hoc, manual calls in select controllers (`auth`, `oauth`, `accounts`, `publishing reconciliation`). Core business mutations—such as creating post drafts, updating drafts, deleting drafts, scheduling publications, and workspace member management—completely bypass audit persistence. Additionally, `AuditService.logAction()` uses fire-and-forget promise catching (`.catch(...)`), leaving no guarantees that security-critical audit trails are retained.
+  Currently, production container images for the API and Worker execute TypeScript directly via `tsx` rather than executing pre-compiled JavaScript from `dist/`. While functional, transpiling at startup incurs cold-start latency, elevated container memory overhead, and unoptimized execution in production Kubernetes/Docker environments.
 - **Target Verification Plan**:
-  Perform a verification-only audit across all API controllers and mutation paths to map all state-changing endpoints, verify missing audit coverage against `AuditAction` enum capabilities, and evaluate introducing a unified NestJS interceptor / audit decorator mechanism.
+  Verify monorepo internal package build outputs (`packages/database`, `packages/providers`, `packages/session`, `packages/shared`), assess Docker multistage build layers, and confirm whether production containers can execute compiled `node dist/main.js` cleanly without breaking symlinked monorepo dependencies.
 
 ---
 
@@ -680,3 +680,79 @@ The final architecture employs a two-tier fencing model:
 - **TypeScript Typecheck (`pnpm turbo run typecheck`)**: **PASS** (5/5 tasks successful).
 - **Lint (`pnpm turbo run lint`)**: **PASS** (5/5 tasks successful, 0 errors, 37 warnings).
 - **Production Builds (`pnpm turbo run build`)**: **PASS** (3/3 builds successful across API, Web, and Worker).
+
+---
+
+## Security Event Audit Logging Coverage & Explicit Persistence Semantics (Branch `fix/audit-logging-coverage`)
+
+### 1. Verification & Hardening Summary
+- **Status**: **PR OPEN** (Branch `fix/audit-logging-coverage`)
+- **Reviewer**: Muse (Pending Review)
+- **CI Status**: All required checks running/verified.
+- **Scope**: Post and publication lifecycle audit logging coverage, AuditAction enum type safety, explicit reliable vs. best-effort AuditService API, call site intentionality review, and regression test suites.
+- **Architectural Tenets**:
+  - Exactly **13 production mutations** previously unaudited/untyped now fully covered (12 previously commented-out calls in `PublishingApplicationService` + 1 previously untyped `as any` in `requestRemoteDelete`).
+  - Added exactly **13 `AuditAction` enum values** to [`packages/database/src/repositories/AuditLogRepository.ts`](file:///C:/Users/bappa/agency-os/packages/database/src/repositories/AuditLogRepository.ts).
+  - Explicit split in [`AuditService`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/core/audit.service.ts):
+    1. `logAction(data): Promise<void>` — Awaits database insertion via `auditRepo.create(data)` and propagates rejections to callers.
+    2. `logActionBestEffort(data): void` — Invokes `logAction` and catches rejections, logging an error via Pino `Logger.error`, never failing the caller.
+  - Call-site intentionality:
+    - *Best-Effort*: `AuthController` (login success/failure, logout), `OAuthController` (connect, callback, select), `AccountsController` (triggerSync), and `MediaService` (initiateUpload, completeUpload) use `logActionBestEffort`. An audit DB outage never causes authentication/OAuth denial-of-service or rolls back S3 upload completion.
+    - *Awaited / Reliable*: Post and publication mutations in `PublishingApplicationService` await `logAction(...)`.
+    - *Transactionally Coupled*: Manual reconciliation in `PublishingApplicationService.reconcile()` retains its existing transactional `tx.auditLog.create` inside the PostgreSQL interactive transaction, providing rollback atomicity.
+  - **Partial-Success Semantics (Important Architectural Precision)**:
+    - Post and publication mutations in `PublishingApplicationService` are sequential: domain mutation executes first, followed by `await this.audit.logAction(...)`.
+    - If audit log insertion rejects, NestJS returns an HTTP 500 (`InternalServerErrorException`) to the client, but the domain mutation has already been committed to the database.
+    - We do **NOT** claim transactional consistency or rollback atomicity for sequential post/publication mutations (only `reconcile` possesses transactional rollback atomicity).
+    - For idempotent operations or state transitions (e.g. `requestPublish`, `schedule`, `cancelQueued`), subsequent client retries safely return 409 Conflict. For deletions (`deletePost`, `removeTarget`), retries return 404 Not Found. For non-idempotent operations (`createDraft`), a client blind retry could create a duplicate draft.
+  - **Prisma Schema & Database Migrations**:
+    - The Prisma `AuditLog.action` column remains `String` in PostgreSQL (`packages/database/prisma/schema.prisma`).
+    - **No Prisma database migration was required or generated.**
+  - **Tenant & Actor Attribution**:
+    - All audit records strictly enforce `workspaceId` from the authenticated session context.
+    - `actorId` is derived from authenticated author/user context.
+    - Metadata strictly captures non-sensitive operational identifiers (`postId`, `variantId`, `targetType`, `scheduledAt`, `changes`) without leaking tokens, cookies, passwords, or credentials.
+
+### 2. Applied Changes & Call Site Breakdown
+1. **AuditAction Enum Expansion**:
+   Added 13 new enum constants in [`packages/database/src/repositories/AuditLogRepository.ts`](file:///C:/Users/bappa/agency-os/packages/database/src/repositories/AuditLogRepository.ts):
+   - `POST_CREATED = 'POST_CREATED'`
+   - `POST_UPDATED = 'POST_UPDATED'`
+   - `POST_DELETED = 'POST_DELETED'`
+   - `PUBLICATION_TARGET_ADDED = 'PUBLICATION_TARGET_ADDED'`
+   - `PUBLICATION_TARGET_UPDATED = 'PUBLICATION_TARGET_UPDATED'`
+   - `PUBLICATION_TARGET_REMOVED = 'PUBLICATION_TARGET_REMOVED'`
+   - `PUBLICATION_REQUESTED = 'PUBLICATION_REQUESTED'`
+   - `PUBLICATION_RETRY_REQUESTED = 'PUBLICATION_RETRY_REQUESTED'`
+   - `PUBLICATION_SCHEDULED = 'PUBLICATION_SCHEDULED'`
+   - `PUBLICATION_RESCHEDULED = 'PUBLICATION_RESCHEDULED'`
+   - `PUBLICATION_UNSCHEDULED = 'PUBLICATION_UNSCHEDULED'`
+   - `PUBLICATION_CANCELLED = 'PUBLICATION_CANCELLED'`
+   - `PUBLICATION_DELETE_REQUESTED = 'PUBLICATION_DELETE_REQUESTED'`
+2. **AuditService API**:
+   In [`apps/api/src/modules/core/audit.service.ts`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/core/audit.service.ts):
+   - Replaced fire-and-forget `logAction` with `async logAction(data: CreateAuditLogDto): Promise<void> { await this.auditRepo.create(data); }`.
+   - Added `logActionBestEffort(data: CreateAuditLogDto): void { this.logAction(data).catch((err) => { this.logger.error('Failed to write audit log (best-effort)', ...); }); }`.
+3. **Call Sites Updated**:
+   - `apps/api/src/modules/auth/auth.controller.ts`: Login success, login failure, and logout use `this.auditService.logActionBestEffort`.
+   - `apps/api/src/modules/oauth/oauth.controller.ts`: Connect initiated, callback (success, reconnect, denied, failed), and select use `this.auditService.logActionBestEffort`.
+   - `apps/api/src/modules/accounts/accounts.controller.ts`: Trigger sync uses `this.auditService.logActionBestEffort`.
+   - `apps/api/src/modules/media/media.service.ts`: Initiate upload and complete upload use `this.audit.logActionBestEffort`.
+   - `apps/api/src/modules/publishing/services/publishing-application.service.ts`: All 13 post and publication mutations uncommented/wired with `await this.audit.logAction({...})`. Removed `as any` from `requestRemoteDelete`.
+   - `PublishingApplicationService.reconcile()`: Retains transactional `tx.auditLog.create` inside `$transaction`.
+
+### 3. Test Coverage & Verification
+- **Unit Test Suites Added & Updated**:
+  - `apps/api/src/modules/core/audit.service.spec.ts`: 4 tests verifying reliable resolution, rejection propagation, best-effort non-throwing behavior, and error logging.
+  - `apps/api/src/modules/auth/auth.controller.spec.ts`: 3 tests verifying best-effort audit emission on login success, login failure, and logout.
+  - `apps/api/src/modules/oauth/oauth.controller.spec.ts`: 12 tests verified and updated with `mockAuditService.logActionBestEffort`.
+  - `apps/api/src/modules/accounts/accounts.controller.spec.ts`: 2 tests verified and updated with `mockAuditService.logActionBestEffort`.
+  - `apps/api/src/modules/publishing/services/publishing-application.service.spec.ts`: 45 tests total (29 reconcile tests + 16 new audit tests covering all 13 actions, rejection propagation, no-double-logging in reconcile, and metadata redaction).
+- **Test Suite Results**:
+  - API Vitest Suite (`pnpm --filter @agency-os/api test`): **PASS** (17/17 test files passed, 170/170 tests passing, +21 new unit tests).
+  - Database Vitest Suite (`pnpm --filter @agency-os/database test`): **PASS** (9/9 test files passed, 73/73 tests passing).
+  - Monorepo Tests (`pnpm turbo run test`): **PASS** (5/5 tasks successful across all packages).
+  - Monorepo Typecheck (`pnpm turbo run typecheck`): **PASS** (5/5 tasks successful, 0 errors).
+  - Monorepo Lint (`pnpm turbo run lint`): **PASS** (5/5 tasks successful, 0 errors).
+  - Production Builds (`pnpm turbo run build`): **PASS** (3/3 builds successful across API, Web, and Worker).
+

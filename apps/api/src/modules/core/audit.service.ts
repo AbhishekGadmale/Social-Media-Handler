@@ -8,19 +8,22 @@ export class AuditService {
   constructor(private readonly auditRepo: AuditLogRepository) {}
 
   /**
-   * Fire-and-forget persistent audit logging.
-   * We do not await this in critical paths to avoid failing the business operation
-   * if the audit log transiently fails, per MVP constraints.
+   * Reliable, awaitable audit logging for business mutations.
+   * Awaits repository persistence and propagates rejections to the caller.
    */
-  logAction(data: CreateAuditLogDto): void {
-    // We intentionally don't await to avoid coupling the latency or failure
-    // of the audit insert to the critical path (like OAuth or Login).
-    this.auditRepo.create(data).catch((error) => {
-      // If audit logging fails, we log it to operational logs via Pino
-      // so it isn't silently swallowed.
+  async logAction(data: CreateAuditLogDto): Promise<void> {
+    await this.auditRepo.create(data);
+  }
+
+  /**
+   * Best-effort non-blocking audit logging for authentication and operational boundaries.
+   * Catches errors internally and logs them via Pino without failing the caller.
+   */
+  logActionBestEffort(data: CreateAuditLogDto): void {
+    this.logAction(data).catch((error) => {
       this.logger.error(
         { err: error, auditData: data },
-        `Failed to persist audit log: ${data.action}`,
+        `Failed to persist audit log (best-effort): ${data.action}`,
       );
     });
   }

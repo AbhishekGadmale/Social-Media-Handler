@@ -66,7 +66,10 @@ describe('PublishingApplicationService - reconcile()', () => {
       }),
     };
 
-    auditMock = {} as any;
+    auditMock = {
+      logAction: vi.fn().mockResolvedValue(undefined),
+      logActionBestEffort: vi.fn(),
+    } as any;
     validatorMock = {} as any;
 
     service = new PublishingApplicationService(
@@ -574,5 +577,362 @@ describe('PublishingApplicationService - reconcile()', () => {
       },
       data: expect.any(Object),
     });
+  });
+
+  // 15. Reconciliation transactional audit integrity & no double-logging
+  it('reconcile still uses transactional tx.auditLog.create and does not double-log to AuditService.logAction', async () => {
+    const dto = {
+      decision: 'CONFIRM_PUBLISHED' as const,
+      externalPostId: 'ext-reconcile-unique',
+      reason: 'No double-log verification',
+    };
+
+    await service.reconcile(workspaceId, authorId, variantId, dto);
+
+    expect(txMock.auditLog.create).toHaveBeenCalledTimes(1);
+    expect(auditMock.logAction).not.toHaveBeenCalled();
+    expect(auditMock.logActionBestEffort).not.toHaveBeenCalled();
+  });
+});
+
+describe('PublishingApplicationService - Audit Logging Coverage', () => {
+  let service: PublishingApplicationService;
+  let prismaMock: any;
+  let txMock: any;
+  let auditMock: any;
+  let validatorMock: any;
+  let repoMock: any;
+
+  const workspaceId = 'workspace-1111-1111';
+  const authorId = 'user-2222-2222';
+  const postId = 'post-4444-4444';
+  const variantId = 'variant-3333-3333';
+  const socialAccountId = 'account-5555-5555';
+
+  beforeEach(() => {
+    txMock = {
+      postMedia: {
+        deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+      },
+      post: {
+        update: vi.fn().mockResolvedValue({
+          id: postId,
+          workspaceId,
+          content: 'Updated content',
+        }),
+      },
+    };
+
+    prismaMock = {
+      post: {
+        create: vi.fn().mockResolvedValue({
+          id: postId,
+          workspaceId,
+          authorId,
+          content: 'Draft content',
+          status: PostStatus.DRAFT,
+          media: [],
+          variants: [],
+        }),
+      },
+      mediaAsset: {
+        findMany: vi.fn().mockResolvedValue([]),
+      },
+      socialAccount: {
+        findFirst: vi.fn().mockResolvedValue({
+          id: socialAccountId,
+          workspaceId,
+        }),
+      },
+      $transaction: vi.fn().mockImplementation(async (cb: any) => cb(txMock)),
+    };
+
+    auditMock = {
+      logAction: vi.fn().mockResolvedValue(undefined),
+      logActionBestEffort: vi.fn(),
+    };
+
+    validatorMock = {
+      validateTarget: vi.fn().mockResolvedValue({ valid: true, issues: [] }),
+    };
+
+    repoMock = {
+      posts: {
+        findById: vi.fn().mockResolvedValue({
+          id: postId,
+          workspaceId,
+          variants: [],
+        }),
+        delete: vi.fn().mockResolvedValue({ id: postId }),
+      },
+      variants: {
+        findById: vi.fn().mockResolvedValue({
+          id: variantId,
+          postId,
+          socialAccountId,
+          status: PostStatus.DRAFT,
+          content: 'Variant content',
+          socialAccount: { id: socialAccountId },
+        }),
+        create: vi.fn().mockResolvedValue({
+          id: variantId,
+          postId,
+          socialAccountId,
+          status: PostStatus.DRAFT,
+        }),
+        update: vi.fn().mockResolvedValue({
+          id: variantId,
+          postId,
+          content: 'Updated variant content',
+        }),
+        delete: vi.fn().mockResolvedValue({ id: variantId }),
+      },
+      queueForPublishing: vi.fn().mockResolvedValue(true),
+      queueForDeletion: vi.fn().mockResolvedValue(true),
+      transitionVariantState: vi.fn().mockResolvedValue(true),
+      unschedule: vi.fn().mockResolvedValue(true),
+      cancelQueued: vi.fn().mockResolvedValue(true),
+    };
+
+    service = new PublishingApplicationService(
+      prismaMock,
+      auditMock,
+      validatorMock,
+    );
+    (service as any).getRepo = vi.fn().mockReturnValue(repoMock);
+  });
+
+  // 1. POST_CREATED
+  it('emits POST_CREATED with correct attribution on createDraft', async () => {
+    await service.createDraft(workspaceId, authorId, { content: 'New post' });
+
+    expect(auditMock.logAction).toHaveBeenCalledWith({
+      workspaceId,
+      actorId: authorId,
+      action: AuditAction.POST_CREATED,
+      targetType: 'POST',
+      targetId: postId,
+      metadata: { postId },
+    });
+  });
+
+  // 2. POST_UPDATED
+  it('emits POST_UPDATED with correct attribution on updateDraft', async () => {
+    await service.updateDraft(workspaceId, authorId, postId, {
+      content: 'Updated',
+    });
+
+    expect(auditMock.logAction).toHaveBeenCalledWith({
+      workspaceId,
+      actorId: authorId,
+      action: AuditAction.POST_UPDATED,
+      targetType: 'POST',
+      targetId: postId,
+      metadata: { postId },
+    });
+  });
+
+  // 3. POST_DELETED
+  it('emits POST_DELETED with correct attribution on deletePost', async () => {
+    await service.deletePost(workspaceId, authorId, postId);
+
+    expect(auditMock.logAction).toHaveBeenCalledWith({
+      workspaceId,
+      actorId: authorId,
+      action: AuditAction.POST_DELETED,
+      targetType: 'POST',
+      targetId: postId,
+      metadata: { postId },
+    });
+  });
+
+  // 4. PUBLICATION_TARGET_ADDED
+  it('emits PUBLICATION_TARGET_ADDED with correct attribution on addTarget', async () => {
+    await service.addTarget(workspaceId, authorId, postId, { socialAccountId });
+
+    expect(auditMock.logAction).toHaveBeenCalledWith({
+      workspaceId,
+      actorId: authorId,
+      action: AuditAction.PUBLICATION_TARGET_ADDED,
+      targetType: 'PUBLICATION_TARGET',
+      targetId: variantId,
+      metadata: {
+        postId,
+        variantId,
+        socialAccountId,
+      },
+    });
+  });
+
+  // 5. PUBLICATION_TARGET_UPDATED
+  it('emits PUBLICATION_TARGET_UPDATED with correct attribution on updateTarget', async () => {
+    await service.updateTarget(workspaceId, authorId, variantId, {
+      content: 'New variant content',
+    });
+
+    expect(auditMock.logAction).toHaveBeenCalledWith({
+      workspaceId,
+      actorId: authorId,
+      action: AuditAction.PUBLICATION_TARGET_UPDATED,
+      targetType: 'PUBLICATION_TARGET',
+      targetId: variantId,
+      metadata: { postId, variantId },
+    });
+  });
+
+  // 6. PUBLICATION_TARGET_REMOVED
+  it('emits PUBLICATION_TARGET_REMOVED with correct attribution on removeTarget', async () => {
+    await service.removeTarget(workspaceId, authorId, variantId);
+
+    expect(auditMock.logAction).toHaveBeenCalledWith({
+      workspaceId,
+      actorId: authorId,
+      action: AuditAction.PUBLICATION_TARGET_REMOVED,
+      targetType: 'PUBLICATION_TARGET',
+      targetId: variantId,
+      metadata: { postId, variantId },
+    });
+  });
+
+  // 7. PUBLICATION_REQUESTED
+  it('emits PUBLICATION_REQUESTED with correct attribution on requestPublish', async () => {
+    await service.requestPublish(workspaceId, authorId, variantId);
+
+    expect(auditMock.logAction).toHaveBeenCalledWith({
+      workspaceId,
+      actorId: authorId,
+      action: AuditAction.PUBLICATION_REQUESTED,
+      targetType: 'PUBLICATION_TARGET',
+      targetId: variantId,
+      metadata: { variantId },
+    });
+  });
+
+  // 8. PUBLICATION_RETRY_REQUESTED
+  it('emits PUBLICATION_RETRY_REQUESTED with correct attribution on requestRetry', async () => {
+    await service.requestRetry(workspaceId, authorId, variantId);
+
+    expect(auditMock.logAction).toHaveBeenCalledWith({
+      workspaceId,
+      actorId: authorId,
+      action: AuditAction.PUBLICATION_RETRY_REQUESTED,
+      targetType: 'PUBLICATION_TARGET',
+      targetId: variantId,
+      metadata: { variantId },
+    });
+  });
+
+  // 9. PUBLICATION_SCHEDULED
+  it('emits PUBLICATION_SCHEDULED with correct attribution and ISO date on schedule', async () => {
+    const futureDate = new Date(Date.now() + 86400000);
+    await service.schedule(workspaceId, authorId, variantId, {
+      scheduledAt: futureDate.toISOString(),
+    });
+
+    expect(auditMock.logAction).toHaveBeenCalledWith({
+      workspaceId,
+      actorId: authorId,
+      action: AuditAction.PUBLICATION_SCHEDULED,
+      targetType: 'PUBLICATION_TARGET',
+      targetId: variantId,
+      metadata: { variantId, scheduledAt: futureDate.toISOString() },
+    });
+  });
+
+  // 10. PUBLICATION_RESCHEDULED
+  it('emits PUBLICATION_RESCHEDULED with correct attribution and ISO date on reschedule', async () => {
+    repoMock.variants.findById.mockResolvedValueOnce({
+      id: variantId,
+      status: PostStatus.SCHEDULED,
+    });
+    const futureDate = new Date(Date.now() + 172800000);
+    await service.reschedule(workspaceId, authorId, variantId, {
+      scheduledAt: futureDate.toISOString(),
+    });
+
+    expect(auditMock.logAction).toHaveBeenCalledWith({
+      workspaceId,
+      actorId: authorId,
+      action: AuditAction.PUBLICATION_RESCHEDULED,
+      targetType: 'PUBLICATION_TARGET',
+      targetId: variantId,
+      metadata: { variantId, scheduledAt: futureDate.toISOString() },
+    });
+  });
+
+  // 11. PUBLICATION_UNSCHEDULED
+  it('emits PUBLICATION_UNSCHEDULED with correct attribution on unschedule', async () => {
+    await service.unschedule(workspaceId, authorId, variantId);
+
+    expect(auditMock.logAction).toHaveBeenCalledWith({
+      workspaceId,
+      actorId: authorId,
+      action: AuditAction.PUBLICATION_UNSCHEDULED,
+      targetType: 'PUBLICATION_TARGET',
+      targetId: variantId,
+      metadata: { variantId },
+    });
+  });
+
+  // 12. PUBLICATION_CANCELLED
+  it('emits PUBLICATION_CANCELLED with correct attribution on cancelQueued', async () => {
+    await service.cancelQueued(workspaceId, authorId, variantId);
+
+    expect(auditMock.logAction).toHaveBeenCalledWith({
+      workspaceId,
+      actorId: authorId,
+      action: AuditAction.PUBLICATION_CANCELLED,
+      targetType: 'PUBLICATION_TARGET',
+      targetId: variantId,
+      metadata: { variantId },
+    });
+  });
+
+  // 13. PUBLICATION_DELETE_REQUESTED
+  it('emits typed PUBLICATION_DELETE_REQUESTED with correct attribution on requestRemoteDelete', async () => {
+    repoMock.variants.findById.mockResolvedValue({
+      id: variantId,
+      status: PostStatus.PUBLISHED,
+      externalPostId: 'ext-remote-del-1',
+    });
+
+    await service.requestRemoteDelete(workspaceId, authorId, variantId);
+
+    expect(auditMock.logAction).toHaveBeenCalledWith({
+      workspaceId,
+      actorId: authorId,
+      action: AuditAction.PUBLICATION_DELETE_REQUESTED,
+      targetType: 'PUBLICATION_TARGET',
+      targetId: variantId,
+      metadata: { publicationId: variantId },
+    });
+  });
+
+  // 15-18. Security, tenancy, and metadata integrity
+  it('verifies metadata does not contain sensitive tokens, passwords, or secrets', async () => {
+    await service.createDraft(workspaceId, authorId, {
+      content: 'Secret post',
+    });
+
+    const callArgs = auditMock.logAction.mock.calls[0][0];
+    const metadataStr = JSON.stringify(callArgs.metadata);
+
+    expect(metadataStr).not.toContain('token');
+    expect(metadataStr).not.toContain('password');
+    expect(metadataStr).not.toContain('secret');
+    expect(metadataStr).not.toContain('cookie');
+    expect(callArgs.workspaceId).toBe(workspaceId);
+    expect(callArgs.actorId).toBe(authorId);
+  });
+
+  // 19-20. Error propagation on awaited logAction failure
+  it('propagates rejection when audit.logAction fails after domain mutation', async () => {
+    auditMock.logAction.mockRejectedValueOnce(
+      new Error('Audit DB write failed'),
+    );
+
+    await expect(
+      service.createDraft(workspaceId, authorId, { content: 'Failing audit' }),
+    ).rejects.toThrow('Audit DB write failed');
   });
 });
