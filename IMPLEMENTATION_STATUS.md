@@ -519,7 +519,7 @@ Following the project's 7-tier prioritization hierarchy:
 | **Tier 7: Non-Blocking Follow-Ups** | Failed Login Audit Accuracy Enrichment | `apps/api/src/modules/auth/auth.controller.ts` | **QUEUED (NON-BLOCKING)** | Low / Security Audit Detail | Record actual auth failure reason for `AUTH_LOGIN_FAILED` without logging credentials, tokens, or secrets |
 | **Tier 7: Non-Blocking Follow-Ups** | OAuth Callback Missing Parameter Failure Audit | `apps/api/src/modules/oauth/oauth.controller.ts` | **QUEUED (NON-BLOCKING)** | Low / Security Audit Detail | Add `FAILED` audit event when OAuth callbacks miss required `code` or `state`, using safe metadata only |
 | **Tier 7: Future Feature Dependency** | Worker `PublishingProcessor` Catch-Path Disconnect Fencing | `apps/worker/src/publishing/publishing.processor.ts` | **FUTURE DEPENDENCY** | Low / Dependent on Future Disconnect API | Guard processor catch paths against resurrecting `DISCONNECTED` accounts |
-| **Tier 7: CI / Test Optimization** | CI PostgreSQL Service E2E Test Execution Gap | `apps/api/test/publishing.e2e-spec.ts`, `.github/workflows/ci.yml` | **OPEN** | Low / Pipeline Test Breadth | Add Jest E2E execution step against CI Postgres container |
+| **Tier 7: CI / Test Optimization** | CI PostgreSQL Service E2E Test Execution Gap | `apps/api/test/publishing.e2e-spec.ts`, `.github/workflows/ci.yml` | **PR OPEN** (PR #13, `4b119c7`) | Low / Pipeline Test Breadth | Dedicated CI Job Added; Awaiting Review & Merge |
 
 ---
 
@@ -824,6 +824,9 @@ The final architecture employs a two-tier fencing model:
    - *Next Step*: Re-evaluate variant statuses inside `$transaction` or apply conditional update guards before mutating post contents.
    - *Status*: OPEN (Low / Theoretical Concurrency Race).
 2. **Run Jest E2E tests in GitHub Actions CI**:
-   - *Context*: `.github/workflows/ci.yml` currently runs Vitest unit tests via `pnpm turbo run test`. Real PostgreSQL Jest E2E tests (`apps/api/test/publishing.e2e-spec.ts`) passed locally (33/33 tests passing, proving rollback and retry atomicity), but are not executed in GitHub Actions CI because CI runners do not spin up a live PostgreSQL container for that job.
-   - *Next Step*: Add a dedicated PostgreSQL service job in `.github/workflows/ci.yml` to execute `pnpm --filter @agency-os/api test:e2e` in CI.
-   - *Status*: OPEN (Low / Pipeline Test Coverage).
+   - *Context*: Dedicated GitHub Actions CI job `e2e` (`Publishing E2E Tests`) added to `.github/workflows/ci.yml` on branch `ci/publishing-e2e-tests` (PR #13, commit [`4b119c7`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/4b119c7f88ee7f73885ed98694e4fa2ce0b7cef8)).
+   - *Architecture*: Runs `pnpm --filter @agency-os/api test:e2e test/publishing.e2e-spec.ts` against isolated `postgres:15-alpine` (`agency_os_test`) and `redis:7-alpine` service containers with health checks, explicit test credentials, Prisma client generation, and schema migration deployment (`prisma migrate deploy`).
+   - *Verification*:
+     - Local PostgreSQL Jest E2E execution: 33/33 passed across 1 suite (7.397 s).
+     - GitHub Actions CI execution: Job `Publishing E2E Tests` succeeded in 54s ([run 39629862242, job 119324880432](https://github.com/AbhishekGadmale/Social-Media-Handler/actions/runs/39629862242/job/119324880432)).
+   - *Status*: **PR OPEN** (PR #13; pending review & merge into `main`).
