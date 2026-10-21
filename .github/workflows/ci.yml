@@ -113,6 +113,73 @@ jobs:
           TURBO_ENV_MODE: loose
         run: pnpm turbo run test --env-mode=loose
 
+  e2e:
+    name: Publishing E2E Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: password
+          POSTGRES_DB: agency_os_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: ${{ env.PNPM_VERSION }}
+          
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'pnpm'
+          
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+        
+      - name: Prisma generate
+        run: pnpm --filter @agency-os/database exec prisma generate
+        
+      - name: Apply Migrations
+        env:
+          DATABASE_URL: postgresql://postgres:password@localhost:5432/agency_os_test?schema=public
+        run: pnpm --filter @agency-os/database exec prisma migrate deploy
+        
+      - name: Run Publishing E2E Tests
+        env:
+          NODE_ENV: test
+          DATABASE_URL: postgresql://postgres:password@localhost:5432/agency_os_test?schema=public
+          TEST_DATABASE_URL: postgresql://postgres:password@localhost:5432/agency_os_test?schema=public
+          TOKEN_ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+          REDIS_URL: redis://localhost:6379
+          JWT_SECRET: super-secret-test-jwt-key
+          COOKIE_SECRET: super-secret-test-cookie-key
+          YOUTUBE_CLIENT_ID: dummy-client-id
+          YOUTUBE_CLIENT_SECRET: dummy-client-secret
+        run: pnpm --filter @agency-os/api test:e2e test/publishing.e2e-spec.ts
+
   build:
     name: Application Builds
     runs-on: ubuntu-latest
