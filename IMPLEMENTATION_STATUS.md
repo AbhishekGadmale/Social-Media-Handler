@@ -506,13 +506,17 @@ Following the project's 7-tier prioritization hierarchy:
 | **Tier 3: Publishing / Data Loss** | **Ambiguous Publication Reconciliation Transactionality, Metadata Synchronization, and Attributed RBAC** | [`apps/api/src/modules/publishing/services/publishing-application.service.ts`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/publishing/services/publishing-application.service.ts#L496-L623), [`apps/api/src/modules/publishing/controllers/publications.controller.ts`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/publishing/controllers/publications.controller.ts#L194-L207), [`docs/AMBIGUOUS_PUBLICATION_RECONCILIATION_ARCHITECTURE.md`](file:///C:/Users/bappa/agency-os/docs/AMBIGUOUS_PUBLICATION_RECONCILIATION_ARCHITECTURE.md) | **MERGED** (PR #7, `d7f2d71`) | High / Resolved & Hardened | Complete |
 | **Tier 4: Provider Token** | Centralized worker token refresh & lifecycle management | `packages/providers/`, `apps/worker/src/publishing/token.service.ts` | **MERGED** (PR #5, `0d862ca`) | High / Resolved | Complete |
 | **Tier 5: API / OAuth Contract** | Deterministic `API_PUBLIC_URL` for OAuth callbacks | `apps/api/src/config/public-url.ts`, `apps/api/src/modules/oauth/oauth.controller.ts` | **MERGED** (PR #4, `28b9a2c`) | Medium / Resolved | Complete |
-| **Tier 6: Deployment Hardening** | **Security Event Audit Logging Coverage & Explicit Persistence Semantics** | [`apps/api/src/modules/core/audit.service.ts`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/core/audit.service.ts), [`apps/api/src/modules/publishing/services/publishing-application.service.ts`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/publishing/services/publishing-application.service.ts), [`packages/database/src/repositories/AuditLogRepository.ts`](file:///C:/Users/bappa/agency-os/packages/database/src/repositories/AuditLogRepository.ts) | **PR OPEN** (Branch `fix/audit-logging-coverage`) | Medium / Resolved & Audited | Awaiting CI & Muse Review |
+| **Tier 6: Deployment Hardening** | **Security Event Audit Logging Coverage & Explicit Persistence Semantics** | [`apps/api/src/modules/core/audit.service.ts`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/core/audit.service.ts), [`apps/api/src/modules/publishing/services/publishing-application.service.ts`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/publishing/services/publishing-application.service.ts), [`packages/database/src/repositories/AuditLogRepository.ts`](file:///C:/Users/bappa/agency-os/packages/database/src/repositories/AuditLogRepository.ts) | **MERGED** (PR #11, `546316a`) | Medium / Resolved & Audited | Complete |
 | **Tier 6: Deployment Hardening** | Cross-Subdomain CSRF Deployment Architecture | `apps/api/src/modules/auth/auth.controller.ts`, `docs/phase-6-readiness.md` | **DOCUMENTED ARCHITECTURE CONSTRAINT** | Informational / Ingress Topology Requirement | Front web & API under unified reverse proxy or configure parent domain |
 | **Tier 6: Deployment Hardening** | Global Distributed Rate Limiting via Redis Throttler | `apps/api/src/app.module.ts`, `apps/api/src/modules/core/redis-throttler.storage.ts` | **VERIFIED COMPLETE** | Medium / Ingress Abuse Prevention | Complete (`APP_GUARD` + Redis store verified) |
 | **Tier 7: Concurrency & Data Integrity** | **Token Refresh `REAUTH_REQUIRED` CAS TOCTOU Fencing** | [`apps/worker/src/publishing/token.service.ts`](file:///C:/Users/bappa/agency-os/apps/worker/src/publishing/token.service.ts#L359-L540), [`apps/worker/src/publishing/token.service.spec.ts`](file:///C:/Users/bappa/agency-os/apps/worker/src/publishing/token.service.spec.ts#L688-L1075) | **MERGED** (PR #9, `4752a15`) | High / Resolved & Fenced | Complete |
+| **Tier 7: Concurrency & Data Integrity** | **Transactional Audit Writes for Draft Operations** | [`packages/database/src/repositories/AuditLogRepository.ts`](file:///C:/Users/bappa/agency-os/packages/database/src/repositories/AuditLogRepository.ts), [`apps/api/src/modules/core/audit.service.ts`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/core/audit.service.ts), [`apps/api/src/modules/publishing/services/publishing-application.service.ts`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/publishing/services/publishing-application.service.ts) | **PR OPEN** (Branch `fix/transactional-draft-audit`) | Medium / Resolved & Audited | Awaiting CI & Muse Review |
 | **Tier 7: Cleanup / Optimization** | Container Runtime Transpilation (`tsx` vs compiled `dist`) | `apps/api/Dockerfile`, `apps/worker/Dockerfile`, `docs/phase-6-readiness.md` | **OPEN** | Low / Performance & Startup Optimization | Add build output transpilation for monorepo internal packages |
 | **Tier 7: Non-Blocking Follow-Ups** | TokenService CAS Failure Recheck `DISCONNECTED` Guard | `apps/worker/src/publishing/token.service.ts` | **QUEUED (NON-BLOCKING)** | Low / Theoretical Edge Case | Check `recheckAccount.status !== DISCONNECTED` before returning recovered |
 | **Tier 7: Non-Blocking Follow-Ups** | TokenService Integration Test via `SocialAccountRepository.upsertWithConnection` | `apps/worker/src/publishing/token.service.spec.ts` | **QUEUED (NON-BLOCKING)** | Low / Test-Only Hardening | Exercise real repository upsert against stale failure handler |
+| **Tier 7: Non-Blocking Follow-Ups** | ESLint `no-floating-promises` Rule Escalation | `apps/api/package.json`, `.eslintrc.js` | **QUEUED (NON-BLOCKING)** | Low / Static Analysis Hardening | Evaluate escalating ESLint `no-floating-promises` from warning to error; check existing violations & migration scope |
+| **Tier 7: Non-Blocking Follow-Ups** | Failed Login Audit Accuracy Enrichment | `apps/api/src/modules/auth/auth.controller.ts` | **QUEUED (NON-BLOCKING)** | Low / Security Audit Detail | Record actual auth failure reason for `AUTH_LOGIN_FAILED` without logging credentials, tokens, or secrets |
+| **Tier 7: Non-Blocking Follow-Ups** | OAuth Callback Missing Parameter Failure Audit | `apps/api/src/modules/oauth/oauth.controller.ts` | **QUEUED (NON-BLOCKING)** | Low / Security Audit Detail | Add `FAILED` audit event when OAuth callbacks miss required `code` or `state`, using safe metadata only |
 | **Tier 7: Future Feature Dependency** | Worker `PublishingProcessor` Catch-Path Disconnect Fencing | `apps/worker/src/publishing/publishing.processor.ts` | **FUTURE DEPENDENCY** | Low / Dependent on Future Disconnect API | Guard processor catch paths against resurrecting `DISCONNECTED` accounts |
 | **Tier 7: CI / Test Optimization** | CI PostgreSQL Service E2E Test Execution Gap | `apps/api/test/publishing.e2e-spec.ts`, `.github/workflows/ci.yml` | **OPEN** | Low / Pipeline Test Breadth | Add Jest E2E execution step against CI Postgres container |
 
@@ -686,9 +690,11 @@ The final architecture employs a two-tier fencing model:
 ## Security Event Audit Logging Coverage & Explicit Persistence Semantics (Branch `fix/audit-logging-coverage`)
 
 ### 1. Verification & Hardening Summary
-- **Status**: **PR OPEN** (Branch `fix/audit-logging-coverage`)
-- **Reviewer**: Muse (Pending Review)
-- **CI Status**: All required checks running/verified.
+- **Status**: **MERGED** (PR #11, merge commit [`546316a4221744eab619dd51d593bbec406f39ad`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/546316a4221744eab619dd51d593bbec406f39ad) / `546316a`, merged 2026-10-20)
+- **Pull Request**: [#11](https://github.com/AbhishekGadmale/Social-Media-Handler/pull/11)
+- **Approved Head SHA**: [`0da02424703aa2a6260dea9a6800d6e18c846e1a`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/0da02424703aa2a6260dea9a6800d6e18c846e1a) (`0da0242`)
+- **Reviewer**: Muse (APPROVED)
+- **CI Status**: All 5/5 GitHub Actions check-runs completed GREEN (`GitGuardian`, `Code Quality`, `Tests`, `Docker Build & Smoke Test`, `Application Builds`).
 - **Scope**: Post and publication lifecycle audit logging coverage, AuditAction enum type safety, explicit reliable vs. best-effort AuditService API, call site intentionality review, and regression test suites.
 - **Architectural Tenets**:
   - Exactly **13 production mutations** previously unaudited/untyped now fully covered (12 previously commented-out calls in `PublishingApplicationService` + 1 previously untyped `as any` in `requestRemoteDelete`).
@@ -756,3 +762,54 @@ The final architecture employs a two-tier fencing model:
   - Monorepo Lint (`pnpm turbo run lint`): **PASS** (5/5 tasks successful, 0 errors).
   - Production Builds (`pnpm turbo run build`): **PASS** (3/3 builds successful across API, Web, and Worker).
 
+### 4. Non-Blocking Follow-Ups
+1. **Transactional Audit Writes**: Implemented & verified on branch `fix/transactional-draft-audit` (PR open).
+2. **ESLint `no-floating-promises` Rule Escalation**: Evaluate escalating ESLint `no-floating-promises` from warning to error; first inspect existing violations and determine migration scope across all workspace packages.
+3. **Failed Login Audit Accuracy**: Record the actual authentication failure reason for `AUTH_LOGIN_FAILED`, without logging credentials, tokens, or other secrets.
+4. **OAuth Callback Failures**: Add a `FAILED` audit event when OAuth callbacks arrive missing required query parameters (`code` or `state`), using safe metadata only.
+
+---
+
+## Transactional Audit Writes for Draft Operations (Branch `fix/transactional-draft-audit`)
+
+### 1. Implementation & Verification Summary
+- **Status**: **PR OPEN** (Branch `fix/transactional-draft-audit`)
+- **Reviewer**: Muse (Pending Review)
+- **CI Status**: All required checks passing locally; pending GitHub Actions CI.
+- **Scope**: Atomic draft mutations (`createDraft` and `updateDraft`) and their audit records, eliminating partial-success HTTP 500 failure modes where domain mutations commit while audit logging fails.
+
+### 2. Architectural Design & Implementation
+- **Transaction-Aware Persistence Layer**:
+  - [`packages/database/src/repositories/AuditLogRepository.ts`](file:///C:/Users/bappa/agency-os/packages/database/src/repositories/AuditLogRepository.ts): Added optional `tx?: Prisma.TransactionClient` parameter to `create(data, tx?)`. Selects `const client = tx ?? this.prisma` to route writes through transaction connections when provided, avoiding connection deadlocks and preserving backward compatibility for callers omitting `tx`.
+  - [`apps/api/src/modules/core/audit.service.ts`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/core/audit.service.ts): Added optional `tx?: Prisma.TransactionClient` parameter to `logAction(data, tx?)`. Awaits and forwards `tx` to repository. Leaves `logActionBestEffort` non-blocking and safe.
+- **`createDraft` Transactional Atomicity**:
+  - [`apps/api/src/modules/publishing/services/publishing-application.service.ts`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/publishing/services/publishing-application.service.ts#L40-L81): Workspace-scoped media validation (`mediaAsset.findMany`) remains outside `$transaction` to keep transaction hold times <5ms. Inside `this.prisma.$transaction(async (tx) => { ... })`, `tx.post.create` (including `PostMedia` relations) and `this.audit.logAction(..., tx)` execute atomically. If audit persistence throws, the entire transaction rolls back, leaving no orphaned Post or PostMedia records.
+- **`updateDraft` Transactional Atomicity**:
+  - [`apps/api/src/modules/publishing/services/publishing-application.service.ts`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/publishing/services/publishing-application.service.ts#L107-L192): Pre-checks (post existence, locked variant check, workspace media validation) remain outside `$transaction`. Inside `this.prisma.$transaction(async (tx) => { ... })`, media relation recreation, `tx.post.update`, and `this.audit.logAction(..., tx)` execute atomically. If audit logging fails, all changes roll back and original post content and media are preserved.
+
+### 3. Concurrency Analysis & Remaining Limitations
+- **Unresolved Concurrency in `updateDraft`**:
+  - In `updateDraft`, the locked variant check (`post.variants.find(...)`) executes *prior* to `this.prisma.$transaction`.
+  - If a variant concurrently transitions to `QUEUED`, `PUBLISHING`, or `PUBLISHED` (via `requestPublish` or a background worker) between the pre-check and `tx.post.update`, the post content update could theoretically apply to a locked post.
+  - Per project guidelines, publishing state machine redesign was kept out of scope for this task and is documented here as an explicit edge-case follow-up.
+- **Caller Boundary Intentionality**:
+  - Best-effort audit logging for authentication, OAuth, account sync, and media upload remains intentionally non-blocking (`logActionBestEffort`).
+  - Ambiguous publication reconciliation remains transactionally coupled to its audit write via its own dedicated transaction.
+
+### 4. Test Coverage & Verification
+- **Unit Tests**:
+  - `packages/database/src/repositories/AuditLogRepository.spec.ts`: Verified `create` with and without `tx`, pagination, and workspace filtering (4 tests).
+  - `apps/api/src/modules/core/audit.service.spec.ts`: Verified `logAction` forwards `tx` when provided, plus rejection propagation and best-effort error logging (5 tests).
+  - `apps/api/src/modules/publishing/services/publishing-application.service.spec.ts`: Verified `createDraft` and `updateDraft` execute inside `$transaction`, pass `txMock` to `audit.logAction`, and reject on audit failure (47 tests).
+- **Real PostgreSQL Integration Tests (`apps/api/test/publishing.e2e-spec.ts`)**:
+  - Verified `createDraft` database rollback when `tx.auditLog.create` throws; asserted 0 post and 0 media rows remain, and successful retry creates exactly 1 post and 1 audit record.
+  - Verified `updateDraft` database rollback when `tx.auditLog.create` throws; asserted post retains initial content and initial media relations, and successful retry applies update with exactly 1 audit record.
+  - Verified cross-workspace media asset IDs are rejected with 404 in both `createDraft` and `updateDraft` before transactions initiate.
+  - All 33 tests in `publishing.e2e-spec.ts` passed against real local PostgreSQL.
+- **CI Test Execution Gap**:
+  - GitHub Actions CI workflow currently runs Vitest unit tests (`pnpm turbo run test`). Real PostgreSQL Jest E2E tests (`test/publishing.e2e-spec.ts`) require a live PostgreSQL container and are run locally or via dedicated E2E pipeline stages.
+- **Monorepo Verification**:
+  - Vitest Unit Tests (`pnpm turbo run test`): **PASS** (5/5 tasks successful).
+  - Monorepo Typecheck (`pnpm turbo run typecheck`): **PASS** (5/5 tasks successful, 0 errors).
+  - Monorepo Lint (`pnpm turbo run lint`): **PASS** (5/5 tasks successful, 0 errors).
+  - Production Builds (`pnpm turbo run build`): **PASS** (3/3 builds successful across API, Web, and Worker).

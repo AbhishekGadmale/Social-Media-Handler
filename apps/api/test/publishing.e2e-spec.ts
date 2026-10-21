@@ -8,6 +8,7 @@ import * as argon2 from '@node-rs/argon2';
 import * as _cookieParser from 'cookie-parser';
 const cookieParser = _cookieParser.default || _cookieParser;
 import { AppModule } from '../src/app.module';
+import { randomUUID } from 'crypto';
 import { PrismaClient, generateId } from '@agency-os/database';
 import { loginAndGetSession } from './helpers';
 
@@ -173,6 +174,8 @@ describe('Publishing API (e2e)', () => {
     await prisma.postPlatformVariant.deleteMany({});
     await prisma.postMedia.deleteMany({});
     await prisma.post.deleteMany({});
+    await prisma.mediaAsset.deleteMany({});
+    await prisma.auditLog.deleteMany({});
     await prisma.socialAccount.deleteMany({});
     await prisma.workspaceMember.deleteMany({
       where: { userId: { in: [testUser?.id, testUser2?.id, testUser3?.id].filter(Boolean) } },
@@ -236,6 +239,301 @@ describe('Publishing API (e2e)', () => {
 
       expect(updateRes.status).toBe(200);
       expect(updateRes.body.content).toBe('Updated valid text content');
+    });
+  });
+
+  describe('Transactional Draft Audit Rollback & Atomicity', () => {
+    let media1Id: string;
+    let media2Id: string;
+    let crossWsMediaId: string;
+
+    beforeAll(async () => {
+      media1Id = randomUUID();
+      await prisma.mediaAsset.create({
+        data: {
+          id: media1Id,
+          workspaceId: ws1,
+          filename: 'image1.png',
+          mimeType: 'image/png',
+          byteSize: 1024,
+          storageKey: `workspaces/${ws1}/image1.png`,
+          status: 'READY',
+        },
+      });
+
+      media2Id = randomUUID();
+      await prisma.mediaAsset.create({
+        data: {
+          id: media2Id,
+          workspaceId: ws1,
+          filename: 'image2.png',
+          mimeType: 'image/png',
+          byteSize: 2048,
+          storageKey: `workspaces/${ws1}/image2.png`,
+          status: 'READY',
+        },
+      });
+
+      crossWsMediaId = randomUUID();
+      await prisma.mediaAsset.create({
+        data: {
+          id: crossWsMediaId,
+          workspaceId: ws2,
+          filename: 'image-ws2.png',
+          mimeType: 'image/png',
+          byteSize: 1024,
+          storageKey: `workspaces/${ws2}/image-ws2.png`,
+          status: 'READY',
+        },
+      });
+    });
+
+    it('proves database rollback during createDraft when transaction audit write fails, and succeeds on retry', async () => {
+      const originalTx = prisma.$transaction.bind(prisma);
+      let injectAuditFailure = true;
+
+      const spy = jest
+        .spyOn(prisma, '$transaction')
+        .mockImplementation(async (arg: any) => {
+          if (typeof arg === 'function') {
+            return originalTx(async (tx: any) => {
+              const originalCreate = tx.auditLog.create.bind(tx);
+              tx.auditLog.create = async (createArgs: any) => {
+                if (
+                  injectAuditFailure &&
+                  createArgs.data?.action === 'POST_CREATED'
+                ) {
+                  throw new Error(
+                    'Simulated transactional AuditLog failure during POST_CREATED',
+                  );
+                }
+                return originalCreate(createArgs);
+              };
+              return arg(tx);
+            });
+          }
+          return originalTx(arg);
+        });
+
+      const uniqueContent = `Draft rollback test ${generateId()}`;
+
+      // 1. Attempt to create draft while audit write fails
+      const failRes = await request(app.getHttpServer())
+        .post(`/api/v1/workspaces/${ws1}/posts`)
+        .set('Cookie', session1.combinedCookie)
+        .set('x-csrf-token', session1.csrfToken)
+        .send({
+          content: uniqueContent,
+          mediaIds: [media1Id],
+        });
+
+      expect(failRes.status).toBe(500);
+
+      // Verify REAL PostgreSQL rollback: NO Post or PostMedia rows exist with this content
+      const foundPosts = await prisma.post.findMany({
+        where: { workspaceId: ws1, content: uniqueContent },
+        include: { media: true },
+      });
+      expect(foundPosts.length).toBe(0);
+
+      const foundMediaRelations = await prisma.postMedia.findMany({
+        where: { mediaId: media1Id },
+      });
+      expect(foundMediaRelations.length).toBe(0);
+
+      // 2. Remove failure and retry
+      injectAuditFailure = false;
+
+      const retryRes = await request(app.getHttpServer())
+        .post(`/api/v1/workspaces/${ws1}/posts`)
+        .set('Cookie', session1.combinedCookie)
+        .set('x-csrf-token', session1.csrfToken)
+        .send({
+          content: uniqueContent,
+          mediaIds: [media1Id],
+        });
+
+      expect(retryRes.status).toBe(201);
+      const createdPostId = retryRes.body.id;
+
+      // Verify exactly ONE post, ONE postMedia relation, and ONE audit log exist
+      const persistedPost = await prisma.post.findUnique({
+        where: { id: createdPostId },
+        include: { media: true },
+      });
+      expect(persistedPost).not.toBeNull();
+      expect(persistedPost!.content).toBe(uniqueContent);
+      expect(persistedPost!.media.length).toBe(1);
+      expect(persistedPost!.media[0].mediaId).toBe(media1Id);
+
+      const postAudits = await prisma.auditLog.findMany({
+        where: {
+          workspaceId: ws1,
+          targetId: createdPostId,
+          action: 'POST_CREATED',
+        },
+      });
+      expect(postAudits.length).toBe(1);
+      expect(postAudits[0].actorId).toBe(testUser.id);
+
+      spy.mockRestore();
+    });
+
+    it('proves database rollback during updateDraft when transaction audit write fails, keeping original content and media', async () => {
+      // First create a baseline post with media1
+      const initialContent = `Initial content ${generateId()}`;
+      const createRes = await request(app.getHttpServer())
+        .post(`/api/v1/workspaces/${ws1}/posts`)
+        .set('Cookie', session1.combinedCookie)
+        .set('x-csrf-token', session1.csrfToken)
+        .send({
+          content: initialContent,
+          mediaIds: [media1Id],
+        });
+
+      expect(createRes.status).toBe(201);
+      const targetPostId = createRes.body.id;
+
+      // Spy to inject failure into tx.auditLog.create when action === POST_UPDATED
+      const originalTx = prisma.$transaction.bind(prisma);
+      let injectAuditFailure = true;
+
+      const spy = jest
+        .spyOn(prisma, '$transaction')
+        .mockImplementation(async (arg: any) => {
+          if (typeof arg === 'function') {
+            return originalTx(async (tx: any) => {
+              const originalCreate = tx.auditLog.create.bind(tx);
+              tx.auditLog.create = async (createArgs: any) => {
+                if (
+                  injectAuditFailure &&
+                  createArgs.data?.action === 'POST_UPDATED'
+                ) {
+                  throw new Error(
+                    'Simulated transactional AuditLog failure during POST_UPDATED',
+                  );
+                }
+                return originalCreate(createArgs);
+              };
+              return arg(tx);
+            });
+          }
+          return originalTx(arg);
+        });
+
+      const updatedContent = `Updated content attempt ${generateId()}`;
+
+      // Attempt to update post (switch to media2) while audit write fails
+      const failUpdateRes = await request(app.getHttpServer())
+        .patch(`/api/v1/workspaces/${ws1}/posts/${targetPostId}`)
+        .set('Cookie', session1.combinedCookie)
+        .set('x-csrf-token', session1.csrfToken)
+        .send({
+          content: updatedContent,
+          mediaIds: [media2Id],
+        });
+
+      expect(failUpdateRes.status).toBe(500);
+
+      // Verify REAL PostgreSQL rollback: Post MUST retain initialContent, NOT updatedContent!
+      const postAfterFailedUpdate = await prisma.post.findUnique({
+        where: { id: targetPostId },
+        include: { media: true },
+      });
+      expect(postAfterFailedUpdate!.content).toBe(initialContent);
+      expect(postAfterFailedUpdate!.media.length).toBe(1);
+      expect(postAfterFailedUpdate!.media[0].mediaId).toBe(media1Id); // media1 NOT deleted!
+
+      // Verify NO POST_UPDATED audit log exists
+      const updateAudits = await prisma.auditLog.findMany({
+        where: { targetId: targetPostId, action: 'POST_UPDATED' },
+      });
+      expect(updateAudits.length).toBe(0);
+
+      // Remove failure and retry update
+      injectAuditFailure = false;
+
+      const retryUpdateRes = await request(app.getHttpServer())
+        .patch(`/api/v1/workspaces/${ws1}/posts/${targetPostId}`)
+        .set('Cookie', session1.combinedCookie)
+        .set('x-csrf-token', session1.csrfToken)
+        .send({
+          content: updatedContent,
+          mediaIds: [media2Id],
+        });
+
+      expect(retryUpdateRes.status).toBe(200);
+
+      const postAfterSuccessfulRetry = await prisma.post.findUnique({
+        where: { id: targetPostId },
+        include: { media: true },
+      });
+      expect(postAfterSuccessfulRetry!.content).toBe(updatedContent);
+      expect(postAfterSuccessfulRetry!.media.length).toBe(1);
+      expect(postAfterSuccessfulRetry!.media[0].mediaId).toBe(media2Id);
+
+      const successfulAudits = await prisma.auditLog.findMany({
+        where: { targetId: targetPostId, action: 'POST_UPDATED' },
+      });
+      expect(successfulAudits.length).toBe(1);
+      expect(successfulAudits[0].actorId).toBe(testUser.id);
+
+      spy.mockRestore();
+    });
+
+    it('rejects cross-workspace media IDs and creates no post, media relations, or audit logs', async () => {
+      const crossWsContent = `Cross-ws attempt ${generateId()}`;
+
+      // 1. In createDraft
+      const createRes = await request(app.getHttpServer())
+        .post(`/api/v1/workspaces/${ws1}/posts`)
+        .set('Cookie', session1.combinedCookie)
+        .set('x-csrf-token', session1.csrfToken)
+        .send({
+          content: crossWsContent,
+          mediaIds: [crossWsMediaId], // belongs to ws2!
+        });
+
+      expect(createRes.status).toBe(404);
+      expect(createRes.body.error.message).toContain(
+        'One or more media assets not found in workspace',
+      );
+
+      const foundPosts = await prisma.post.findMany({
+        where: { content: crossWsContent },
+      });
+      expect(foundPosts.length).toBe(0);
+
+      // 2. In updateDraft
+      const validDraft = await prisma.post.create({
+        data: {
+          id: generateId(),
+          workspaceId: ws1,
+          authorId: testUser.id,
+          content: 'Pre-existing draft',
+          status: PostStatus.DRAFT,
+        },
+      });
+
+      const updateRes = await request(app.getHttpServer())
+        .patch(`/api/v1/workspaces/${ws1}/posts/${validDraft.id}`)
+        .set('Cookie', session1.combinedCookie)
+        .set('x-csrf-token', session1.csrfToken)
+        .send({
+          mediaIds: [crossWsMediaId],
+        });
+
+      expect(updateRes.status).toBe(404);
+      expect(updateRes.body.error.message).toContain(
+        'One or more media assets not found in workspace',
+      );
+
+      const unmodifiedDraft = await prisma.post.findUnique({
+        where: { id: validDraft.id },
+        include: { media: true },
+      });
+      expect(unmodifiedDraft!.content).toBe('Pre-existing draft');
+      expect(unmodifiedDraft!.media.length).toBe(0);
     });
   });
 

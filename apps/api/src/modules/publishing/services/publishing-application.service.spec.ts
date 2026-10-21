@@ -615,6 +615,15 @@ describe('PublishingApplicationService - Audit Logging Coverage', () => {
         deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
       },
       post: {
+        create: vi.fn().mockResolvedValue({
+          id: postId,
+          workspaceId,
+          authorId,
+          content: 'Draft content',
+          status: PostStatus.DRAFT,
+          media: [],
+          variants: [],
+        }),
         update: vi.fn().mockResolvedValue({
           id: postId,
           workspaceId,
@@ -703,33 +712,43 @@ describe('PublishingApplicationService - Audit Logging Coverage', () => {
   });
 
   // 1. POST_CREATED
-  it('emits POST_CREATED with correct attribution on createDraft', async () => {
+  it('emits POST_CREATED with correct attribution on createDraft inside transaction', async () => {
     await service.createDraft(workspaceId, authorId, { content: 'New post' });
 
-    expect(auditMock.logAction).toHaveBeenCalledWith({
-      workspaceId,
-      actorId: authorId,
-      action: AuditAction.POST_CREATED,
-      targetType: 'POST',
-      targetId: postId,
-      metadata: { postId },
-    });
+    expect(prismaMock.$transaction).toHaveBeenCalledTimes(1);
+    expect(txMock.post.create).toHaveBeenCalledTimes(1);
+    expect(auditMock.logAction).toHaveBeenCalledWith(
+      {
+        workspaceId,
+        actorId: authorId,
+        action: AuditAction.POST_CREATED,
+        targetType: 'POST',
+        targetId: postId,
+        metadata: { postId },
+      },
+      txMock,
+    );
   });
 
   // 2. POST_UPDATED
-  it('emits POST_UPDATED with correct attribution on updateDraft', async () => {
+  it('emits POST_UPDATED with correct attribution on updateDraft inside transaction', async () => {
     await service.updateDraft(workspaceId, authorId, postId, {
       content: 'Updated',
     });
 
-    expect(auditMock.logAction).toHaveBeenCalledWith({
-      workspaceId,
-      actorId: authorId,
-      action: AuditAction.POST_UPDATED,
-      targetType: 'POST',
-      targetId: postId,
-      metadata: { postId },
-    });
+    expect(prismaMock.$transaction).toHaveBeenCalledTimes(1);
+    expect(txMock.post.update).toHaveBeenCalledTimes(1);
+    expect(auditMock.logAction).toHaveBeenCalledWith(
+      {
+        workspaceId,
+        actorId: authorId,
+        action: AuditAction.POST_UPDATED,
+        targetType: 'POST',
+        targetId: postId,
+        metadata: { postId },
+      },
+      txMock,
+    );
   });
 
   // 3. POST_DELETED
@@ -934,5 +953,17 @@ describe('PublishingApplicationService - Audit Logging Coverage', () => {
     await expect(
       service.createDraft(workspaceId, authorId, { content: 'Failing audit' }),
     ).rejects.toThrow('Audit DB write failed');
+  });
+
+  it('propagates rejection when audit.logAction fails during updateDraft', async () => {
+    auditMock.logAction.mockRejectedValueOnce(
+      new Error('Audit DB write failed during update'),
+    );
+
+    await expect(
+      service.updateDraft(workspaceId, authorId, postId, {
+        content: 'Failing update audit',
+      }),
+    ).rejects.toThrow('Audit DB write failed during update');
   });
 });

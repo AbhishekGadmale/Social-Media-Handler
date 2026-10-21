@@ -60,6 +60,19 @@ describe('AuditService', () => {
     });
   });
 
+  it('awaited logAction: forwards tx parameter to repository when provided', async () => {
+    const txMock = { auditLog: {} } as any;
+    const dto = {
+      action: AuditAction.POST_CREATED,
+      targetType: 'POST',
+      targetId: 'post-1',
+    };
+
+    await service.logAction(dto, txMock);
+
+    expect(mockAuditRepo.create).toHaveBeenCalledWith(dto, txMock);
+  });
+
   it('best-effort logActionBestEffort: calls repository and does not throw if insert rejects, logging error', async () => {
     mockAuditRepo.create.mockRejectedValueOnce(
       new Error('Transient DB timeout'),

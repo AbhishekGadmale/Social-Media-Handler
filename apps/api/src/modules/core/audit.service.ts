@@ -1,5 +1,9 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { AuditLogRepository, CreateAuditLogDto } from '@agency-os/database';
+import {
+  AuditLogRepository,
+  CreateAuditLogDto,
+  Prisma,
+} from '@agency-os/database';
 
 @Injectable()
 export class AuditService {
@@ -11,8 +15,15 @@ export class AuditService {
    * Reliable, awaitable audit logging for business mutations.
    * Awaits repository persistence and propagates rejections to the caller.
    */
-  async logAction(data: CreateAuditLogDto): Promise<void> {
-    await this.auditRepo.create(data);
+  async logAction(
+    data: CreateAuditLogDto,
+    tx?: Prisma.TransactionClient,
+  ): Promise<void> {
+    if (tx) {
+      await this.auditRepo.create(data, tx);
+    } else {
+      await this.auditRepo.create(data);
+    }
   }
 
   /**
