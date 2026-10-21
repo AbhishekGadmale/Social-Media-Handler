@@ -49,34 +49,40 @@ export class PublishingApplicationService {
       }
     }
 
-    const post = await this.prisma.post.create({
-      data: {
-        id: generateId(),
-        workspaceId,
-        authorId,
-        content: dto.content || '',
-        status: PostStatus.DRAFT,
-        media: {
-          create:
-            dto.mediaIds?.map((mediaId, index) => ({
-              id: generateId(),
-              mediaId,
-              sortOrder: index,
-            })) || [],
+    return this.prisma.$transaction(async (tx) => {
+      const post = await tx.post.create({
+        data: {
+          id: generateId(),
+          workspaceId,
+          authorId,
+          content: dto.content || '',
+          status: PostStatus.DRAFT,
+          media: {
+            create:
+              dto.mediaIds?.map((mediaId, index) => ({
+                id: generateId(),
+                mediaId,
+                sortOrder: index,
+              })) || [],
+          },
         },
-      },
-      include: { media: true, variants: true },
-    });
+        include: { media: true, variants: true },
+      });
 
-    await this.audit.logAction({
-      workspaceId,
-      actorId: authorId,
-      action: AuditAction.POST_CREATED,
-      targetType: 'POST',
-      targetId: post.id,
-      metadata: { postId: post.id },
+      await this.audit.logAction(
+        {
+          workspaceId,
+          actorId: authorId,
+          action: AuditAction.POST_CREATED,
+          targetType: 'POST',
+          targetId: post.id,
+          metadata: { postId: post.id },
+        },
+        tx,
+      );
+
+      return post;
     });
-    return post;
   }
 
   async getPosts(workspaceId: string, take = 50, skip = 0) {
@@ -164,7 +170,7 @@ export class PublishingApplicationService {
         };
       }
 
-      return tx.post.update({
+      const res = await tx.post.update({
         where: { id: postId, workspaceId },
         data,
         include: {
@@ -172,16 +178,22 @@ export class PublishingApplicationService {
           variants: { include: { socialAccount: true } },
         },
       });
+
+      await this.audit.logAction(
+        {
+          workspaceId,
+          actorId: authorId,
+          action: AuditAction.POST_UPDATED,
+          targetType: 'POST',
+          targetId: postId,
+          metadata: { postId },
+        },
+        tx,
+      );
+
+      return res;
     });
 
-    await this.audit.logAction({
-      workspaceId,
-      actorId: authorId,
-      action: AuditAction.POST_UPDATED,
-      targetType: 'POST',
-      targetId: postId,
-      metadata: { postId },
-    });
     return updated;
   }
 

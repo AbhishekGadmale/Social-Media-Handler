@@ -1,4 +1,4 @@
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, Prisma } from '@prisma/client';
 import { generateId } from '../id';
 
 export enum AuditAction {
@@ -48,10 +48,11 @@ export interface CreateAuditLogDto {
 export class AuditLogRepository {
   constructor(private readonly prisma: PrismaClient) {}
 
-  async create(data: CreateAuditLogDto) {
+  async create(data: CreateAuditLogDto, tx?: Prisma.TransactionClient) {
     // Fire and forget or await depending on the service logic.
     // The repository just provides the DB operation.
-    return this.prisma.auditLog.create({
+    const client = tx ?? this.prisma;
+    return client.auditLog.create({
       data: {
         id: generateId(),
         workspaceId: data.workspaceId,
