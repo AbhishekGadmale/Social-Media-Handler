@@ -511,7 +511,8 @@ Following the project's 7-tier prioritization hierarchy:
 | **Tier 6: Deployment Hardening** | Global Distributed Rate Limiting via Redis Throttler | `apps/api/src/app.module.ts`, `apps/api/src/modules/core/redis-throttler.storage.ts` | **VERIFIED COMPLETE** | Medium / Ingress Abuse Prevention | Complete (`APP_GUARD` + Redis store verified) |
 | **Tier 7: Concurrency & Data Integrity** | **Token Refresh `REAUTH_REQUIRED` CAS TOCTOU Fencing** | [`apps/worker/src/publishing/token.service.ts`](file:///C:/Users/bappa/agency-os/apps/worker/src/publishing/token.service.ts#L359-L540), [`apps/worker/src/publishing/token.service.spec.ts`](file:///C:/Users/bappa/agency-os/apps/worker/src/publishing/token.service.spec.ts#L688-L1075) | **MERGED** (PR #9, `4752a15`) | High / Resolved & Fenced | Complete |
 | **Tier 7: Concurrency & Data Integrity** | **Transactional Audit Writes for Draft Operations** | [`packages/database/src/repositories/AuditLogRepository.ts`](file:///C:/Users/bappa/agency-os/packages/database/src/repositories/AuditLogRepository.ts), [`apps/api/src/modules/core/audit.service.ts`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/core/audit.service.ts), [`apps/api/src/modules/publishing/services/publishing-application.service.ts`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/publishing/services/publishing-application.service.ts) | **MERGED** (PR #12, `8e94c62`) | Medium / Resolved & Audited | Complete |
-| **Tier 7: Concurrency & Data Integrity** | **`updateDraft` In-Transaction Locked-Variant Concurrency Serialization** | [`packages/database/src/repositories/PublishingRepository.ts`](file:///C:/Users/bappa/agency-os/packages/database/src/repositories/PublishingRepository.ts), [`apps/api/src/modules/publishing/services/publishing-application.service.ts`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/publishing/services/publishing-application.service.ts), [`apps/api/test/publishing.e2e-spec.ts`](file:///C:/Users/bappa/agency-os/apps/api/test/publishing.e2e-spec.ts) | **PR OPEN** (PR #14, `8fc235b`) | Low / Resolved & Fenced | In Review |
+| **Tier 7: Concurrency & Data Integrity** | **`updateDraft` In-Transaction Locked-Variant Concurrency Serialization** | [`packages/database/src/repositories/PublishingRepository.ts`](file:///C:/Users/bappa/agency-os/packages/database/src/repositories/PublishingRepository.ts), [`apps/api/src/modules/publishing/services/publishing-application.service.ts`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/publishing/services/publishing-application.service.ts), [`apps/api/test/publishing.e2e-spec.ts`](file:///C:/Users/bappa/agency-os/apps/api/test/publishing.e2e-spec.ts) | **MERGED** (PR #14, `279b4c5`) | Low / Resolved & Fenced | Complete |
+| **Tier 7: Concurrency & Data Integrity** | `deletePost` Locked-Variant Check TOCTOU Fencing | [`apps/api/src/modules/publishing/services/publishing-application.service.ts`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/publishing/services/publishing-application.service.ts) | **OPEN** | Low / Theoretical Race Condition | Move locked-variant check inside `$transaction` or apply row locks before deletion |
 | **Tier 7: Cleanup / Optimization** | Container Runtime Transpilation (`tsx` vs compiled `dist`) | `apps/api/Dockerfile`, `apps/worker/Dockerfile`, `docs/phase-6-readiness.md` | **OPEN** | Low / Performance & Startup Optimization | Add build output transpilation for monorepo internal packages |
 | **Tier 7: Non-Blocking Follow-Ups** | TokenService CAS Failure Recheck `DISCONNECTED` Guard | `apps/worker/src/publishing/token.service.ts` | **QUEUED (NON-BLOCKING)** | Low / Theoretical Edge Case | Check `recheckAccount.status !== DISCONNECTED` before returning recovered |
 | **Tier 7: Non-Blocking Follow-Ups** | TokenService Integration Test via `SocialAccountRepository.upsertWithConnection` | `apps/worker/src/publishing/token.service.spec.ts` | **QUEUED (NON-BLOCKING)** | Low / Test-Only Hardening | Exercise real repository upsert against stale failure handler |
@@ -823,7 +824,7 @@ The final architecture employs a two-tier fencing model:
    - *Context*: In `updateDraft`, the locked variant check (`post.variants.find(...)`) executed outside and prior to `this.prisma.$transaction`.
    - *Hazard*: A concurrent variant transition to `QUEUED`, `PUBLISHING`, or `PUBLISHED` (via `requestPublish` or background worker) could race between the initial read and `tx.post.update`.
    - *Resolution*: Implemented repository-level row locks (`lockPostForUpdate` and `lockVariantsForUpdate` with `ORDER BY id ASC` to eliminate deadlocks) executed inside `this.prisma.$transaction`. Re-evaluates variant statuses under exclusive row locks; rejects with HTTP 403 `ForbiddenException: Cannot edit post while a publication is in ${status} state` if any publication variant is in a locked state (`QUEUED`, `PUBLISHING`, `PUBLISHED`, `UNKNOWN`, `SCHEDULED`). Non-DB media validation remains outside transaction to keep lock hold duration minimal (<5ms). Verified with 8 deterministic Jest E2E tests (static rejection, transition-first serialization with 403 rejection, edit-first serialization with atomic audit attribution, and workspace/post tenant isolation).
-   - *Status*: **PR OPEN** (PR #14, head [`8fc235b`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/8fc235bb13c2aec532f27fb268efb3c557a41133)).
+   - *Status*: **MERGED / CLOSED** (PR #14, merge commit [`279b4c5b3f7656fcb149746cfb2efda95e73e4f8`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/279b4c5b3f7656fcb149746cfb2efda95e73e4f8) / `279b4c5`, merged 2026-10-23).
 2. **Run Jest E2E tests in GitHub Actions CI**:
    - *Context*: Dedicated GitHub Actions CI job `e2e` (`Publishing E2E Tests`) added to `.github/workflows/ci.yml` in PR #13 (reviewed HEAD [`e7b14da65e67c00ab9b18d0f272a967c211e2ced`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/e7b14da65e67c00ab9b18d0f272a967c211e2ced) / `e7b14da`, merge commit [`6bab30dc00a045b7238be8011e8e9ab63fef5540`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/6bab30dc00a045b7238be8011e8e9ab63fef5540) / `6bab30d`, merged 2026-10-21).
    - *Architecture*: Runs `pnpm --filter @agency-os/api test:e2e test/publishing.e2e-spec.ts` against isolated `postgres:15-alpine` (`agency_os_test`) and `redis:7-alpine` service containers with health checks, explicit test credentials, Prisma client generation, and schema migration deployment (`prisma migrate deploy`).
@@ -837,6 +838,12 @@ The final architecture employs a two-tier fencing model:
    - *Context*: Other E2E test suites in `apps/api/test/` (`accounts.e2e-spec.ts`, `analytics.e2e-spec.ts`, `auth.e2e-spec.ts`, and `media.storage.e2e-spec.ts`) require additional service dependencies (such as MinIO for S3 object storage in `media.storage.e2e-spec.ts`) and mock credentials.
    - *Next Step*: Define dedicated CI service jobs or extend CI service dependencies to safely execute remaining API E2E suites without flakiness or cross-suite pollution.
    - *Status*: OPEN (Low / Pipeline Test Coverage).
+
+4. **Revalidate locked-variant state inside the `deletePost` transaction (TOCTOU Fencing)**:
+   - *Context*: In `deletePost` ([`apps/api/src/modules/publishing/services/publishing-application.service.ts`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/publishing/services/publishing-application.service.ts)), unsafe variant status checks (`post.variants.find(...)`) currently execute outside a transaction and prior to `repo.posts.delete`.
+   - *Hazard*: A concurrent state transition could change a variant to `QUEUED`, `PUBLISHING`, or `PUBLISHED` (via `requestPublish` or background worker) after the initial check but before `repo.posts.delete` commits.
+   - *Next Step*: Move the locked-variant check inside a database transaction with explicit row locks (`SELECT ... FOR UPDATE`) before deleting the post.
+   - *Status*: OPEN (Low / Theoretical Concurrency Race).
 
 ---
 
@@ -867,8 +874,10 @@ The final architecture employs a two-tier fencing model:
 ## `updateDraft` Locked-Variant Concurrency Serialization (PR #14)
 
 ### 1. Implementation & Verification Summary
-- **Status**: **PR OPEN** (PR #14, head commit [`8fc235bb13c2aec532f27fb268efb3c557a41133`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/8fc235bb13c2aec532f27fb268efb3c557a41133) / `8fc235b`)
+- **Status**: **MERGED** (PR #14, merge commit [`279b4c5b3f7656fcb149746cfb2efda95e73e4f8`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/279b4c5b3f7656fcb149746cfb2efda95e73e4f8) / `279b4c5`, merged `2026-10-23T08:32:16Z`)
 - **Pull Request**: [#14](https://github.com/AbhishekGadmale/Social-Media-Handler/pull/14)
+- **Reviewed Head SHA**: [`4e7b3caf6c0b44c2e453f8be48a945354c913f9c`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/4e7b3caf6c0b44c2e453f8be48a945354c913f9c) (`4e7b3ca`)
+- **Reviewer**: Muse (APPROVED with separate `deletePost` follow-up noted)
 - **Branch**: `fix/update-draft-concurrency-race`
 - **Target**: `main` (`42f5a07`)
 - **CI Status**: All 6/6 GitHub Actions check-runs completed **GREEN** / **SUCCESS** (`GitGuardian Security Checks`, `Docker Build & Smoke Test`, `Code Quality (Lint & Typecheck)`, `Tests`, `Application Builds`, `Publishing E2E Tests`).
@@ -904,3 +913,6 @@ The final architecture employs a two-tier fencing model:
   - `Docker Build & Smoke Test`: **SUCCESS**.
   - `GitGuardian Security Checks`: **SUCCESS**.
 
+### 5. Remaining Open Follow-Ups
+- **`deletePost` Locked-Variant Check TOCTOU Fencing**: As noted during Muse review, `deletePost` in `PublishingApplicationService` checks variant status outside a transaction. A dedicated follow-up is tracked to bring in-transaction row-level locking to post deletions.
+- **Broader E2E CI Coverage**: Incrementally add dedicated jobs for `accounts.e2e-spec.ts`, `analytics.e2e-spec.ts`, `auth.e2e-spec.ts`, and `media.storage.e2e-spec.ts` as needed.
