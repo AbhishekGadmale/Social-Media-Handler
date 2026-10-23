@@ -116,34 +116,6 @@ export class PublishingApplicationService {
     postId: string,
     dto: UpdatePostDto,
   ) {
-    const repo = this.getRepo(workspaceId);
-    const post: any = (await repo.posts.findById(postId, {
-      include: { variants: true },
-    })) as any;
-
-    if (!post) throw new NotFoundException('Post not found');
-
-    const lockedVariant = post.variants.find((v: any) =>
-      [
-        PostStatus.QUEUED,
-        PostStatus.PUBLISHING,
-        PostStatus.PUBLISHED,
-        PostStatus.UNKNOWN,
-        PostStatus.SCHEDULED,
-      ].includes(v.status),
-    );
-    console.log(
-      'Post:',
-      post.id,
-      'Variants:',
-      post.variants.map((v: any) => v.status),
-    );
-    if (lockedVariant) {
-      throw new ForbiddenException(
-        `Cannot edit post while a publication is in ${lockedVariant.status} state`,
-      );
-    }
-
     if (dto.mediaIds) {
       const media = await this.prisma.mediaAsset.findMany({
         where: { id: { in: dto.mediaIds }, workspaceId },
@@ -155,7 +127,31 @@ export class PublishingApplicationService {
       }
     }
 
+    const repo = this.getRepo(workspaceId);
+
     const updated = await this.prisma.$transaction(async (tx) => {
+      const postRows = await repo.lockPostForUpdate(tx, postId);
+      if (!postRows || postRows.length === 0) {
+        throw new NotFoundException('Post not found');
+      }
+
+      const variantRows = await repo.lockVariantsForUpdate(tx, postId);
+      const lockedVariant = variantRows.find((v: any) =>
+        [
+          PostStatus.QUEUED,
+          PostStatus.PUBLISHING,
+          PostStatus.PUBLISHED,
+          PostStatus.UNKNOWN,
+          PostStatus.SCHEDULED,
+        ].includes(v.status),
+      );
+
+      if (lockedVariant) {
+        throw new ForbiddenException(
+          `Cannot edit post while a publication is in ${lockedVariant.status} state`,
+        );
+      }
+
       const data: any = {};
       if (dto.content !== undefined) data.content = dto.content;
 

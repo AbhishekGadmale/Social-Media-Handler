@@ -15,6 +15,24 @@ import { loginAndGetSession } from './helpers';
 import { PostStatus, SocialAccountStatus } from '@agency-os/database';
 import { providerRegistry } from '@agency-os/providers';
 
+
+async function waitForBlockedRowLock(
+  prismaClient: PrismaClient,
+  maxWaitMs = 3000,
+): Promise<boolean> {
+  const start = Date.now();
+  while (Date.now() - start < maxWaitMs) {
+    const ungranted = await prismaClient.$queryRaw<Array<{ count: number }>>`
+      SELECT count(*)::int as count FROM pg_locks WHERE granted = false
+    `;
+    if (ungranted[0]?.count > 0) {
+      return true;
+    }
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  return false;
+}
+
 describe('Publishing API (e2e)', () => {
   let app: INestApplication;
   let prisma: PrismaClient;
@@ -776,6 +794,356 @@ describe('Publishing API (e2e)', () => {
         where: { id: variant1Id },
         data: { status: 'DRAFT' },
       });
+    });
+  });
+
+  describe('Draft Update Concurrency & Variant Lock Policy', () => {
+    it.each([
+      PostStatus.QUEUED,
+      PostStatus.PUBLISHING,
+      PostStatus.PUBLISHED,
+      PostStatus.UNKNOWN,
+      PostStatus.SCHEDULED,
+    ])(
+      'rejects updateDraft with 403 when variant is in locked status %s',
+      async (status) => {
+        const testPostId = generateId();
+        const testVariantId = generateId();
+        const initialContent = `Static test content for ${status}`;
+
+        await prisma.post.create({
+          data: {
+            id: testPostId,
+            workspaceId: ws1,
+            authorId: testUser.id,
+            content: initialContent,
+            status: PostStatus.DRAFT,
+          },
+        });
+
+        await prisma.postPlatformVariant.create({
+          data: {
+            id: testVariantId,
+            postId: testPostId,
+            workspaceId: ws1,
+            socialAccountId: account1,
+            status,
+            content: initialContent,
+            ...(status === PostStatus.SCHEDULED
+              ? { scheduledAt: new Date(Date.now() + 86400000) }
+              : {}),
+          },
+        });
+
+        const res = await request(app.getHttpServer())
+          .patch(`/api/v1/workspaces/${ws1}/posts/${testPostId}`)
+          .set('Cookie', session1.combinedCookie)
+          .set('x-csrf-token', session1.csrfToken)
+          .send({ content: 'Attempted edit during locked status' });
+
+        expect(res.status).toBe(403);
+        expect(res.body.error.message).toBe(
+          `Cannot edit post while a publication is in ${status} state`,
+        );
+
+        // Verify post content remains unmodified
+        const postInDb = await prisma.post.findUnique({
+          where: { id: testPostId },
+        });
+        expect(postInDb!.content).toBe(initialContent);
+
+        // Verify no POST_UPDATED audit log was written
+        const audits = await prisma.auditLog.findMany({
+          where: { targetId: testPostId, action: 'POST_UPDATED' },
+        });
+        expect(audits.length).toBe(0);
+      },
+    );
+
+    it('serializes concurrent transition vs updateDraft: transition wins, updateDraft is blocked, unblocks, and rejects with 403 without mutating post or writing audit', async () => {
+      const testPostId = generateId();
+      const testVariantId = generateId();
+      const initialContent = `Initial content transition wins ${generateId()}`;
+
+      await prisma.post.create({
+        data: {
+          id: testPostId,
+          workspaceId: ws1,
+          authorId: testUser.id,
+          content: initialContent,
+          status: PostStatus.DRAFT,
+        },
+      });
+
+      await prisma.postPlatformVariant.create({
+        data: {
+          id: testVariantId,
+          postId: testPostId,
+          workspaceId: ws1,
+          socialAccountId: account1,
+          status: PostStatus.DRAFT,
+          content: initialContent,
+        },
+      });
+
+      let signalTransitionLocked: () => void;
+      const transitionLockedPromise = new Promise<void>(
+        (r) => (signalTransitionLocked = r),
+      );
+      let releaseTransition: () => void;
+      const allowTransitionCommitPromise = new Promise<void>(
+        (r) => (releaseTransition = r),
+      );
+
+      // Transition transaction starts, updates variant to QUEUED, and holds exclusive lock
+      const transitionTxPromise = prisma.$transaction(async (tx) => {
+        await tx.postPlatformVariant.update({
+          where: { id: testVariantId },
+          data: { status: PostStatus.QUEUED, queuedAt: new Date() },
+        });
+        signalTransitionLocked();
+        await allowTransitionCommitPromise;
+      });
+
+      // Wait until transition holds the lock
+      await transitionLockedPromise;
+
+      // Eagerly launch updateDraft via HTTP with .end() so it immediately hits the server and blocks on PostgreSQL
+      const updateResPromise = new Promise<any>((resolve, reject) => {
+        request(app.getHttpServer())
+          .patch(`/api/v1/workspaces/${ws1}/posts/${testPostId}`)
+          .set('Cookie', session1.combinedCookie)
+          .set('x-csrf-token', session1.csrfToken)
+          .send({ content: 'Conflicting update attempt' })
+          .end((err: any, res: any) => {
+            if (err) return reject(err);
+            resolve(res);
+          });
+      });
+
+      try {
+        // Deterministically verify that updateDraft is physically blocked in PostgreSQL
+        const isBlocked = await waitForBlockedRowLock(prisma);
+        expect(isBlocked).toBe(true);
+      } finally {
+        // Always release transition transaction to commit even if assertion fails
+        releaseTransition!();
+        await transitionTxPromise;
+      }
+
+      // updateDraft unblocks, sees newly committed QUEUED status, and throws 403
+      const updateRes = await updateResPromise;
+      expect(updateRes.status).toBe(403);
+      expect(updateRes.body.error.message).toBe(
+        'Cannot edit post while a publication is in QUEUED state',
+      );
+
+      // Verify post content remains unchanged in DB
+      const postInDb = await prisma.post.findUnique({
+        where: { id: testPostId },
+      });
+      expect(postInDb!.content).toBe(initialContent);
+
+      // Verify no POST_UPDATED audit record was created
+      const audits = await prisma.auditLog.findMany({
+        where: { targetId: testPostId, action: 'POST_UPDATED' },
+      });
+      expect(audits.length).toBe(0);
+    });
+
+    it('serializes concurrent updateDraft vs publish request: edit wins, transition waits, edit commits with audit, publish proceeds on updated content', async () => {
+      const testPostId = generateId();
+      const testVariantId = generateId();
+      const initialContent = `Initial content edit wins ${generateId()}`;
+      const updatedContent = `Updated content serialized ${generateId()}`;
+
+      await prisma.post.create({
+        data: {
+          id: testPostId,
+          workspaceId: ws1,
+          authorId: testUser.id,
+          content: initialContent,
+          status: PostStatus.DRAFT,
+        },
+      });
+
+      await prisma.postPlatformVariant.create({
+        data: {
+          id: testVariantId,
+          postId: testPostId,
+          workspaceId: ws1,
+          socialAccountId: account1,
+          status: PostStatus.DRAFT,
+          content: initialContent,
+        },
+      });
+
+      let signalEditLocked: () => void;
+      const editLockedPromise = new Promise<void>(
+        (r) => (signalEditLocked = r),
+      );
+      let releaseEdit: () => void;
+      const allowEditCommitPromise = new Promise<void>(
+        (r) => (releaseEdit = r),
+      );
+
+      const originalTx = prisma.$transaction.bind(prisma);
+      const txSpy = jest
+        .spyOn(prisma, '$transaction')
+        .mockImplementation(async (arg: any) => {
+          if (typeof arg === 'function') {
+            return originalTx(async (tx: any) => {
+              const originalUpdate = tx.post.update.bind(tx);
+              tx.post.update = async (updateArgs: any) => {
+                const res = await originalUpdate(updateArgs);
+                // At this point Post and variants are row-locked, and post is updated in tx
+                signalEditLocked();
+                await allowEditCommitPromise;
+                return res;
+              };
+              return arg(tx);
+            });
+          }
+          return originalTx(arg);
+        });
+
+      try {
+        // Eagerly launch updateDraft via HTTP with .end()
+        const updateDraftPromise = new Promise<any>((resolve, reject) => {
+          request(app.getHttpServer())
+            .patch(`/api/v1/workspaces/${ws1}/posts/${testPostId}`)
+            .set('Cookie', session1.combinedCookie)
+            .set('x-csrf-token', session1.csrfToken)
+            .send({ content: updatedContent })
+            .end((err: any, res: any) => {
+              if (err) return reject(err);
+              resolve(res);
+            });
+        });
+
+        // Wait until updateDraft holds the row locks in its transaction
+        await editLockedPromise;
+
+        // Concurrently trigger publish request for the variant via HTTP with .end()
+        const publishPromise = new Promise<any>((resolve, reject) => {
+          request(app.getHttpServer())
+            .post(`/api/v1/workspaces/${ws1}/publications/${testVariantId}/publish`)
+            .set('Cookie', session1.combinedCookie)
+            .set('x-csrf-token', session1.csrfToken)
+            .end((err: any, res: any) => {
+              if (err) return reject(err);
+              resolve(res);
+            });
+        });
+
+        // Verify that publish request is physically waiting on the variant row lock
+        const isBlocked = await waitForBlockedRowLock(prisma);
+        expect(isBlocked).toBe(true);
+
+        // Release updateDraft to commit
+        releaseEdit!();
+
+        const [updateRes, publishRes] = await Promise.all([
+          updateDraftPromise,
+          publishPromise,
+        ]);
+
+        expect(updateRes.status).toBe(200);
+        expect(updateRes.body.content).toBe(updatedContent);
+
+        expect(publishRes.status).toBe(202);
+        expect(publishRes.body.status).toBe(PostStatus.QUEUED);
+
+        // Verify post content in DB is the updated content
+        const finalPost = await prisma.post.findUnique({
+          where: { id: testPostId },
+          include: { variants: true },
+        });
+        expect(finalPost!.content).toBe(updatedContent);
+        expect(finalPost!.variants[0].status).toBe(PostStatus.QUEUED);
+
+        // Verify audit logs: exactly 1 POST_UPDATED and 1 PUBLICATION_REQUESTED
+        const updateAudits = await prisma.auditLog.findMany({
+          where: { targetId: testPostId, action: 'POST_UPDATED' },
+        });
+        expect(updateAudits.length).toBe(1);
+
+        const publishAudits = await prisma.auditLog.findMany({
+          where: { targetId: testVariantId, action: 'PUBLICATION_REQUESTED' },
+        });
+        expect(publishAudits.length).toBe(1);
+      } finally {
+        releaseEdit!();
+        txSpy.mockRestore();
+      }
+    });
+
+    it('guarantees tenant and post isolation: concurrent operations on different posts or workspaces do not block each other', async () => {
+      const postAId = generateId();
+      const postBId = generateId();
+      const variantAId = generateId();
+
+      await prisma.post.create({
+        data: {
+          id: postAId,
+          workspaceId: ws1,
+          authorId: testUser.id,
+          content: 'Post A Initial',
+          status: PostStatus.DRAFT,
+        },
+      });
+      await prisma.postPlatformVariant.create({
+        data: {
+          id: variantAId,
+          postId: postAId,
+          workspaceId: ws1,
+          socialAccountId: account1,
+          status: PostStatus.DRAFT,
+          content: 'Post A Initial',
+        },
+      });
+
+      await prisma.post.create({
+        data: {
+          id: postBId,
+          workspaceId: ws2,
+          authorId: testUser2.id,
+          content: 'Post B Initial',
+          status: PostStatus.DRAFT,
+        },
+      });
+
+      // Post A is held in a transaction
+      let signalALocked: () => void;
+      const aLockedPromise = new Promise<void>((r) => (signalALocked = r));
+      let releaseA: () => void;
+      const allowACommitPromise = new Promise<void>((r) => (releaseA = r));
+
+      const txAPromise = prisma.$transaction(async (tx) => {
+        await tx.postPlatformVariant.update({
+          where: { id: variantAId },
+          data: { status: PostStatus.QUEUED },
+        });
+        signalALocked();
+        await allowACommitPromise;
+      });
+
+      await aLockedPromise;
+
+      try {
+        // Edit Post B in Workspace 2 concurrently — it must NOT block and must succeed immediately
+        const updateBRes = await request(app.getHttpServer())
+          .patch(`/api/v1/workspaces/${ws2}/posts/${postBId}`)
+          .set('Cookie', session2.combinedCookie)
+          .set('x-csrf-token', session2.csrfToken)
+          .send({ content: 'Post B Updated Concurrently' });
+
+        expect(updateBRes.status).toBe(200);
+        expect(updateBRes.body.content).toBe('Post B Updated Concurrently');
+      } finally {
+        releaseA!();
+        await txAPromise;
+      }
     });
   });
 

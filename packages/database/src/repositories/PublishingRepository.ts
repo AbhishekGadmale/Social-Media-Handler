@@ -179,4 +179,34 @@ export class PublishingRepository {
       },
     });
   }
+
+  /**
+   * Exclusively locks the Post row within a transaction to serialize draft edits.
+   */
+  async lockPostForUpdate(
+    tx: Prisma.TransactionClient,
+    postId: string
+  ): Promise<Array<{ id: string }>> {
+    return tx.$queryRaw<Array<{ id: string }>>`
+      SELECT id FROM "Post"
+      WHERE id = ${postId}::uuid AND "workspaceId" = ${this.workspaceId}::uuid
+      FOR UPDATE
+    `;
+  }
+
+  /**
+   * Exclusively locks all PostPlatformVariant rows for a post in deterministic id order
+   * within a transaction to serialize draft edits against concurrent state transitions.
+   */
+  async lockVariantsForUpdate(
+    tx: Prisma.TransactionClient,
+    postId: string
+  ): Promise<Array<{ id: string; status: PostStatus }>> {
+    return tx.$queryRaw<Array<{ id: string; status: PostStatus }>>`
+      SELECT id, status FROM "PostPlatformVariant"
+      WHERE "postId" = ${postId}::uuid AND "workspaceId" = ${this.workspaceId}::uuid
+      ORDER BY id ASC
+      FOR UPDATE
+    `;
+  }
 }
