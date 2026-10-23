@@ -511,7 +511,7 @@ Following the project's 7-tier prioritization hierarchy:
 | **Tier 6: Deployment Hardening** | Global Distributed Rate Limiting via Redis Throttler | `apps/api/src/app.module.ts`, `apps/api/src/modules/core/redis-throttler.storage.ts` | **VERIFIED COMPLETE** | Medium / Ingress Abuse Prevention | Complete (`APP_GUARD` + Redis store verified) |
 | **Tier 7: Concurrency & Data Integrity** | **Token Refresh `REAUTH_REQUIRED` CAS TOCTOU Fencing** | [`apps/worker/src/publishing/token.service.ts`](file:///C:/Users/bappa/agency-os/apps/worker/src/publishing/token.service.ts#L359-L540), [`apps/worker/src/publishing/token.service.spec.ts`](file:///C:/Users/bappa/agency-os/apps/worker/src/publishing/token.service.spec.ts#L688-L1075) | **MERGED** (PR #9, `4752a15`) | High / Resolved & Fenced | Complete |
 | **Tier 7: Concurrency & Data Integrity** | **Transactional Audit Writes for Draft Operations** | [`packages/database/src/repositories/AuditLogRepository.ts`](file:///C:/Users/bappa/agency-os/packages/database/src/repositories/AuditLogRepository.ts), [`apps/api/src/modules/core/audit.service.ts`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/core/audit.service.ts), [`apps/api/src/modules/publishing/services/publishing-application.service.ts`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/publishing/services/publishing-application.service.ts) | **MERGED** (PR #12, `8e94c62`) | Medium / Resolved & Audited | Complete |
-| **Tier 7: Concurrency & Data Integrity** | `updateDraft` In-Transaction Locked-Variant Revalidation | [`apps/api/src/modules/publishing/services/publishing-application.service.ts`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/publishing/services/publishing-application.service.ts) | **QUEUED (NON-BLOCKING)** | Low / Theoretical Race Condition | Re-check variant statuses inside `$transaction` before `tx.post.update` |
+| **Tier 7: Concurrency & Data Integrity** | **`updateDraft` In-Transaction Locked-Variant Concurrency Serialization** | [`packages/database/src/repositories/PublishingRepository.ts`](file:///C:/Users/bappa/agency-os/packages/database/src/repositories/PublishingRepository.ts), [`apps/api/src/modules/publishing/services/publishing-application.service.ts`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/publishing/services/publishing-application.service.ts), [`apps/api/test/publishing.e2e-spec.ts`](file:///C:/Users/bappa/agency-os/apps/api/test/publishing.e2e-spec.ts) | **PR OPEN** (PR #14, `8fc235b`) | Low / Resolved & Fenced | In Review |
 | **Tier 7: Cleanup / Optimization** | Container Runtime Transpilation (`tsx` vs compiled `dist`) | `apps/api/Dockerfile`, `apps/worker/Dockerfile`, `docs/phase-6-readiness.md` | **OPEN** | Low / Performance & Startup Optimization | Add build output transpilation for monorepo internal packages |
 | **Tier 7: Non-Blocking Follow-Ups** | TokenService CAS Failure Recheck `DISCONNECTED` Guard | `apps/worker/src/publishing/token.service.ts` | **QUEUED (NON-BLOCKING)** | Low / Theoretical Edge Case | Check `recheckAccount.status !== DISCONNECTED` before returning recovered |
 | **Tier 7: Non-Blocking Follow-Ups** | TokenService Integration Test via `SocialAccountRepository.upsertWithConnection` | `apps/worker/src/publishing/token.service.spec.ts` | **QUEUED (NON-BLOCKING)** | Low / Test-Only Hardening | Exercise real repository upsert against stale failure handler |
@@ -820,10 +820,10 @@ The final architecture employs a two-tier fencing model:
 
 ### 5. Open Post-Merge Follow-Ups
 1. **Revalidate locked-variant state inside the `updateDraft` transaction**:
-   - *Context*: In `updateDraft`, the locked variant check (`post.variants.find(...)`) executes outside and prior to `this.prisma.$transaction`.
+   - *Context*: In `updateDraft`, the locked variant check (`post.variants.find(...)`) executed outside and prior to `this.prisma.$transaction`.
    - *Hazard*: A concurrent variant transition to `QUEUED`, `PUBLISHING`, or `PUBLISHED` (via `requestPublish` or background worker) could race between the initial read and `tx.post.update`.
-   - *Next Step*: Re-evaluate variant statuses inside `$transaction` or apply conditional update guards before mutating post contents.
-   - *Status*: OPEN (Low / Theoretical Concurrency Race).
+   - *Resolution*: Implemented repository-level row locks (`lockPostForUpdate` and `lockVariantsForUpdate` with `ORDER BY id ASC` to eliminate deadlocks) executed inside `this.prisma.$transaction`. Re-evaluates variant statuses under exclusive row locks; rejects with HTTP 403 `ForbiddenException: Cannot edit post while a publication is in ${status} state` if any publication variant is in a locked state (`QUEUED`, `PUBLISHING`, `PUBLISHED`, `UNKNOWN`, `SCHEDULED`). Non-DB media validation remains outside transaction to keep lock hold duration minimal (<5ms). Verified with 8 deterministic Jest E2E tests (static rejection, transition-first serialization with 403 rejection, edit-first serialization with atomic audit attribution, and workspace/post tenant isolation).
+   - *Status*: **PR OPEN** (PR #14, head [`8fc235b`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/8fc235bb13c2aec532f27fb268efb3c557a41133)).
 2. **Run Jest E2E tests in GitHub Actions CI**:
    - *Context*: Dedicated GitHub Actions CI job `e2e` (`Publishing E2E Tests`) added to `.github/workflows/ci.yml` in PR #13 (reviewed HEAD [`e7b14da65e67c00ab9b18d0f272a967c211e2ced`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/e7b14da65e67c00ab9b18d0f272a967c211e2ced) / `e7b14da`, merge commit [`6bab30dc00a045b7238be8011e8e9ab63fef5540`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/6bab30dc00a045b7238be8011e8e9ab63fef5540) / `6bab30d`, merged 2026-10-21).
    - *Architecture*: Runs `pnpm --filter @agency-os/api test:e2e test/publishing.e2e-spec.ts` against isolated `postgres:15-alpine` (`agency_os_test`) and `redis:7-alpine` service containers with health checks, explicit test credentials, Prisma client generation, and schema migration deployment (`prisma migrate deploy`).
@@ -861,3 +861,46 @@ The final architecture employs a two-tier fencing model:
 
 ### 4. Remaining Open Follow-Ups
 - **Broader E2E Coverage**: Incrementally add dedicated jobs for `accounts.e2e-spec.ts`, `analytics.e2e-spec.ts`, `auth.e2e-spec.ts`, and `media.storage.e2e-spec.ts` (requires MinIO service container) as needed.
+
+---
+
+## `updateDraft` Locked-Variant Concurrency Serialization (PR #14)
+
+### 1. Implementation & Verification Summary
+- **Status**: **PR OPEN** (PR #14, head commit [`8fc235bb13c2aec532f27fb268efb3c557a41133`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/8fc235bb13c2aec532f27fb268efb3c557a41133) / `8fc235b`)
+- **Pull Request**: [#14](https://github.com/AbhishekGadmale/Social-Media-Handler/pull/14)
+- **Branch**: `fix/update-draft-concurrency-race`
+- **Target**: `main` (`42f5a07`)
+- **CI Status**: All 6/6 GitHub Actions check-runs completed **GREEN** / **SUCCESS** (`GitGuardian Security Checks`, `Docker Build & Smoke Test`, `Code Quality (Lint & Typecheck)`, `Tests`, `Application Builds`, `Publishing E2E Tests`).
+
+### 2. Problem & Root Cause Analysis
+- **TOCTOU Window**: In `PublishingApplicationService.updateDraft`, `repo.posts.findById` queried post and variants outside the database transaction.
+- **PostgreSQL Default READ COMMITTED Isolation**: Plain `SELECT` statements take no row locks. Even inside a transaction, a plain `SELECT` reads snapshot data and does not block concurrent `UPDATE "PostPlatformVariant"` statements.
+- **Cross-Table Update Independence**: Updating `"Post"` with `WHERE NOT EXISTS (SELECT 1 FROM "PostPlatformVariant" WHERE ...)` only acquires an exclusive lock on `"Post"`. Concurrent variant state transitions operate on `"PostPlatformVariant"`. Neither operation blocks the other, allowing partial/corrupt states where draft edits overwrite content while a publication variant is already `QUEUED`, `PUBLISHING`, or `PUBLISHED`.
+
+### 3. Locking Architecture & Invariants
+- **Deterministic Row-Lock Hierarchy**:
+  1. Lock parent `"Post"` row (`SELECT id FROM "Post" WHERE id = $postId::uuid AND "workspaceId" = $workspaceId::uuid FOR UPDATE`). Serializes concurrent draft edits and confirms workspace tenant isolation.
+  2. Lock child `"PostPlatformVariant"` rows ordered by primary key (`SELECT id, status FROM "PostPlatformVariant" WHERE "postId" = $postId::uuid AND "workspaceId" = $workspaceId::uuid ORDER BY id ASC FOR UPDATE`). Guarantees mutual exclusion against concurrent variant transitions and prevents deadlocks.
+- **Authoritative Status Evaluation**: Under PostgreSQL `READ COMMITTED`, `SELECT ... FOR UPDATE` waits for any in-flight transaction on the variant to commit or roll back, then reads the newly committed status. If any variant is in `QUEUED`, `PUBLISHING`, `PUBLISHED`, `UNKNOWN`, or `SCHEDULED`, `updateDraft` throws `ForbiddenException`, triggering transaction rollback without modifying content/media or writing audit records.
+- **Minimal Critical Section**: Media assets validation (`mediaAsset.findMany`) executes before opening the transaction, keeping transaction duration and lock hold time strictly minimal (<5ms).
+
+### 4. Verification Evidence
+- **Jest E2E Tests (`apps/api/test/publishing.e2e-spec.ts`)**:
+  - 41/41 tests passing (including 8 dedicated concurrency & variant lock policy tests).
+  - Validated static 403 rejections across all 5 locked states with exact error message `Cannot edit post while a publication is in ${status} state`.
+  - Validated transition-first concurrency: variant transition to `QUEUED` holds lock, `updateDraft` blocks on row lock (verified via `pg_locks`), unblocks on transition commit, and throws 403; post content remains unchanged, 0 `POST_UPDATED` audit records.
+  - Validated edit-first concurrency: `updateDraft` holds lock, concurrent publish request blocks on row lock (verified via `pg_locks`), `updateDraft` commits with 1 `POST_UPDATED` audit record, publish unblocks and transitions to `QUEUED` with 1 `PUBLICATION_REQUESTED` audit record.
+  - Validated workspace/post isolation: concurrent operations on different posts or workspaces proceed without blocking.
+- **Monorepo Suite**:
+  - `pnpm turbo run test`: 5/5 tasks successful across all packages.
+  - `pnpm turbo run lint`: 5/5 tasks successful across all packages (0 errors).
+  - `pnpm turbo run typecheck`: 5/5 tasks successful across all packages (0 errors).
+- **GitHub Actions CI (Run on PR #14 HEAD `8fc235b`)**:
+  - `Publishing E2E Tests`: **SUCCESS** (running dedicated Jest E2E suite against isolated PostgreSQL and Redis service containers).
+  - `Code Quality (Lint & Typecheck)`: **SUCCESS**.
+  - `Tests`: **SUCCESS**.
+  - `Application Builds`: **SUCCESS**.
+  - `Docker Build & Smoke Test`: **SUCCESS**.
+  - `GitGuardian Security Checks`: **SUCCESS**.
+
