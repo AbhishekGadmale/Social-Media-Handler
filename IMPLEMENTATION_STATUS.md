@@ -521,7 +521,7 @@ Following the project's 7-tier prioritization hierarchy:
 | **Tier 7: Non-Blocking Follow-Ups** | OAuth Callback Missing Parameter Failure Audit | `apps/api/src/modules/oauth/oauth.controller.ts` | **QUEUED (NON-BLOCKING)** | Low / Security Audit Detail | Add `FAILED` audit event when OAuth callbacks miss required `code` or `state`, using safe metadata only |
 | **Tier 7: Future Feature Dependency** | Worker `PublishingProcessor` Catch-Path Disconnect Fencing | `apps/worker/src/publishing/publishing.processor.ts` | **FUTURE DEPENDENCY** | Low / Dependent on Future Disconnect API | Guard processor catch paths against resurrecting `DISCONNECTED` accounts |
 | **Tier 7: CI / Test Optimization** | CI PostgreSQL Service Publishing E2E Execution | `apps/api/test/publishing.e2e-spec.ts`, `.github/workflows/ci.yml` | **MERGED** (PR #13, `6bab30d`) | Low / Pipeline Test Breadth | Complete (Dedicated CI Job Verified) |
-| **Tier 7: CI / Test Optimization** | Broader API E2E CI Coverage (Accounts, Analytics, Auth, Media Storage) | `apps/api/test/*.e2e-spec.ts`, `.github/workflows/ci.yml` | **PR OPEN** (PR #16, branch `ci/expand-api-e2e-coverage`) | Low / Pipeline Test Breadth | Expand CI to run all 5/5 API E2E suites with Postgres, Redis, MinIO |
+| **Tier 7: CI / Test Optimization** | Broader API E2E CI Coverage (Accounts, Analytics, Auth, Media Storage) | `apps/api/test/*.e2e-spec.ts`, `.github/workflows/ci.yml` | **MERGED / CLOSED** (PR #16, `42723ab`) | Low / Pipeline Test Breadth | Complete (5/5 API E2E suites verified in CI) |
 
 ---
 
@@ -959,17 +959,20 @@ The final architecture employs a two-tier fencing model:
   - Validated transactional audit rollback: when `tx.auditLog.create` fails, entire transaction rolls back; post and variants remain intact in DB; subsequent retry succeeds with exactly 1 audit record.
 
 ### 5. Remaining Open Follow-Ups
-- **Broader E2E CI Coverage**: Implemented for all 5 suites (`accounts`, `analytics`, `auth`, `media.storage`, `publishing`) in PR #16 (branch `ci/expand-api-e2e-coverage`).
+- **Broader E2E CI Coverage**: Implemented and merged for all 5 suites (`accounts`, `analytics`, `auth`, `media.storage`, `publishing`) in PR #16 (merge commit [`42723ab`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/42723ab52b9f9ef40a85dea20239352e19f1c229)).
 
 ---
 
 ## Expanded API E2E CI Coverage (PR #16)
 
 ### 1. Implementation & Verification Summary
-- **Status**: **PR OPEN**
-- **Pull Request**: [#16](https://github.com/AbhishekGadmale/Social-Media-Handler/pull/16)
-- **Branch**: `ci/expand-api-e2e-coverage`
+- **Status**: **MERGED / CLOSED**
+- **Pull Request**: [#16](https://github.com/AbhishekGadmale/Social-Media-Handler/pull/16) (merged into `main` on 2026-10-23)
+- **Branch**: `ci/expand-api-e2e-coverage` (merged & deleted)
 - **Implementation Commit**: [`069fff4b99e3f03e460f2c20515e725e747ef931`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/069fff4b99e3f03e460f2c20515e725e747ef931) (`069fff4`)
+- **Documentation Commit**: [`c76f38c653ec7672b26f0f38b925e0b02d3bee47`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/c76f38c653ec7672b26f0f38b925e0b02d3bee47) (`c76f38c`)
+- **Merge Commit**: [`42723ab52b9f9ef40a85dea20239352e19f1c229`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/42723ab52b9f9ef40a85dea20239352e19f1c229) (`42723ab`)
+- **CI Run**: [Run #39937749393](https://github.com/AbhishekGadmale/Social-Media-Handler/actions/runs/39937749393) (All 6 check runs completed GREEN)
 - **Base Target**: `main` (`85b5998`)
 - **Scope**: Run all 5 API E2E test suites (`accounts.e2e-spec.ts`, `analytics.e2e-spec.ts`, `auth.e2e-spec.ts`, `publishing.e2e-spec.ts`, and `media.storage.e2e-spec.ts`) in GitHub Actions CI using dedicated, isolated PostgreSQL, Redis, and MinIO service containers.
 - **Service Infrastructure**:
@@ -994,8 +997,23 @@ The final architecture employs a two-tier fencing model:
     - `pnpm turbo run lint`: 5/5 tasks successful across all packages (0 errors).
     - `pnpm turbo run typecheck`: 5/5 tasks successful across all packages (0 errors).
     - `pnpm turbo run build`: 3/3 builds successful across Web, API, and Worker.
+- **GitHub Actions CI Verification**:
+  - CI Run: [`https://github.com/AbhishekGadmale/Social-Media-Handler/actions/runs/39937749393`](https://github.com/AbhishekGadmale/Social-Media-Handler/actions/runs/39937749393)
+  - All 6 check runs completed `success`:
+    - `API E2E Tests`: Passed in 1m 01s (79/79 tests passed across 5 suites).
+    - `Docker Build & Smoke Test`: Passed in 1m 39s.
+    - `Application Builds`: Passed in 45s.
+    - `Tests`: Passed in 36s.
+    - `Code Quality`: Passed in 35s.
+    - `GitGuardian`: Passed in 13s.
 
 ### 3. Container Runtime Transpilation Investigation Findings
 - Current container execution via `npx tsx dist/src/main.js` (API) and `npx tsx dist/main.js` (Worker) is **fully operational** for development, local execution, and Docker Compose smoke testing (`/api/health/ready` returns HTTP 200).
 - An imminent production deployment is **not functionally blocked** (containers do not crash); however, running unbundled TypeScript via JIT compilation introduces cold-start latency, elevated memory overhead, and unoptimized execution in production environments.
 - Retained as a distinct, unbundled **OPEN** backlog item in Tier 7 Priority Matrix for subsequent packaging optimization.
+
+### 4. Non-Blocking Follow-Ups (from Muse Review)
+1. **MinIO Bucket Creation Verification**: Replace `|| true` in `aws --endpoint-url http://localhost:9000 s3 mb s3://agency-os-media || true` with explicit create-or-verify logic (e.g., `aws s3 ls s3://agency-os-media || aws s3 mb s3://agency-os-media`) to surface genuine provisioning/network failures.
+2. **MinIO Readiness Probe Hardening**: Upgrade MinIO readiness check beyond raw TCP port probe (`bash -c 'echo > /dev/tcp/127.0.0.1/9000'`) to an HTTP/S3 readiness probe (e.g., MinIO `/minio/health/ready` endpoint) if future container base images include `curl`/`wget`.
+3. **Branch Protection Status Check Name**: Confirmed branch protection on `main` is currently disabled (`GET /repos/.../branches/main/protection` returned 404). If protected branch rules are enabled in the future, ensure the required status check is configured as `API E2E Tests` (replacing the former `Publishing E2E Tests`).
+4. **CI Run Traceability**: Canonical CI run link recorded in documentation: [`https://github.com/AbhishekGadmale/Social-Media-Handler/actions/runs/39937749393`](https://github.com/AbhishekGadmale/Social-Media-Handler/actions/runs/39937749393).
