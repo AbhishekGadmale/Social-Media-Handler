@@ -521,7 +521,7 @@ Following the project's 7-tier prioritization hierarchy:
 | **Tier 7: Non-Blocking Follow-Ups** | OAuth Callback Missing Parameter Failure Audit | `apps/api/src/modules/oauth/oauth.controller.ts` | **QUEUED (NON-BLOCKING)** | Low / Security Audit Detail | Add `FAILED` audit event when OAuth callbacks miss required `code` or `state`, using safe metadata only |
 | **Tier 7: Future Feature Dependency** | Worker `PublishingProcessor` Catch-Path Disconnect Fencing | `apps/worker/src/publishing/publishing.processor.ts` | **FUTURE DEPENDENCY** | Low / Dependent on Future Disconnect API | Guard processor catch paths against resurrecting `DISCONNECTED` accounts |
 | **Tier 7: CI / Test Optimization** | CI PostgreSQL Service Publishing E2E Execution | `apps/api/test/publishing.e2e-spec.ts`, `.github/workflows/ci.yml` | **MERGED** (PR #13, `6bab30d`) | Low / Pipeline Test Breadth | Complete (Dedicated CI Job Verified) |
-| **Tier 7: CI / Test Optimization** | Broader API E2E CI Coverage (Accounts, Analytics, Auth, Media Storage) | `apps/api/test/*.e2e-spec.ts`, `.github/workflows/ci.yml` | **PR OPEN** (Branch `ci/expand-api-e2e-coverage`) | Low / Pipeline Test Breadth | Expand CI to run all 5/5 API E2E suites with Postgres, Redis, MinIO |
+| **Tier 7: CI / Test Optimization** | Broader API E2E CI Coverage (Accounts, Analytics, Auth, Media Storage) | `apps/api/test/*.e2e-spec.ts`, `.github/workflows/ci.yml` | **PR OPEN** (PR #16, branch `ci/expand-api-e2e-coverage`) | Low / Pipeline Test Breadth | Expand CI to run all 5/5 API E2E suites with Postgres, Redis, MinIO |
 
 ---
 
@@ -963,11 +963,13 @@ The final architecture employs a two-tier fencing model:
 
 ---
 
-## Expanded API E2E CI Coverage (Branch `ci/expand-api-e2e-coverage`)
+## Expanded API E2E CI Coverage (PR #16)
 
 ### 1. Implementation & Verification Summary
 - **Status**: **PR OPEN**
+- **Pull Request**: [#16](https://github.com/AbhishekGadmale/Social-Media-Handler/pull/16)
 - **Branch**: `ci/expand-api-e2e-coverage`
+- **Implementation Commit**: [`069fff4b99e3f03e460f2c20515e725e747ef931`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/069fff4b99e3f03e460f2c20515e725e747ef931) (`069fff4`)
 - **Base Target**: `main` (`85b5998`)
 - **Scope**: Run all 5 API E2E test suites (`accounts.e2e-spec.ts`, `analytics.e2e-spec.ts`, `auth.e2e-spec.ts`, `publishing.e2e-spec.ts`, and `media.storage.e2e-spec.ts`) in GitHub Actions CI using dedicated, isolated PostgreSQL, Redis, and MinIO service containers.
 - **Service Infrastructure**:
