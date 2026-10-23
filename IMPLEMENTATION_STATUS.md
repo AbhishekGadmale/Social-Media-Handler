@@ -513,7 +513,7 @@ Following the project's 7-tier prioritization hierarchy:
 | **Tier 7: Concurrency & Data Integrity** | **Transactional Audit Writes for Draft Operations** | [`packages/database/src/repositories/AuditLogRepository.ts`](file:///C:/Users/bappa/agency-os/packages/database/src/repositories/AuditLogRepository.ts), [`apps/api/src/modules/core/audit.service.ts`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/core/audit.service.ts), [`apps/api/src/modules/publishing/services/publishing-application.service.ts`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/publishing/services/publishing-application.service.ts) | **MERGED** (PR #12, `8e94c62`) | Medium / Resolved & Audited | Complete |
 | **Tier 7: Concurrency & Data Integrity** | **`updateDraft` In-Transaction Locked-Variant Concurrency Serialization** | [`packages/database/src/repositories/PublishingRepository.ts`](file:///C:/Users/bappa/agency-os/packages/database/src/repositories/PublishingRepository.ts), [`apps/api/src/modules/publishing/services/publishing-application.service.ts`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/publishing/services/publishing-application.service.ts), [`apps/api/test/publishing.e2e-spec.ts`](file:///C:/Users/bappa/agency-os/apps/api/test/publishing.e2e-spec.ts) | **MERGED** (PR #14, `279b4c5`) | Low / Resolved & Fenced | Complete |
 | **Tier 7: Concurrency & Data Integrity** | **`deletePost` Locked-Variant Check TOCTOU Fencing** | [`apps/api/src/modules/publishing/services/publishing-application.service.ts`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/publishing/services/publishing-application.service.ts), [`apps/api/test/publishing.e2e-spec.ts`](file:///C:/Users/bappa/agency-os/apps/api/test/publishing.e2e-spec.ts) | **MERGED** (PR #15, `a702601`) | Low / Resolved & Fenced | Complete |
-| **Tier 7: Cleanup / Optimization** | Container Runtime Transpilation (`tsx` vs compiled `dist`) | `apps/api/Dockerfile`, `apps/worker/Dockerfile`, `docs/phase-6-readiness.md` | **OPEN** | Low / Performance & Startup Optimization | Add build output transpilation for monorepo internal packages |
+| **Tier 7: Cleanup / Optimization** | Container Runtime Transpilation (`tsx` vs compiled `dist`) | `apps/api/Dockerfile`, `apps/worker/Dockerfile`, `packages/*/package.json`, `docs/phase-6-readiness.md` | **PR OPEN** (PR #17, branch `feat/compiled-workspace-packages`) | Low / Performance & Startup Optimization | Awaiting Muse review and merge of PR #17 |
 | **Tier 7: Non-Blocking Follow-Ups** | TokenService CAS Failure Recheck `DISCONNECTED` Guard | `apps/worker/src/publishing/token.service.ts` | **QUEUED (NON-BLOCKING)** | Low / Theoretical Edge Case | Check `recheckAccount.status !== DISCONNECTED` before returning recovered |
 | **Tier 7: Non-Blocking Follow-Ups** | TokenService Integration Test via `SocialAccountRepository.upsertWithConnection` | `apps/worker/src/publishing/token.service.spec.ts` | **QUEUED (NON-BLOCKING)** | Low / Test-Only Hardening | Exercise real repository upsert against stale failure handler |
 | **Tier 7: Non-Blocking Follow-Ups** | ESLint `no-floating-promises` Rule Escalation | `apps/api/package.json`, `.eslintrc.js` | **QUEUED (NON-BLOCKING)** | Low / Static Analysis Hardening | Evaluate escalating ESLint `no-floating-promises` from warning to error; check existing violations & migration scope |
@@ -525,15 +525,13 @@ Following the project's 7-tier prioritization hierarchy:
 
 ---
 
-### 4. Single Highest-Priority Next Focus Area: Container Runtime Transpilation (`tsx` vs Compiled `dist`)
+### 4. Current In-Flight Focus Area: Container Runtime Transpilation (`tsx` vs Compiled `dist`)
 
 - **Priority Tier**: **Tier 7 (Cleanup / Performance & Startup Optimization)**
-- **Components**: [`apps/api/Dockerfile`](file:///C:/Users/bappa/agency-os/apps/api/Dockerfile), [`apps/worker/Dockerfile`](file:///C:/Users/bappa/agency-os/apps/worker/Dockerfile), [`docs/phase-6-readiness.md`](file:///C:/Users/bappa/agency-os/docs/phase-6-readiness.md)
-- **Specification / Documentation**: [`docs/phase-6-readiness.md`](file:///C:/Users/bappa/agency-os/docs/phase-6-readiness.md#L45-L60)
-- **Core Gap**:
-  Currently, production container images for the API and Worker execute TypeScript directly via `tsx` rather than executing pre-compiled JavaScript from `dist/`. While functional, transpiling at startup incurs cold-start latency, elevated container memory overhead, and unoptimized execution in production Kubernetes/Docker environments.
-- **Target Verification Plan**:
-  Verify monorepo internal package build outputs (`packages/database`, `packages/providers`, `packages/session`, `packages/shared`), assess Docker multistage build layers, and confirm whether production containers can execute compiled `node dist/main.js` cleanly without breaking symlinked monorepo dependencies.
+- **Status**: **PR OPEN** (PR #17, branch `feat/compiled-workspace-packages`, pending review by Muse)
+- **Components**: [`apps/api/Dockerfile`](file:///C:/Users/bappa/agency-os/apps/api/Dockerfile), [`apps/worker/Dockerfile`](file:///C:/Users/bappa/agency-os/apps/worker/Dockerfile), [`packages/database`](file:///C:/Users/bappa/agency-os/packages/database), [`packages/providers`](file:///C:/Users/bappa/agency-os/packages/providers), [`packages/session`](file:///C:/Users/bappa/agency-os/packages/session), [`packages/shared`](file:///C:/Users/bappa/agency-os/packages/shared)
+- **Core Gap Addressed**:
+  Eliminated production container JIT transpilation (`npx tsx`) by compiling all internal workspace packages (`@agency-os/database`, `@agency-os/providers`, `@agency-os/session`, `@agency-os/shared`) to JavaScript with type declarations in `dist/`. Production containers start directly via `node dist/src/main.js` (API) and `node dist/main.js` (Worker). Full Docker Compose smoke tests, all 5 API E2E test suites, and monorepo typecheck/lint/tests verified.
 
 ---
 
@@ -1017,3 +1015,55 @@ The final architecture employs a two-tier fencing model:
 2. **MinIO Readiness Probe Hardening**: Upgrade MinIO readiness check beyond raw TCP port probe (`bash -c 'echo > /dev/tcp/127.0.0.1/9000'`) to an HTTP/S3 readiness probe (e.g., MinIO `/minio/health/ready` endpoint) if future container base images include `curl`/`wget`.
 3. **Branch Protection Status Check Name**: Confirmed branch protection on `main` is currently disabled (`GET /repos/.../branches/main/protection` returned 404). If protected branch rules are enabled in the future, ensure the required status check is configured as `API E2E Tests` (replacing the former `Publishing E2E Tests`).
 4. **CI Run Traceability**: Canonical CI run link recorded in documentation: [`https://github.com/AbhishekGadmale/Social-Media-Handler/actions/runs/39937749393`](https://github.com/AbhishekGadmale/Social-Media-Handler/actions/runs/39937749393).
+
+
+---
+
+## Container Runtime Transpilation & Compiled Workspace Packaging (PR #17)
+
+### 1. Implementation & Verification Summary
+- **Status**: **PR OPEN** (PR #17, branch `feat/compiled-workspace-packages`, pending review by Muse)
+- **Pull Request**: [#17](https://github.com/AbhishekGadmale/Social-Media-Handler/pull/17)
+- **Base Target**: `main` (`5a77a82`)
+- **Reviewer**: Pending Muse Review
+- **Scope**: Eliminate production container JIT transpilation (`npx tsx`) in API and Worker containers by compiling all internal workspace packages (`@agency-os/database`, `@agency-os/providers`, `@agency-os/session`, `@agency-os/shared`) to JavaScript with `.d.ts` declaration files in `dist/`, running production containers via compiled Node.js (`node dist/src/main.js` and `node dist/main.js`).
+
+### 2. Root Cause & Packaging Architecture
+- **Root Cause of `tsx` in Production**:
+  Previously, `apps/api/package.json` used `"start:prod": "npx tsx dist/src/main.js"` and `apps/worker/package.json` used `"start:prod": "npx tsx dist/main.js"`. Internal workspace packages (`packages/database`, `packages/providers`, `packages/session`, `packages/shared`) lacked build scripts and pointed their `"main"` entrypoints directly to raw TypeScript files (`"./index.ts"`). When NestJS compiled `apps/api` and `apps/worker`, external requires to `@agency-os/*` resolved to `.ts` files, causing Node.js at runtime to fail with `ERR_MODULE_NOT_FOUND` unless wrapped in `tsx` JIT transpilation.
+- **Compiled Workspace Package Strategy**:
+  1. **Build Scripts & Manifests**:
+     - Added `"build": "tsc -p tsconfig.build.json"` to `packages/database`, `packages/providers`, `packages/session`, and `packages/shared`.
+     - Configured `"main": "./dist/index.js"`, `"types": "./dist/index.d.ts"`, and modern `"exports"` field mappings across all internal packages.
+     - Preserved backward compatibility for deep subpath imports: mapped `"./src/crypto/encryption"` in `@agency-os/database/package.json` to `"./dist/src/crypto/encryption.js"`.
+  2. **Dedicated Build Configurations (`tsconfig.build.json`)**:
+     - Separated build configuration (`tsconfig.build.json`) from IDE/lint typechecking (`tsconfig.json`).
+     - Excluded `**/*.spec.ts`, `**/*.test.ts`, and `test/` directories from `dist/` compilation artifacts.
+     - Maintained test and config file inclusion in root `tsconfig.json` so `@typescript-eslint`'s `projectService` operates without parsing errors during linting.
+  3. **Concurrency-Safe Turbo Pipelines**:
+     - Ensured package build scripts run standard `tsc -p tsconfig.build.json` without in-band `prisma generate` to prevent Windows file locking collisions with concurrent Vitest runners.
+  4. **Production Runtime Execution**:
+     - Updated `apps/api/package.json` `"start:prod"` to `node dist/src/main.js`.
+     - Updated `apps/worker/package.json` `"start:prod"` to `node dist/main.js`.
+     - Moved `@agency-os/session` from `devDependencies` to `dependencies` in `apps/api/package.json` (required by `AuthService` and `CoreModule` at runtime).
+
+### 3. Verification Evidence
+- **Monorepo Build, Typecheck, and Tests**:
+  - `pnpm turbo run build`: 7/7 successful across all packages and applications (19.44s).
+  - `pnpm turbo run lint`: 5/5 successful, 0 errors, 0 warnings (30.63s).
+  - `pnpm turbo run typecheck`: 6/6 successful, 0 errors (15.05s).
+  - `pnpm turbo run test`: 9/9 successful, 100% test pass rate across database, providers (231 tests), session, shared, api, and worker (115 tests).
+- **All 5 API E2E Test Suites**:
+  - `pnpm --filter @agency-os/api test:e2e`: 5/5 test suites passed, 79/79 tests passing in 14.56s (`accounts`, `analytics`, `auth`, `publishing`, `media.storage`).
+- **Docker Compose Production Smoke Testing**:
+  - Multi-stage Docker builds succeeded for `agency-os-api`, `agency-os-worker`, and `agency-os-migration`.
+  - Container inspection confirmed all compiled `dist/` directories and files are present inside images.
+  - Applied migrations cleanly via migration service (`migration-1 exited with code 0`).
+  - Container health check: `agency-os-api` container reported status `healthy`; `curl http://localhost:3001/api/health/ready` returned HTTP 200:
+    ```json
+    {"status":"ok","info":{"database":{"status":"up"},"redis":{"status":"up"}}}
+    ```
+  - Worker functionality: `agency-os-worker` connected to Redis/BullMQ, started scheduled recurring jobs and publishing dispatchers.
+  - Process table verification (`ps aux` inside running containers):
+    - API container: `PID 1: pnpm ... start:prod`, `PID 32: node dist/src/main.js`. Exactly 0 `tsx` processes.
+    - Worker container: `PID 1: pnpm ... start:prod`, `PID 18: node dist/main.js`. Exactly 0 `tsx` processes.

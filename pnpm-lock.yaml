@@ -33,6 +33,9 @@ importers:
       '@agency-os/providers':
         specifier: workspace:^
         version: link:../../packages/providers
+      '@agency-os/session':
+        specifier: workspace:*
+        version: link:../../packages/session
       '@agency-os/shared':
         specifier: workspace:*
         version: link:../../packages/shared
@@ -91,9 +94,6 @@ importers:
         specifier: ^7.8.1
         version: 7.8.2
     devDependencies:
-      '@agency-os/session':
-        specifier: workspace:*
-        version: link:../../packages/session
       '@eslint/eslintrc':
         specifier: ^3.2.0
         version: 3.3.6
