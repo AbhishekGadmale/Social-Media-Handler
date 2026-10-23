@@ -521,7 +521,7 @@ Following the project's 7-tier prioritization hierarchy:
 | **Tier 7: Non-Blocking Follow-Ups** | OAuth Callback Missing Parameter Failure Audit | `apps/api/src/modules/oauth/oauth.controller.ts` | **QUEUED (NON-BLOCKING)** | Low / Security Audit Detail | Add `FAILED` audit event when OAuth callbacks miss required `code` or `state`, using safe metadata only |
 | **Tier 7: Future Feature Dependency** | Worker `PublishingProcessor` Catch-Path Disconnect Fencing | `apps/worker/src/publishing/publishing.processor.ts` | **FUTURE DEPENDENCY** | Low / Dependent on Future Disconnect API | Guard processor catch paths against resurrecting `DISCONNECTED` accounts |
 | **Tier 7: CI / Test Optimization** | CI PostgreSQL Service Publishing E2E Execution | `apps/api/test/publishing.e2e-spec.ts`, `.github/workflows/ci.yml` | **MERGED** (PR #13, `6bab30d`) | Low / Pipeline Test Breadth | Complete (Dedicated CI Job Verified) |
-| **Tier 7: CI / Test Optimization** | Broader API E2E CI Coverage (Accounts, Analytics, Auth, Media) | `apps/api/test/*.e2e-spec.ts`, `.github/workflows/ci.yml` | **OPEN** | Low / Pipeline Test Breadth | Add service dependencies (e.g. MinIO) & CI jobs for remaining suites |
+| **Tier 7: CI / Test Optimization** | Broader API E2E CI Coverage (Accounts, Analytics, Auth, Media Storage) | `apps/api/test/*.e2e-spec.ts`, `.github/workflows/ci.yml` | **PR OPEN** (Branch `ci/expand-api-e2e-coverage`) | Low / Pipeline Test Breadth | Expand CI to run all 5/5 API E2E suites with Postgres, Redis, MinIO |
 
 ---
 
@@ -959,4 +959,41 @@ The final architecture employs a two-tier fencing model:
   - Validated transactional audit rollback: when `tx.auditLog.create` fails, entire transaction rolls back; post and variants remain intact in DB; subsequent retry succeeds with exactly 1 audit record.
 
 ### 5. Remaining Open Follow-Ups
-- **Broader E2E CI Coverage**: Incrementally add dedicated jobs for `accounts.e2e-spec.ts`, `analytics.e2e-spec.ts`, `auth.e2e-spec.ts`, and `media.storage.e2e-spec.ts` (requires MinIO service container) as needed.
+- **Broader E2E CI Coverage**: Implemented for all 5 suites (`accounts`, `analytics`, `auth`, `media.storage`, `publishing`) in PR #16 (branch `ci/expand-api-e2e-coverage`).
+
+---
+
+## Expanded API E2E CI Coverage (Branch `ci/expand-api-e2e-coverage`)
+
+### 1. Implementation & Verification Summary
+- **Status**: **PR OPEN**
+- **Branch**: `ci/expand-api-e2e-coverage`
+- **Base Target**: `main` (`85b5998`)
+- **Scope**: Run all 5 API E2E test suites (`accounts.e2e-spec.ts`, `analytics.e2e-spec.ts`, `auth.e2e-spec.ts`, `publishing.e2e-spec.ts`, and `media.storage.e2e-spec.ts`) in GitHub Actions CI using dedicated, isolated PostgreSQL, Redis, and MinIO service containers.
+- **Service Infrastructure**:
+  - Pinned MinIO service container: `cgr.dev/chainguard/minio:latest@sha256:d88920d6a50bd0b088223b688be3b76c63e6205dbe494437f67ba1240ea12880` with reliable TCP healthcheck `bash -c 'echo > /dev/tcp/127.0.0.1/9000'`.
+  - Preserved existing `postgres:15-alpine` and `redis:7-alpine` service containers with health checks.
+  - Deterministic pre-test bucket creation: `aws --endpoint-url http://localhost:9000 s3 mb s3://agency-os-media || true`.
+  - Configured object storage test environment variables (`OBJECT_STORAGE_ENDPOINT`, `OBJECT_STORAGE_PUBLIC_ENDPOINT`, `OBJECT_STORAGE_REGION`, `OBJECT_STORAGE_BUCKET`, `OBJECT_STORAGE_ACCESS_KEY_ID`, `OBJECT_STORAGE_SECRET_ACCESS_KEY`, `OBJECT_STORAGE_FORCE_PATH_STYLE`).
+- **Targeted Test Execution**:
+  - Renamed job to `API E2E Tests`.
+  - Runs all 5 test suites in-band: `pnpm --filter @agency-os/api test:e2e`.
+
+### 2. Verification Evidence
+- **Local Verification**:
+  - Full E2E Execution: 5/5 test suites passed, 79/79 tests passing (21.25s).
+    - `test/media.storage.e2e-spec.ts`: 8/8 passed.
+    - `test/publishing.e2e-spec.ts`: 51/51 passed.
+    - `test/auth.e2e-spec.ts`: 10/10 passed.
+    - `test/accounts.e2e-spec.ts`: 7/7 passed.
+    - `test/analytics.e2e-spec.ts`: 3/3 passed.
+  - Monorepo Verification:
+    - `pnpm turbo run test`: 5/5 tasks successful across all packages.
+    - `pnpm turbo run lint`: 5/5 tasks successful across all packages (0 errors).
+    - `pnpm turbo run typecheck`: 5/5 tasks successful across all packages (0 errors).
+    - `pnpm turbo run build`: 3/3 builds successful across Web, API, and Worker.
+
+### 3. Container Runtime Transpilation Investigation Findings
+- Current container execution via `npx tsx dist/src/main.js` (API) and `npx tsx dist/main.js` (Worker) is **fully operational** for development, local execution, and Docker Compose smoke testing (`/api/health/ready` returns HTTP 200).
+- An imminent production deployment is **not functionally blocked** (containers do not crash); however, running unbundled TypeScript via JIT compilation introduces cold-start latency, elevated memory overhead, and unoptimized execution in production environments.
+- Retained as a distinct, unbundled **OPEN** backlog item in Tier 7 Priority Matrix for subsequent packaging optimization.

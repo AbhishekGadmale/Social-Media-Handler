@@ -114,7 +114,7 @@ jobs:
         run: pnpm turbo run test --env-mode=loose
 
   e2e:
-    name: Publishing E2E Tests
+    name: API E2E Tests
     runs-on: ubuntu-latest
     timeout-minutes: 15
     services:
@@ -138,6 +138,20 @@ jobs:
           - 6379:6379
         options: >-
           --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      minio:
+        image: cgr.dev/chainguard/minio:latest@sha256:d88920d6a50bd0b088223b688be3b76c63e6205dbe494437f67ba1240ea12880
+        command: server /data
+        env:
+          MINIO_ROOT_USER: minioadmin
+          MINIO_ROOT_PASSWORD: minioadmin
+        ports:
+          - 9000:9000
+        options: >-
+          --health-cmd "bash -c 'echo > /dev/tcp/127.0.0.1/9000'"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
@@ -167,7 +181,15 @@ jobs:
           DATABASE_URL: postgresql://postgres:password@localhost:5432/agency_os_test?schema=public
         run: pnpm --filter @agency-os/database exec prisma migrate deploy
         
-      - name: Run Publishing E2E Tests
+      - name: Create MinIO test bucket
+        env:
+          AWS_ACCESS_KEY_ID: minioadmin
+          AWS_SECRET_ACCESS_KEY: minioadmin
+          AWS_DEFAULT_REGION: us-east-1
+        run: |
+          aws --endpoint-url http://localhost:9000 s3 mb s3://agency-os-media || true
+
+      - name: Run API E2E Tests
         env:
           NODE_ENV: test
           DATABASE_URL: postgresql://postgres:password@localhost:5432/agency_os_test?schema=public
@@ -178,7 +200,14 @@ jobs:
           COOKIE_SECRET: super-secret-test-cookie-key
           YOUTUBE_CLIENT_ID: dummy-client-id
           YOUTUBE_CLIENT_SECRET: dummy-client-secret
-        run: pnpm --filter @agency-os/api test:e2e test/publishing.e2e-spec.ts
+          OBJECT_STORAGE_ENDPOINT: http://127.0.0.1:9000
+          OBJECT_STORAGE_PUBLIC_ENDPOINT: http://127.0.0.1:9000
+          OBJECT_STORAGE_REGION: us-east-1
+          OBJECT_STORAGE_BUCKET: agency-os-media
+          OBJECT_STORAGE_ACCESS_KEY_ID: minioadmin
+          OBJECT_STORAGE_SECRET_ACCESS_KEY: minioadmin
+          OBJECT_STORAGE_FORCE_PATH_STYLE: "true"
+        run: pnpm --filter @agency-os/api test:e2e
 
   build:
     name: Application Builds
