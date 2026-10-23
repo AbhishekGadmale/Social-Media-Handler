@@ -701,6 +701,8 @@ describe('PublishingApplicationService - Audit Logging Coverage', () => {
       transitionVariantState: vi.fn().mockResolvedValue(true),
       unschedule: vi.fn().mockResolvedValue(true),
       cancelQueued: vi.fn().mockResolvedValue(true),
+      lockPostForUpdate: vi.fn().mockResolvedValue([{ id: postId }]),
+      lockVariantsForUpdate: vi.fn().mockResolvedValue([]),
     };
 
     service = new PublishingApplicationService(
@@ -729,6 +731,39 @@ describe('PublishingApplicationService - Audit Logging Coverage', () => {
       txMock,
     );
   });
+
+  it('throws NotFoundException when post is not found during in-transaction lock in updateDraft', async () => {
+    repoMock.lockPostForUpdate.mockResolvedValueOnce([]);
+
+    await expect(
+      service.updateDraft(workspaceId, authorId, postId, {
+        content: 'Updated',
+      }),
+    ).rejects.toThrow(NotFoundException);
+  });
+
+  it.each([
+    PostStatus.QUEUED,
+    PostStatus.PUBLISHING,
+    PostStatus.PUBLISHED,
+    PostStatus.UNKNOWN,
+    PostStatus.SCHEDULED,
+  ])(
+    'throws ForbiddenException when variant is in locked status %s during updateDraft',
+    async (status) => {
+      repoMock.lockVariantsForUpdate.mockResolvedValueOnce([
+        { id: variantId, status },
+      ]);
+
+      await expect(
+        service.updateDraft(workspaceId, authorId, postId, {
+          content: 'Updated',
+        }),
+      ).rejects.toThrow(
+        `Cannot edit post while a publication is in ${status} state`,
+      );
+    },
+  );
 
   // 2. POST_UPDATED
   it('emits POST_UPDATED with correct attribution on updateDraft inside transaction', async () => {
