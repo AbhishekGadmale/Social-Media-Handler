@@ -512,7 +512,7 @@ Following the project's 7-tier prioritization hierarchy:
 | **Tier 7: Concurrency & Data Integrity** | **Token Refresh `REAUTH_REQUIRED` CAS TOCTOU Fencing** | [`apps/worker/src/publishing/token.service.ts`](file:///C:/Users/bappa/agency-os/apps/worker/src/publishing/token.service.ts#L359-L540), [`apps/worker/src/publishing/token.service.spec.ts`](file:///C:/Users/bappa/agency-os/apps/worker/src/publishing/token.service.spec.ts#L688-L1075) | **MERGED** (PR #9, `4752a15`) | High / Resolved & Fenced | Complete |
 | **Tier 7: Concurrency & Data Integrity** | **Transactional Audit Writes for Draft Operations** | [`packages/database/src/repositories/AuditLogRepository.ts`](file:///C:/Users/bappa/agency-os/packages/database/src/repositories/AuditLogRepository.ts), [`apps/api/src/modules/core/audit.service.ts`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/core/audit.service.ts), [`apps/api/src/modules/publishing/services/publishing-application.service.ts`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/publishing/services/publishing-application.service.ts) | **MERGED** (PR #12, `8e94c62`) | Medium / Resolved & Audited | Complete |
 | **Tier 7: Concurrency & Data Integrity** | **`updateDraft` In-Transaction Locked-Variant Concurrency Serialization** | [`packages/database/src/repositories/PublishingRepository.ts`](file:///C:/Users/bappa/agency-os/packages/database/src/repositories/PublishingRepository.ts), [`apps/api/src/modules/publishing/services/publishing-application.service.ts`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/publishing/services/publishing-application.service.ts), [`apps/api/test/publishing.e2e-spec.ts`](file:///C:/Users/bappa/agency-os/apps/api/test/publishing.e2e-spec.ts) | **MERGED** (PR #14, `279b4c5`) | Low / Resolved & Fenced | Complete |
-| **Tier 7: Concurrency & Data Integrity** | `deletePost` Locked-Variant Check TOCTOU Fencing | [`apps/api/src/modules/publishing/services/publishing-application.service.ts`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/publishing/services/publishing-application.service.ts) | **PR OPEN** (PR #15, `c0302dd`) | Low / Resolved & Fenced | In Review |
+| **Tier 7: Concurrency & Data Integrity** | **`deletePost` Locked-Variant Check TOCTOU Fencing** | [`apps/api/src/modules/publishing/services/publishing-application.service.ts`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/publishing/services/publishing-application.service.ts), [`apps/api/test/publishing.e2e-spec.ts`](file:///C:/Users/bappa/agency-os/apps/api/test/publishing.e2e-spec.ts) | **MERGED** (PR #15, `a702601`) | Low / Resolved & Fenced | Complete |
 | **Tier 7: Cleanup / Optimization** | Container Runtime Transpilation (`tsx` vs compiled `dist`) | `apps/api/Dockerfile`, `apps/worker/Dockerfile`, `docs/phase-6-readiness.md` | **OPEN** | Low / Performance & Startup Optimization | Add build output transpilation for monorepo internal packages |
 | **Tier 7: Non-Blocking Follow-Ups** | TokenService CAS Failure Recheck `DISCONNECTED` Guard | `apps/worker/src/publishing/token.service.ts` | **QUEUED (NON-BLOCKING)** | Low / Theoretical Edge Case | Check `recheckAccount.status !== DISCONNECTED` before returning recovered |
 | **Tier 7: Non-Blocking Follow-Ups** | TokenService Integration Test via `SocialAccountRepository.upsertWithConnection` | `apps/worker/src/publishing/token.service.spec.ts` | **QUEUED (NON-BLOCKING)** | Low / Test-Only Hardening | Exercise real repository upsert against stale failure handler |
@@ -843,7 +843,7 @@ The final architecture employs a two-tier fencing model:
    - *Context*: In `deletePost` ([`apps/api/src/modules/publishing/services/publishing-application.service.ts`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/publishing/services/publishing-application.service.ts)), unsafe variant status checks (`post.variants.find(...)`) currently execute outside a transaction and prior to `repo.posts.delete`.
    - *Hazard*: A concurrent state transition could change a variant to `QUEUED`, `PUBLISHING`, or `PUBLISHED` (via `requestPublish` or background worker) after the initial check but before `repo.posts.delete` commits.
    - *Resolution*: Implemented row-level locks (`lockPostForUpdate` and `lockVariantsForUpdate` ordered by primary key `id ASC`) inside `this.prisma.$transaction`. Re-evaluates variant statuses under exclusive locks and throws HTTP 403 `ForbiddenException` if any publication variant is in a locked state (`QUEUED`, `PUBLISHING`, `PUBLISHED`, `UNKNOWN`, `SCHEDULED`). Inside transaction, executes `tx.post.delete` (cascading variants and media) and atomic `audit.logAction(..., tx)`. Verified with unit tests (60/60) and 10 dedicated Jest E2E tests in `publishing.e2e-spec.ts` (51/51).
-   - *Status*: **PR OPEN** (PR #15, head [`c0302dd`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/c0302dd236c326670f0ec707323812f506d162a4)).
+   - *Status*: **MERGED / CLOSED** (PR #15, merge commit [`a7026019fa9c9aff6caedaf7a83e19d1963e23ca`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/a7026019fa9c9aff6caedaf7a83e19d1963e23ca) / `a702601`, merged 2026-10-23).
 
 ---
 
@@ -914,7 +914,7 @@ The final architecture employs a two-tier fencing model:
   - `GitGuardian Security Checks`: **SUCCESS**.
 
 ### 5. Remaining Open Follow-Ups
-- **`deletePost` Locked-Variant Check TOCTOU Fencing**: As noted during Muse review, `deletePost` in `PublishingApplicationService` checks variant status outside a transaction. A dedicated follow-up is tracked to bring in-transaction row-level locking to post deletions.
+- **`deletePost` Locked-Variant Check TOCTOU Fencing**: Closed in PR #15 (merge commit [`a7026019fa9c9aff6caedaf7a83e19d1963e23ca`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/a7026019fa9c9aff6caedaf7a83e19d1963e23ca) / `a702601`).
 - **Broader E2E CI Coverage**: Incrementally add dedicated jobs for `accounts.e2e-spec.ts`, `analytics.e2e-spec.ts`, `auth.e2e-spec.ts`, and `media.storage.e2e-spec.ts` as needed.
 
 
@@ -923,8 +923,11 @@ The final architecture employs a two-tier fencing model:
 ## `deletePost` Locked-Variant Concurrency Serialization (PR #15)
 
 ### 1. Implementation & Verification Summary
-- **Status**: **PR OPEN** (PR #15, head commit [`c0302dd236c326670f0ec707323812f506d162a4`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/c0302dd236c326670f0ec707323812f506d162a4) / `c0302dd`)
+- **Status**: **MERGED** (PR #15, merge commit [`a7026019fa9c9aff6caedaf7a83e19d1963e23ca`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/a7026019fa9c9aff6caedaf7a83e19d1963e23ca) / `a702601`, merged `2026-10-23T09:24:09Z`)
 - **Pull Request**: [#15](https://github.com/AbhishekGadmale/Social-Media-Handler/pull/15)
+- **Reviewed Head SHA**: [`e8343c7e49ac9d0558da6703de3ff410fb5e96c0`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/e8343c7e49ac9d0558da6703de3ff410fb5e96c0) (`e8343c7`)
+- **Reviewer**: Muse (APPROVED)
+- **CI Status**: All 6/6 GitHub Actions check-runs completed **GREEN** / **SUCCESS** (`GitGuardian Security Checks`, `Docker Build & Smoke Test`, `Code Quality (Lint & Typecheck)`, `Tests`, `Application Builds`, `Publishing E2E Tests`).
 - **Branch**: `fix/delete-post-concurrency-race`
 - **Target**: `main` (`26d58b9`)
 - **Local Verification**:
@@ -954,3 +957,6 @@ The final architecture employs a two-tier fencing model:
   - Validated delete-first concurrency: `deletePost` holds row locks in transaction, concurrent publish request blocks on row lock (verified with `waitForBlockedRowLock(prisma)`), `deletePost` commits with 1 `POST_DELETED` audit record, publish unblocks, observes post deleted, and returns 409 Conflict without creating ghost jobs or publication attempts.
   - Validated workspace/post tenant isolation: concurrent operations on different posts or workspaces proceed without blocking; cross-workspace deletions return 404.
   - Validated transactional audit rollback: when `tx.auditLog.create` fails, entire transaction rolls back; post and variants remain intact in DB; subsequent retry succeeds with exactly 1 audit record.
+
+### 5. Remaining Open Follow-Ups
+- **Broader E2E CI Coverage**: Incrementally add dedicated jobs for `accounts.e2e-spec.ts`, `analytics.e2e-spec.ts`, `auth.e2e-spec.ts`, and `media.storage.e2e-spec.ts` (requires MinIO service container) as needed.
