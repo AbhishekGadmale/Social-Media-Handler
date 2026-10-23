@@ -1147,6 +1147,466 @@ describe('Publishing API (e2e)', () => {
     });
   });
 
+  describe('Post Deletion Concurrency & Variant Lock Policy', () => {
+    it.each([
+      PostStatus.QUEUED,
+      PostStatus.PUBLISHING,
+      PostStatus.PUBLISHED,
+      PostStatus.UNKNOWN,
+      PostStatus.SCHEDULED,
+    ])(
+      'rejects deletePost with 403 when variant is in locked status %s',
+      async (status) => {
+        const testPostId = generateId();
+        const testVariantId = generateId();
+
+        await prisma.post.create({
+          data: {
+            id: testPostId,
+            workspaceId: ws1,
+            authorId: testUser.id,
+            content: `Static delete test content for ${status}`,
+            status: PostStatus.DRAFT,
+          },
+        });
+
+        await prisma.postPlatformVariant.create({
+          data: {
+            id: testVariantId,
+            postId: testPostId,
+            workspaceId: ws1,
+            socialAccountId: account1,
+            status,
+            content: `Static delete variant for ${status}`,
+          },
+        });
+
+        const res = await request(app.getHttpServer())
+          .delete(`/api/v1/workspaces/${ws1}/posts/${testPostId}`)
+          .set('Cookie', session1.combinedCookie)
+          .set('x-csrf-token', session1.csrfToken);
+
+        expect(res.status).toBe(403);
+        expect(res.body.error.message).toBe(
+          `Cannot delete post with a publication in ${status} state`,
+        );
+
+        // Ensure post was NOT deleted
+        const postInDb = await prisma.post.findUnique({
+          where: { id: testPostId },
+        });
+        expect(postInDb).not.toBeNull();
+
+        // Ensure no POST_DELETED audit record
+        const audits = await prisma.auditLog.findMany({
+          where: { targetId: testPostId, action: 'POST_DELETED' },
+        });
+        expect(audits.length).toBe(0);
+      },
+    );
+
+    it('serializes concurrent transition vs deletePost: transition wins, delete is blocked, unblocks, and rejects with 403 without deleting post or writing audit', async () => {
+      const testPostId = generateId();
+      const testVariantId = generateId();
+      const initialContent = `Initial content transition wins delete ${generateId()}`;
+
+      await prisma.post.create({
+        data: {
+          id: testPostId,
+          workspaceId: ws1,
+          authorId: testUser.id,
+          content: initialContent,
+          status: PostStatus.DRAFT,
+        },
+      });
+
+      await prisma.postPlatformVariant.create({
+        data: {
+          id: testVariantId,
+          postId: testPostId,
+          workspaceId: ws1,
+          socialAccountId: account1,
+          status: PostStatus.DRAFT,
+          content: initialContent,
+        },
+      });
+
+      let signalTransitionLocked: () => void;
+      const transitionLockedPromise = new Promise<void>(
+        (r) => (signalTransitionLocked = r),
+      );
+      let releaseTransition: () => void;
+      const allowTransitionCommitPromise = new Promise<void>(
+        (r) => (releaseTransition = r),
+      );
+
+      // Transition transaction starts, updates variant to QUEUED, and holds exclusive lock
+      const transitionTxPromise = prisma.$transaction(async (tx) => {
+        await tx.postPlatformVariant.update({
+          where: { id: testVariantId },
+          data: { status: PostStatus.QUEUED, queuedAt: new Date() },
+        });
+        signalTransitionLocked();
+        await allowTransitionCommitPromise;
+      });
+
+      // Wait until transition holds the lock
+      await transitionLockedPromise;
+
+      // Eagerly launch deletePost via HTTP with .end() so it immediately hits the server and blocks on PostgreSQL
+      const deleteResPromise = new Promise<any>((resolve, reject) => {
+        request(app.getHttpServer())
+          .delete(`/api/v1/workspaces/${ws1}/posts/${testPostId}`)
+          .set('Cookie', session1.combinedCookie)
+          .set('x-csrf-token', session1.csrfToken)
+          .end((err: any, res: any) => {
+            if (err) return reject(err);
+            resolve(res);
+          });
+      });
+
+      try {
+        // Deterministically verify that deletePost is physically blocked in PostgreSQL
+        const isBlocked = await waitForBlockedRowLock(prisma);
+        expect(isBlocked).toBe(true);
+      } finally {
+        // Always release transition transaction to commit even if assertion fails
+        releaseTransition!();
+        await transitionTxPromise;
+      }
+
+      // deletePost unblocks, sees newly committed QUEUED status, and throws 403
+      const deleteRes = await deleteResPromise;
+      expect(deleteRes.status).toBe(403);
+      expect(deleteRes.body.error.message).toBe(
+        'Cannot delete post with a publication in QUEUED state',
+      );
+
+      // Verify post remains in DB with variant in QUEUED status
+      const postInDb = await prisma.post.findUnique({
+        where: { id: testPostId },
+        include: { variants: true },
+      });
+      expect(postInDb).not.toBeNull();
+      expect(postInDb!.variants[0].status).toBe(PostStatus.QUEUED);
+
+      // Verify no POST_DELETED audit record was created
+      const audits = await prisma.auditLog.findMany({
+        where: { targetId: testPostId, action: 'POST_DELETED' },
+      });
+      expect(audits.length).toBe(0);
+    });
+
+    it('serializes concurrent deletePost vs publish request: delete wins, transition waits, delete commits with audit, publish fails with 409', async () => {
+      const testPostId = generateId();
+      const testVariantId = generateId();
+      const initialContent = `Initial content delete wins ${generateId()}`;
+
+      await prisma.post.create({
+        data: {
+          id: testPostId,
+          workspaceId: ws1,
+          authorId: testUser.id,
+          content: initialContent,
+          status: PostStatus.DRAFT,
+        },
+      });
+
+      await prisma.postPlatformVariant.create({
+        data: {
+          id: testVariantId,
+          postId: testPostId,
+          workspaceId: ws1,
+          socialAccountId: account1,
+          status: PostStatus.DRAFT,
+          content: initialContent,
+        },
+      });
+
+      let signalDeleteLocked: () => void;
+      const deleteLockedPromise = new Promise<void>(
+        (r) => (signalDeleteLocked = r),
+      );
+      let releaseDelete: () => void;
+      const allowDeleteCommitPromise = new Promise<void>(
+        (r) => (releaseDelete = r),
+      );
+
+      const originalTx = prisma.$transaction.bind(prisma);
+      const txSpy = jest
+        .spyOn(prisma, '$transaction')
+        .mockImplementation(async (arg: any) => {
+          if (typeof arg === 'function') {
+            return originalTx(async (tx: any) => {
+              const originalDelete = tx.post.delete.bind(tx);
+              tx.post.delete = async (deleteArgs: any) => {
+                const res = await originalDelete(deleteArgs);
+                // At this point Post and variants are row-locked, and post is deleted in tx
+                signalDeleteLocked();
+                await allowDeleteCommitPromise;
+                return res;
+              };
+              return arg(tx);
+            });
+          }
+          return originalTx(arg);
+        });
+
+      try {
+        // Eagerly launch deletePost via HTTP with .end()
+        const deletePromise = new Promise<any>((resolve, reject) => {
+          request(app.getHttpServer())
+            .delete(`/api/v1/workspaces/${ws1}/posts/${testPostId}`)
+            .set('Cookie', session1.combinedCookie)
+            .set('x-csrf-token', session1.csrfToken)
+            .end((err: any, res: any) => {
+              if (err) return reject(err);
+              resolve(res);
+            });
+        });
+
+        // Wait until deletePost holds the row locks and has deleted the post in its transaction
+        await deleteLockedPromise;
+
+        // Concurrently trigger publish request for the variant via HTTP with .end()
+        const publishPromise = new Promise<any>((resolve, reject) => {
+          request(app.getHttpServer())
+            .post(`/api/v1/workspaces/${ws1}/publications/${testVariantId}/publish`)
+            .set('Cookie', session1.combinedCookie)
+            .set('x-csrf-token', session1.csrfToken)
+            .end((err: any, res: any) => {
+              if (err) return reject(err);
+              resolve(res);
+            });
+        });
+
+        // Verify that publish request is physically waiting on the variant row lock
+        const isBlocked = await waitForBlockedRowLock(prisma);
+        expect(isBlocked).toBe(true);
+
+        // Release deletePost to commit
+        releaseDelete!();
+
+        const [deleteRes, publishRes] = await Promise.all([
+          deletePromise,
+          publishPromise,
+        ]);
+
+        expect(deleteRes.status).toBe(200);
+
+        expect(publishRes.status).toBe(409);
+
+        // Verify post and variant are deleted from DB
+        const postInDb = await prisma.post.findUnique({
+          where: { id: testPostId },
+        });
+        expect(postInDb).toBeNull();
+
+        const variantInDb = await prisma.postPlatformVariant.findUnique({
+          where: { id: testVariantId },
+        });
+        expect(variantInDb).toBeNull();
+
+        // Verify audit logs: exactly 1 POST_DELETED, 0 PUBLICATION_REQUESTED
+        const deleteAudits = await prisma.auditLog.findMany({
+          where: { targetId: testPostId, action: 'POST_DELETED' },
+        });
+        expect(deleteAudits.length).toBe(1);
+
+        const publishAudits = await prisma.auditLog.findMany({
+          where: { targetId: testVariantId, action: 'PUBLICATION_REQUESTED' },
+        });
+        expect(publishAudits.length).toBe(0);
+      } finally {
+        releaseDelete!();
+        txSpy.mockRestore();
+      }
+    });
+
+    it('guarantees tenant and post isolation: concurrent operations on different posts or workspaces do not block each other', async () => {
+      const postAId = generateId();
+      const postBId = generateId();
+      const variantAId = generateId();
+
+      await prisma.post.create({
+        data: {
+          id: postAId,
+          workspaceId: ws1,
+          authorId: testUser.id,
+          content: 'Post A Initial',
+          status: PostStatus.DRAFT,
+        },
+      });
+      await prisma.postPlatformVariant.create({
+        data: {
+          id: variantAId,
+          postId: postAId,
+          workspaceId: ws1,
+          socialAccountId: account1,
+          status: PostStatus.DRAFT,
+          content: 'Post A Initial',
+        },
+      });
+
+      await prisma.post.create({
+        data: {
+          id: postBId,
+          workspaceId: ws2,
+          authorId: testUser2.id,
+          content: 'Post B Initial',
+          status: PostStatus.DRAFT,
+        },
+      });
+
+      // Post A is held in a transaction
+      let signalALocked: () => void;
+      const aLockedPromise = new Promise<void>((r) => (signalALocked = r));
+      let releaseA: () => void;
+      const allowACommitPromise = new Promise<void>((r) => (releaseA = r));
+
+      const txAPromise = prisma.$transaction(async (tx) => {
+        await tx.postPlatformVariant.update({
+          where: { id: variantAId },
+          data: { status: PostStatus.QUEUED },
+        });
+        signalALocked();
+        await allowACommitPromise;
+      });
+
+      await aLockedPromise;
+
+      try {
+        // Delete Post B in Workspace 2 concurrently — it must NOT block and must succeed immediately
+        const deleteBRes = await request(app.getHttpServer())
+          .delete(`/api/v1/workspaces/${ws2}/posts/${postBId}`)
+          .set('Cookie', session2.combinedCookie)
+          .set('x-csrf-token', session2.csrfToken);
+
+        expect(deleteBRes.status).toBe(200);
+
+        const postBInDb = await prisma.post.findUnique({
+          where: { id: postBId },
+        });
+        expect(postBInDb).toBeNull();
+      } finally {
+        releaseA!();
+        await txAPromise;
+      }
+    });
+
+    it('rejects deletion with 404 when post does not exist or belongs to another workspace', async () => {
+      const randomPostId = generateId();
+      const res = await request(app.getHttpServer())
+        .delete(`/api/v1/workspaces/${ws1}/posts/${randomPostId}`)
+        .set('Cookie', session1.combinedCookie)
+        .set('x-csrf-token', session1.csrfToken);
+
+      expect(res.status).toBe(404);
+      expect(res.body.error.message).toBe('Post not found');
+    });
+
+    it('proves database rollback during deletePost when transaction audit write fails, keeping original post and variants, and succeeds on retry', async () => {
+      const testPostId = generateId();
+      const testVariantId = generateId();
+      const initialContent = `Delete rollback content ${generateId()}`;
+
+      await prisma.post.create({
+        data: {
+          id: testPostId,
+          workspaceId: ws1,
+          authorId: testUser.id,
+          content: initialContent,
+          status: PostStatus.DRAFT,
+        },
+      });
+
+      await prisma.postPlatformVariant.create({
+        data: {
+          id: testVariantId,
+          postId: testPostId,
+          workspaceId: ws1,
+          socialAccountId: account1,
+          status: PostStatus.DRAFT,
+          content: initialContent,
+        },
+      });
+
+      // Spy to inject failure into tx.auditLog.create when action === POST_DELETED
+      const originalTx = prisma.$transaction.bind(prisma);
+      let injectAuditFailure = true;
+
+      const spy = jest
+        .spyOn(prisma, '$transaction')
+        .mockImplementation(async (arg: any) => {
+          if (typeof arg === 'function') {
+            return originalTx(async (tx: any) => {
+              const originalCreate = tx.auditLog.create.bind(tx);
+              tx.auditLog.create = async (createArgs: any) => {
+                if (
+                  injectAuditFailure &&
+                  createArgs.data?.action === 'POST_DELETED'
+                ) {
+                  throw new Error(
+                    'Simulated transactional AuditLog failure during POST_DELETED',
+                  );
+                }
+                return originalCreate(createArgs);
+              };
+              return arg(tx);
+            });
+          }
+          return originalTx(arg);
+        });
+
+      try {
+        // Attempt deletion while audit write fails
+        const failDeleteRes = await request(app.getHttpServer())
+          .delete(`/api/v1/workspaces/${ws1}/posts/${testPostId}`)
+          .set('Cookie', session1.combinedCookie)
+          .set('x-csrf-token', session1.csrfToken);
+
+        expect(failDeleteRes.status).toBe(500);
+
+        // Verify post and variants still exist in DB (atomic rollback verified)
+        const postStillInDb = await prisma.post.findUnique({
+          where: { id: testPostId },
+          include: { variants: true },
+        });
+        expect(postStillInDb).not.toBeNull();
+        expect(postStillInDb!.variants.length).toBe(1);
+
+        // Verify no POST_DELETED audit record
+        const audits = await prisma.auditLog.findMany({
+          where: { targetId: testPostId, action: 'POST_DELETED' },
+        });
+        expect(audits.length).toBe(0);
+
+        // Disarm audit failure and retry
+        injectAuditFailure = false;
+        const retryRes = await request(app.getHttpServer())
+          .delete(`/api/v1/workspaces/${ws1}/posts/${testPostId}`)
+          .set('Cookie', session1.combinedCookie)
+          .set('x-csrf-token', session1.csrfToken);
+
+        expect(retryRes.status).toBe(200);
+
+        // Verify post is now deleted
+        const postDeleted = await prisma.post.findUnique({
+          where: { id: testPostId },
+        });
+        expect(postDeleted).toBeNull();
+
+        // Verify exactly 1 POST_DELETED audit record exists
+        const finalAudits = await prisma.auditLog.findMany({
+          where: { targetId: testPostId, action: 'POST_DELETED' },
+        });
+        expect(finalAudits.length).toBe(1);
+      } finally {
+        spy.mockRestore();
+      }
+    });
+  });
+
   describe('Publication Reconciliation', () => {
     let reconciliationPostId: string;
     let reconciliationVariantId: string;

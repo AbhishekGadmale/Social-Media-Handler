@@ -195,36 +195,48 @@ export class PublishingApplicationService {
 
   async deletePost(workspaceId: string, authorId: string, postId: string) {
     const repo = this.getRepo(workspaceId);
-    const post: any = (await repo.posts.findById(postId, {
-      include: { variants: true },
-    })) as any;
-    if (!post) throw new NotFoundException('Post not found');
 
-    const unsafeVariant = post.variants.find((v: any) =>
-      [
-        PostStatus.QUEUED,
-        PostStatus.PUBLISHING,
-        PostStatus.PUBLISHED,
-        PostStatus.UNKNOWN,
-        PostStatus.SCHEDULED,
-      ].includes(v.status),
-    );
-    if (unsafeVariant) {
-      throw new ForbiddenException(
-        `Cannot delete post with a publication in ${unsafeVariant.status} state`,
+    return this.prisma.$transaction(async (tx) => {
+      const postRows = await repo.lockPostForUpdate(tx, postId);
+      if (!postRows || postRows.length === 0) {
+        throw new NotFoundException('Post not found');
+      }
+
+      const variantRows = await repo.lockVariantsForUpdate(tx, postId);
+      const unsafeVariant = variantRows.find((v: any) =>
+        [
+          PostStatus.QUEUED,
+          PostStatus.PUBLISHING,
+          PostStatus.PUBLISHED,
+          PostStatus.UNKNOWN,
+          PostStatus.SCHEDULED,
+        ].includes(v.status),
       );
-    }
 
-    await repo.posts.delete({ where: { id: postId } });
-    await this.audit.logAction({
-      workspaceId,
-      actorId: authorId,
-      action: AuditAction.POST_DELETED,
-      targetType: 'POST',
-      targetId: postId,
-      metadata: { postId },
+      if (unsafeVariant) {
+        throw new ForbiddenException(
+          `Cannot delete post with a publication in ${unsafeVariant.status} state`,
+        );
+      }
+
+      await tx.post.delete({
+        where: { id: postId, workspaceId },
+      });
+
+      await this.audit.logAction(
+        {
+          workspaceId,
+          actorId: authorId,
+          action: AuditAction.POST_DELETED,
+          targetType: 'POST',
+          targetId: postId,
+          metadata: { postId },
+        },
+        tx,
+      );
+
+      return true;
     });
-    return true;
   }
 
   // --- PUBLICATIONS (TARGETS) --- //
