@@ -629,6 +629,7 @@ describe('PublishingApplicationService - Audit Logging Coverage', () => {
           workspaceId,
           content: 'Updated content',
         }),
+        delete: vi.fn().mockResolvedValue({ id: postId }),
       },
     };
 
@@ -787,17 +788,67 @@ describe('PublishingApplicationService - Audit Logging Coverage', () => {
   });
 
   // 3. POST_DELETED
-  it('emits POST_DELETED with correct attribution on deletePost', async () => {
-    await service.deletePost(workspaceId, authorId, postId);
+  it('emits POST_DELETED with correct attribution on deletePost inside transaction', async () => {
+    const res = await service.deletePost(workspaceId, authorId, postId);
 
-    expect(auditMock.logAction).toHaveBeenCalledWith({
-      workspaceId,
-      actorId: authorId,
-      action: AuditAction.POST_DELETED,
-      targetType: 'POST',
-      targetId: postId,
-      metadata: { postId },
+    expect(res).toBe(true);
+    expect(prismaMock.$transaction).toHaveBeenCalledTimes(1);
+    expect(repoMock.lockPostForUpdate).toHaveBeenCalledWith(txMock, postId);
+    expect(repoMock.lockVariantsForUpdate).toHaveBeenCalledWith(txMock, postId);
+    expect(txMock.post.delete).toHaveBeenCalledWith({
+      where: { id: postId, workspaceId },
     });
+    expect(auditMock.logAction).toHaveBeenCalledWith(
+      {
+        workspaceId,
+        actorId: authorId,
+        action: AuditAction.POST_DELETED,
+        targetType: 'POST',
+        targetId: postId,
+        metadata: { postId },
+      },
+      txMock,
+    );
+  });
+
+  it('throws NotFoundException when post is not found during in-transaction lock in deletePost', async () => {
+    repoMock.lockPostForUpdate.mockResolvedValueOnce([]);
+
+    await expect(
+      service.deletePost(workspaceId, authorId, postId),
+    ).rejects.toThrow(NotFoundException);
+  });
+
+  it.each([
+    PostStatus.QUEUED,
+    PostStatus.PUBLISHING,
+    PostStatus.PUBLISHED,
+    PostStatus.UNKNOWN,
+    PostStatus.SCHEDULED,
+  ])(
+    'throws ForbiddenException when variant is in locked status %s during deletePost',
+    async (status) => {
+      repoMock.lockVariantsForUpdate.mockResolvedValueOnce([
+        { id: variantId, status },
+      ]);
+
+      await expect(
+        service.deletePost(workspaceId, authorId, postId),
+      ).rejects.toThrow(
+        `Cannot delete post with a publication in ${status} state`,
+      );
+    },
+  );
+
+  it('allows deletePost when variant is in safe status DRAFT or FAILED', async () => {
+    for (const safeStatus of [PostStatus.DRAFT, PostStatus.FAILED]) {
+      repoMock.lockVariantsForUpdate.mockResolvedValueOnce([
+        { id: variantId, status: safeStatus },
+      ]);
+
+      const res = await service.deletePost(workspaceId, authorId, postId);
+      expect(res).toBe(true);
+    }
   });
 
   // 4. PUBLICATION_TARGET_ADDED
@@ -1000,5 +1051,15 @@ describe('PublishingApplicationService - Audit Logging Coverage', () => {
         content: 'Failing update audit',
       }),
     ).rejects.toThrow('Audit DB write failed during update');
+  });
+
+  it('propagates rejection when audit.logAction fails during deletePost', async () => {
+    auditMock.logAction.mockRejectedValueOnce(
+      new Error('Audit DB write failed during delete'),
+    );
+
+    await expect(
+      service.deletePost(workspaceId, authorId, postId),
+    ).rejects.toThrow('Audit DB write failed during delete');
   });
 });
