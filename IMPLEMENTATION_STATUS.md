@@ -519,7 +519,8 @@ Following the project's 7-tier prioritization hierarchy:
 | **Tier 7: Non-Blocking Follow-Ups** | Failed Login Audit Accuracy Enrichment | `apps/api/src/modules/auth/auth.controller.ts` | **QUEUED (NON-BLOCKING)** | Low / Security Audit Detail | Record actual auth failure reason for `AUTH_LOGIN_FAILED` without logging credentials, tokens, or secrets |
 | **Tier 7: Non-Blocking Follow-Ups** | OAuth Callback Missing Parameter Failure Audit | `apps/api/src/modules/oauth/oauth.controller.ts` | **QUEUED (NON-BLOCKING)** | Low / Security Audit Detail | Add `FAILED` audit event when OAuth callbacks miss required `code` or `state`, using safe metadata only |
 | **Tier 7: Future Feature Dependency** | Worker `PublishingProcessor` Catch-Path Disconnect Fencing | `apps/worker/src/publishing/publishing.processor.ts` | **FUTURE DEPENDENCY** | Low / Dependent on Future Disconnect API | Guard processor catch paths against resurrecting `DISCONNECTED` accounts |
-| **Tier 7: CI / Test Optimization** | CI PostgreSQL Service E2E Test Execution Gap | `apps/api/test/publishing.e2e-spec.ts`, `.github/workflows/ci.yml` | **PR OPEN** (PR #13, `4b119c7`) | Low / Pipeline Test Breadth | Dedicated CI Job Added; Awaiting Review & Merge |
+| **Tier 7: CI / Test Optimization** | CI PostgreSQL Service Publishing E2E Execution | `apps/api/test/publishing.e2e-spec.ts`, `.github/workflows/ci.yml` | **MERGED** (PR #13, `6bab30d`) | Low / Pipeline Test Breadth | Complete (Dedicated CI Job Verified) |
+| **Tier 7: CI / Test Optimization** | Broader API E2E CI Coverage (Accounts, Analytics, Auth, Media) | `apps/api/test/*.e2e-spec.ts`, `.github/workflows/ci.yml` | **OPEN** | Low / Pipeline Test Breadth | Add service dependencies (e.g. MinIO) & CI jobs for remaining suites |
 
 ---
 
@@ -824,9 +825,39 @@ The final architecture employs a two-tier fencing model:
    - *Next Step*: Re-evaluate variant statuses inside `$transaction` or apply conditional update guards before mutating post contents.
    - *Status*: OPEN (Low / Theoretical Concurrency Race).
 2. **Run Jest E2E tests in GitHub Actions CI**:
-   - *Context*: Dedicated GitHub Actions CI job `e2e` (`Publishing E2E Tests`) added to `.github/workflows/ci.yml` on branch `ci/publishing-e2e-tests` (PR #13, commit [`4b119c7`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/4b119c7f88ee7f73885ed98694e4fa2ce0b7cef8)).
+   - *Context*: Dedicated GitHub Actions CI job `e2e` (`Publishing E2E Tests`) added to `.github/workflows/ci.yml` in PR #13 (reviewed HEAD [`e7b14da65e67c00ab9b18d0f272a967c211e2ced`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/e7b14da65e67c00ab9b18d0f272a967c211e2ced) / `e7b14da`, merge commit [`6bab30dc00a045b7238be8011e8e9ab63fef5540`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/6bab30dc00a045b7238be8011e8e9ab63fef5540) / `6bab30d`, merged 2026-10-21).
    - *Architecture*: Runs `pnpm --filter @agency-os/api test:e2e test/publishing.e2e-spec.ts` against isolated `postgres:15-alpine` (`agency_os_test`) and `redis:7-alpine` service containers with health checks, explicit test credentials, Prisma client generation, and schema migration deployment (`prisma migrate deploy`).
-   - *Verification*:
+   - *Scope Limitation*: Only `apps/api/test/publishing.e2e-spec.ts` currently runs in this dedicated CI job. Broader E2E test suites (`accounts.e2e-spec.ts`, `analytics.e2e-spec.ts`, `auth.e2e-spec.ts`, and `media.storage.e2e-spec.ts`) are not executed in this job and remain tracked separately.
+   - *Verification Evidence*:
      - Local PostgreSQL Jest E2E execution: 33/33 passed across 1 suite (7.397 s).
-     - GitHub Actions CI execution: Job `Publishing E2E Tests` succeeded in 54s ([run 39629862242, job 119324880432](https://github.com/AbhishekGadmale/Social-Media-Handler/actions/runs/39629862242/job/119324880432)).
-   - *Status*: **PR OPEN** (PR #13; pending review & merge into `main`).
+     - GitHub Actions CI execution: Job `Publishing E2E Tests` succeeded in 54s ([run 39629862242, job 119324880432](https://github.com/AbhishekGadmale/Social-Media-Handler/actions/runs/39629862242/job/119324880432)); all 6/6 checks passed on PR #13 HEAD.
+   - *Status*: **MERGED / CLOSED** (PR #13, merge commit `6bab30d`). Closes PR #12 follow-up #2 for publishing E2E tests.
+
+3. **Broader API E2E CI Coverage (Accounts, Analytics, Auth, Media Storage)**:
+   - *Context*: Other E2E test suites in `apps/api/test/` (`accounts.e2e-spec.ts`, `analytics.e2e-spec.ts`, `auth.e2e-spec.ts`, and `media.storage.e2e-spec.ts`) require additional service dependencies (such as MinIO for S3 object storage in `media.storage.e2e-spec.ts`) and mock credentials.
+   - *Next Step*: Define dedicated CI service jobs or extend CI service dependencies to safely execute remaining API E2E suites without flakiness or cross-suite pollution.
+   - *Status*: OPEN (Low / Pipeline Test Coverage).
+
+---
+
+## Dedicated Publishing Jest E2E Tests in CI (PR #13)
+
+### 1. Implementation & Verification Summary
+- **Status**: **MERGED** (PR #13, merge commit [`6bab30dc00a045b7238be8011e8e9ab63fef5540`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/6bab30dc00a045b7238be8011e8e9ab63fef5540) / `6bab30d`, merged 2026-10-21)
+- **Pull Request**: [#13](https://github.com/AbhishekGadmale/Social-Media-Handler/pull/13)
+- **Approved Head SHA**: [`e7b14da65e67c00ab9b18d0f272a967c211e2ced`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/e7b14da65e67c00ab9b18d0f272a967c211e2ced) (`e7b14da`)
+- **Reviewer**: Muse (APPROVED)
+- **CI Status**: All 6/6 GitHub Actions check-runs completed GREEN (`GitGuardian Security Checks`, `Docker Build & Smoke Test`, `Code Quality (Lint & Typecheck)`, `Tests`, `Application Builds`, `Publishing E2E Tests`).
+- **Scope**: Dedicated containerized CI job running `pnpm --filter @agency-os/api test:e2e test/publishing.e2e-spec.ts` against real PostgreSQL and Redis services, closing the PR #12 CI test execution gap follow-up.
+
+### 2. Architectural Design & Infrastructure
+- **Service Isolation**: Runs dedicated `postgres:15-alpine` (`agency_os_test`) and `redis:7-alpine` service containers with health checks (`pg_isready` and `redis-cli ping`), ensuring zero shared-state interference with unit test jobs.
+- **Database Lifecycle**: Executes Prisma client generation (`pnpm --filter @agency-os/database exec prisma generate`) and applies migrations (`pnpm --filter @agency-os/database exec prisma migrate deploy`) against the test database before Jest starts.
+- **Targeted Test Execution**: Exclusively executes `test/publishing.e2e-spec.ts`, avoiding unconfigured dependency failures (e.g. MinIO object storage for media storage tests).
+
+### 3. Verification Evidence
+- **Local Verification**: 33/33 tests passed in 7.397 s against local PostgreSQL/Redis.
+- **CI Verification**: GitHub Actions job `Publishing E2E Tests` passed in 54s ([run 39629862242, job 119324880432](https://github.com/AbhishekGadmale/Social-Media-Handler/actions/runs/39629862242/job/119324880432)).
+
+### 4. Remaining Open Follow-Ups
+- **Broader E2E Coverage**: Incrementally add dedicated jobs for `accounts.e2e-spec.ts`, `analytics.e2e-spec.ts`, `auth.e2e-spec.ts`, and `media.storage.e2e-spec.ts` (requires MinIO service container) as needed.
