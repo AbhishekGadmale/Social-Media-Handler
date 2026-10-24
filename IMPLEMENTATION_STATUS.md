@@ -515,8 +515,8 @@ Following the project's 7-tier prioritization hierarchy:
 | **Tier 7: Concurrency & Data Integrity** | **`deletePost` Locked-Variant Check TOCTOU Fencing** | [`apps/api/src/modules/publishing/services/publishing-application.service.ts`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/publishing/services/publishing-application.service.ts), [`apps/api/test/publishing.e2e-spec.ts`](file:///C:/Users/bappa/agency-os/apps/api/test/publishing.e2e-spec.ts) | **MERGED** (PR #15, `a702601`) | Low / Resolved & Fenced | Complete |
 | **Tier 7: Cleanup / Optimization** | Container Runtime Transpilation (`tsx` vs compiled `dist`) | `apps/api/Dockerfile`, `apps/worker/Dockerfile`, `packages/*/package.json`, `docs/phase-6-readiness.md` | **MERGED / CLOSED** (PR #17, `c7ec09b`) | Low / Performance & Startup Optimization | Complete (Compiled workspace packages & node dist execution verified) |
 | **Tier 7: Non-Blocking Follow-Ups** | Production Docker Runner Image Slimming | `apps/api/Dockerfile`, `apps/worker/Dockerfile` | **QUEUED (NON-BLOCKING)** | Low / Image Optimization | Prune devDependencies and unused workspace packages in runner stages to reduce container image footprint |
-| **Tier 7: Non-Blocking Follow-Ups** | TokenService CAS Failure Recheck `DISCONNECTED` Guard | `apps/worker/src/publishing/token.service.ts` | **PR OPEN** (PR #19) | Low / Concurrency Safety Hardening | Fenced `recheckAccount.status === DISCONNECTED` to prevent returning recovered credentials or overwriting status |
-| **Tier 7: Non-Blocking Follow-Ups** | TokenService Integration Test via `SocialAccountRepository.upsertWithConnection` | `apps/worker/src/publishing/token.service.spec.ts` | **PR OPEN** (PR #19) | Low / Integration Test Hardening | Direct domain repository integration tests for concurrent OAuth reconnects against stale failure handlers |
+| **Tier 7: Non-Blocking Follow-Ups** | TokenService CAS Failure Recheck `DISCONNECTED` Guard | `apps/worker/src/publishing/token.service.ts` | **MERGED / CLOSED** (PR #19, `cfc7924`) | Low / Concurrency Safety Hardening | Fenced `recheckAccount.status === DISCONNECTED` to prevent returning recovered credentials or overwriting status |
+| **Tier 7: Non-Blocking Follow-Ups** | TokenService Integration Test via `SocialAccountRepository.upsertWithConnection` | `apps/worker/src/publishing/token.service.spec.ts` | **MERGED / CLOSED** (PR #19, `cfc7924`) | Low / Integration Test Hardening | Direct domain repository integration tests for concurrent OAuth reconnects against stale failure handlers |
 | **Tier 7: Non-Blocking Follow-Ups** | ESLint `no-floating-promises` Rule Escalation | `apps/api/package.json`, `.eslintrc.js` | **QUEUED (NON-BLOCKING)** | Low / Static Analysis Hardening | Evaluate escalating ESLint `no-floating-promises` from warning to error; check existing violations & migration scope |
 | **Tier 7: Non-Blocking Follow-Ups** | Failed Login Audit Accuracy Enrichment | `apps/api/src/modules/auth/auth.controller.ts` | **QUEUED (NON-BLOCKING)** | Low / Security Audit Detail | Record actual auth failure reason for `AUTH_LOGIN_FAILED` without logging credentials, tokens, or secrets |
 | **Tier 7: Non-Blocking Follow-Ups** | OAuth Callback Missing Parameter Failure Audit | `apps/api/src/modules/oauth/oauth.controller.ts` | **QUEUED (NON-BLOCKING)** | Low / Security Audit Detail | Add `FAILED` audit event when OAuth callbacks miss required `code` or `state`, using safe metadata only |
@@ -528,11 +528,13 @@ Following the project's 7-tier prioritization hierarchy:
 
 ### 4. Current Implementation Focus: Completed Hardening & Next Priorities
 
-- **Recently Completed**: **Container Runtime Transpilation & Compiled Workspace Packaging** (**MERGED / CLOSED** in PR #17, merge commit [`c7ec09b`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/c7ec09b14fe70917ec51526cee482ac01b504f50)). Production API and Worker containers now run compiled JavaScript from `dist/` directly via standard `node`, with internal workspace packages compiled to `dist/` with `.d.ts` types and modern exports.
+- **Recently Completed**:
+  - **TokenService CAS-Failure Recheck `DISCONNECTED` Guard & Direct Repository Integration Testing** (**MERGED / CLOSED** in PR #19, merge commit [`cfc7924`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/cfc7924fb7d3704988ec7f81b3f13160a8799737), reviewed HEAD [`9a44a2a`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/9a44a2aa792861e586ab371b45df12ba2b3ceeea)). Prevents returning active credentials or overwriting `DISCONNECTED` status during CAS conflicts, and adds direct domain repository integration coverage using `SocialAccountRepository.upsertWithConnection()`.
+  - **Container Runtime Transpilation & Compiled Workspace Packaging** (**MERGED / CLOSED** in PR #17, merge commit [`c7ec09b`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/c7ec09b14fe70917ec51526cee482ac01b504f50)). Production API and Worker containers now run compiled JavaScript from `dist/` directly via standard `node`, with internal workspace packages compiled to `dist/` with `.d.ts` types and modern exports.
 - **Next Focus Areas (Non-Blocking Follow-Ups & Roadmap)**:
   1. **Next.js Web Frontend Dashboard**: Implement analytics dashboard and core UX in `apps/web`.
   2. **Production Docker Runner Image Slimming**: Optional optimization to prune workspace devDependencies and unused internal packages in final container stages.
-  3. **TokenService Non-Blocking Hardening**: CAS failure recheck `DISCONNECTED` guard and direct repository integration tests (**PR OPEN** in PR #19).
+  3. **Non-Blocking Review Observations (PR #19)**: Optional `token.service.spec.ts` Test 11 spy cleanup in `try/finally` and dedicated CAS-recheck reconnect-recovery test.
 
 ---
 
@@ -601,11 +603,11 @@ The final architecture employs a two-tier fencing model:
 - **Follow-Up A — CAS-Failure Recheck `DISCONNECTED` Guard**:
   - *Context*: In `TokenService.handlePermanentAuthFailure()`, if `tx.socialAccount.updateMany` returns `count: 0` (indicating a CAS conflict), the helper re-reads `recheckAccount`. If `recheckAccount.connection` has valid credentials, it previously returned `recovered` without checking account status.
   - *Hardening*: Implemented in PR #19 (`apps/worker/src/publishing/token.service.ts` L489-L493). If `recheckAccount.status === SocialAccountStatus.DISCONNECTED`, immediately returns `{ outcome: 'disconnected' }` and throws `AuthRequiredError` without leaking credentials or mutating status.
-  - *Status*: **RESOLVED / PR OPEN** (PR #19).
+  - *Status*: **RESOLVED & MERGED** (PR #19, merge commit [`cfc7924`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/cfc7924fb7d3704988ec7f81b3f13160a8799737), reviewed HEAD [`9a44a2a`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/9a44a2aa792861e586ab371b45df12ba2b3ceeea)).
 - **Follow-Up B — Integration Test Through Real `upsertWithConnection`**:
   - *Context*: Existing unit tests in `token.service.spec.ts` simulated concurrent reconnect by writing directly to Prisma.
   - *Hardening*: Implemented in PR #19 (`apps/worker/src/publishing/token.service.spec.ts` tests 12 and 13). Direct integration tests exercising OAuth reconnect via `SocialAccountRepository.upsertWithConnection()` against stale worker permanent failure calls, verifying that new credentials win and the account remains `ACTIVE`.
-  - *Status*: **RESOLVED / PR OPEN** (PR #19).
+  - *Status*: **RESOLVED & MERGED** (PR #19, merge commit [`cfc7924`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/cfc7924fb7d3704988ec7f81b3f13160a8799737), reviewed HEAD [`9a44a2a`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/9a44a2aa792861e586ab371b45df12ba2b3ceeea)).
 - **Follow-Up C — Future Disconnect Endpoint Worker Handling**:
   - *Context*: No disconnect API endpoint currently exists in the application.
   - *Future Dependency*: When account disconnect functionality is implemented, review the `PublishingProcessor` `AuthRequiredError` catch handlers. Those handlers currently perform unconditional status updates to `REAUTH_REQUIRED`. If a user disconnects an account while a publication job is in flight, the processor could resurrect `DISCONNECTED` to `REAUTH_REQUIRED`.
@@ -1090,30 +1092,38 @@ The final architecture employs a two-tier fencing model:
 
 ---
 
-## 19. TokenService CAS-Failure Recheck `DISCONNECTED` Guard & Repository Integration Tests (Branch `fix/token-service-cas-disconnected-guard`)
+## 19. TokenService CAS-Failure Recheck `DISCONNECTED` Guard & Repository Integration Tests (Branch `fix/token-service-cas-disconnected-guard` — MERGED)
 
 ### 1. Summary & Motivation
-- **Pull Request**: PR #19
+- **Status**: **MERGED** (PR #19, merge commit [`cfc7924fb7d3704988ec7f81b3f13160a8799737`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/cfc7924fb7d3704988ec7f81b3f13160a8799737))
+- **Pull Request**: [#19](https://github.com/AbhishekGadmale/Social-Media-Handler/pull/19)
 - **Branch**: `fix/token-service-cas-disconnected-guard`
-- **Scope**:
-  1. **DISCONNECTED Guard on CAS Conflict Recheck (Follow-Up A)**:
-     - In `apps/worker/src/publishing/token.service.ts` (`handlePermanentAuthFailure`), if `tx.socialAccount.updateMany` encountered a CAS conflict (`casResult.count === 0`) due to another actor concurrently updating the account, the helper re-read `recheckAccount`.
-     - Defect: If the account was concurrently disconnected (`SocialAccountStatus.DISCONNECTED`) by a user, but the connection still held a token with an unexpired future date (`expiresAt > Date.now()`, e.g. Meta 60-day token), the helper previously returned `{ outcome: 'recovered' }` and handed out active execution credentials for a disconnected account.
-     - Hardening: Added an explicit guard immediately after re-reading `recheckAccount`:
-       ```typescript
-       if (recheckAccount?.status === SocialAccountStatus.DISCONNECTED) {
-         return {
-           outcome: 'disconnected' as const,
-         };
-       }
-       ```
-       This mirrors the pre-CAS disconnect check, guarantees no credentials are leaked for a disconnected account, throws `AuthRequiredError("Account <id> (<provider>) is disconnected")`, and preserves the `DISCONNECTED` status in PostgreSQL without mutating it to `REAUTH_REQUIRED`.
-  2. **Domain Repository Integration Testing (Follow-Up B)**:
-     - Prior tests in `apps/worker/src/publishing/token.service.spec.ts` simulated concurrent OAuth reconnects by mutating raw Prisma tables directly.
-     - Hardening: Authored realistic integration tests exercising the actual `@agency-os/database` `SocialAccountRepository.upsertWithConnection()` method to seed and reconnect social accounts with authentic credential payloads, rotated refresh tokens, and updated scopes.
-     - Verified that concurrent user re-authentications via `upsertWithConnection()` win over stale worker failure handling, credentials are safely recovered, and account status remains `ACTIVE`.
+- **Pre-Merge Base SHA**: [`bae671d9e83a35d478834075fe222abda03de684`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/bae671d9e83a35d478834075fe222abda03de684) (`bae671d`)
+- **Reviewed Head SHA**: [`9a44a2aa792861e586ab371b45df12ba2b3ceeea`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/9a44a2aa792861e586ab371b45df12ba2b3ceeea) (`9a44a2a`)
+- **Merge Commit SHA**: [`cfc7924fb7d3704988ec7f81b3f13160a8799737`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/cfc7924fb7d3704988ec7f81b3f13160a8799737) (`cfc7924`)
+- **Merge Timestamp**: `2026-10-24T18:28:53Z`
+- **CI Run**: [Run #40119659470](https://github.com/AbhishekGadmale/Social-Media-Handler/actions/runs/40119659470) (6/6 check runs green on reviewed HEAD `9a44a2a`)
+- **Reviewer**: Muse (APPROVED)
 
-### 2. Test Coverage & Verification Evidence
+### 2. Scope & Implementation Details
+1. **DISCONNECTED Guard on CAS Conflict Recheck (Follow-Up A)**:
+   - In `apps/worker/src/publishing/token.service.ts` (`handlePermanentAuthFailure`), if `tx.socialAccount.updateMany` encountered a CAS conflict (`casResult.count === 0`) due to another actor concurrently updating the account, the helper re-read `recheckAccount`.
+   - Defect: If the account was concurrently disconnected (`SocialAccountStatus.DISCONNECTED`) by a user, but the connection still held a token with an unexpired future date (`expiresAt > Date.now()`, e.g. Meta 60-day token), the helper previously returned `{ outcome: 'recovered' }` and handed out active execution credentials for a disconnected account.
+   - Hardening: Added an explicit guard immediately after re-reading `recheckAccount`:
+     ```typescript
+     if (recheckAccount?.status === SocialAccountStatus.DISCONNECTED) {
+       return {
+         outcome: 'disconnected' as const,
+       };
+     }
+     ```
+     This mirrors the pre-CAS disconnect check, guarantees no credentials are leaked for a disconnected account, throws `AuthRequiredError("Account <id> (<provider>) is disconnected")`, and preserves the `DISCONNECTED` status in PostgreSQL without mutating it to `REAUTH_REQUIRED`.
+2. **Domain Repository Integration Testing (Follow-Up B)**:
+   - Prior tests in `apps/worker/src/publishing/token.service.spec.ts` simulated concurrent OAuth reconnects by mutating raw Prisma tables directly.
+   - Hardening: Authored realistic integration tests exercising the actual `@agency-os/database` `SocialAccountRepository.upsertWithConnection()` method to seed and reconnect social accounts with authentic credential payloads, rotated refresh tokens, and updated scopes.
+   - Verified that concurrent user re-authentications via `upsertWithConnection()` win over stale worker failure handling, credentials are safely recovered, and account status remains `ACTIVE`.
+
+### 3. Test Coverage & Verification Evidence
 - **New Tests in `apps/worker/src/publishing/token.service.spec.ts`**:
   - `Test 11`: *CAS conflict recheck DISCONNECTED guard*: Intercepts CAS update to simulate concurrent disconnect (`count: 0`). Asserts `handlePermanentAuthFailure` rejects with `AuthRequiredError` indicating account is disconnected, never returns recovered credentials, and leaves PostgreSQL status as `DISCONNECTED`.
   - `Test 12`: *Repository integration*: Connects account via `SocialAccountRepository.upsertWithConnection()`, reads stale failure snapshot, performs concurrent re-auth via `upsertWithConnection()`, and verifies stale worker failure handling recovers reconnected credentials while account remains `ACTIVE`.
@@ -1124,3 +1134,12 @@ The final architecture employs a two-tier fencing model:
   - Monorepo Lint & Typecheck: 15/15 tasks passing (0 errors, 0 warnings in affected code).
   - Monorepo Unit Tests: 9/9 tasks passing.
   - API E2E Tests: 5/5 suites, 79/79 tests passing (`accounts`, `analytics`, `auth`, `publishing`, `media.storage`).
+  - GitHub Actions CI Run #40119659470: All 6 check runs completed `success`.
+
+### 4. Non-Blocking Review Observations & Follow-Ups
+1. **Optional Test 11 Spy Cleanup Resilience**:
+   - In `apps/worker/src/publishing/token.service.spec.ts`, test 11 restores `txSpy` at the end of the test. A minor future hardening could wrap the assertion in a `try/finally` block so that `txSpy.mockRestore()` executes even if intermediate assertions throw.
+2. **Optional CAS-Recheck Reconnect Recovery Test**:
+   - Test 12 and Test 13 exercise concurrent reconnect through `SocialAccountRepository.upsertWithConnection()` where `hasCredentialStateChanged` triggers recovery in Step 4. An optional additional test could specifically exercise the Step 5 CAS conflict recheck recovery path where `updateMany` returns count 0 and `recheckAccount` has valid reconnected credentials.
+3. **Future Feature Dependency — Worker Catch-Path Disconnect Fencing**:
+   - Retained as a future feature dependency when account disconnect API endpoints are introduced (`publishing.processor.ts`).
