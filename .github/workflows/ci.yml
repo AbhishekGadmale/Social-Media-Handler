@@ -189,6 +189,9 @@ jobs:
         run: |
           aws --endpoint-url http://localhost:9000 s3 mb s3://agency-os-media || true
 
+      - name: Build packages
+        run: pnpm turbo run build
+
       - name: Run API E2E Tests
         env:
           NODE_ENV: test

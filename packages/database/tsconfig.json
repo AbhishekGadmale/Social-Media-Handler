@@ -1,12 +1,14 @@
 {
-    "extends":  "../config/tsconfig.base.json",
-    "compilerOptions":  {
-                            "outDir":  "./dist",
-                            "rootDir":  "./src"
-                        },
-    "include":  [
-                    "src/**/*",
-                    "test/**/*",
-                    "eslint.config.mjs"
-                ]
+  "extends": "../config/tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "./dist",
+    "rootDir": ".",
+    "declaration": true
+  },
+  "include": [
+    "src/**/*",
+    "test/**/*",
+    "index.ts",
+    "eslint.config.mjs"
+  ]
 }
