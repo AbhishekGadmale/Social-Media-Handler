@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-argument, @typescript-eslint/require-await */
 import {
   PrismaClient,
+  SocialAccountRepository,
   SocialAccountStatus,
   SocialProvider,
   assertTestDatabaseUrl,
@@ -1073,6 +1074,268 @@ describe('TokenService', () => {
       });
       // Must remain REAUTH_REQUIRED, must NOT be forced to ACTIVE
       expect(updatedAccount.status).toBe(SocialAccountStatus.REAUTH_REQUIRED);
+    });
+
+    it('11. CAS conflict recheck DISCONNECTED guard: never returns recovered credentials when recheckAccount is DISCONNECTED', async () => {
+      const futureDate = new Date(Date.now() + 3600 * 1000);
+      const { account, connection } = await createAccountWithConnection({
+        provider: 'INSTAGRAM',
+        accessToken: 'instagram-token-11',
+        refreshToken: null,
+        expiresAt: futureDate,
+      });
+
+      // Intercept prisma.$transaction to simulate concurrent disconnect between initial read and CAS:
+      // When updateMany runs, simulate CAS conflict (count: 0) and mark the account DISCONNECTED in DB
+      const origTx = prisma.$transaction.bind(prisma);
+      const txSpy = jest
+        .spyOn(prisma, '$transaction')
+        .mockImplementation(async (cb: any) => {
+          return origTx(async (tx: any) => {
+            tx.socialAccount.updateMany = jest
+              .fn()
+              .mockImplementation(async () => {
+                // Concurrently mark the account DISCONNECTED in the DB before CAS completes
+                await prisma.socialAccount.update({
+                  where: { id: account.id },
+                  data: { status: SocialAccountStatus.DISCONNECTED },
+                });
+                // CAS fails because status is DISCONNECTED / updatedAt changed
+                return { count: 0 };
+              });
+            return cb(tx);
+          });
+        });
+
+      const tokenService = new TokenService(prisma);
+      await expect(
+        (tokenService as any).handlePermanentAuthFailure({
+          socialAccountId: account.id,
+          workspaceId: account.workspaceId,
+          accountProvider: 'INSTAGRAM',
+          snapshotConnection: connection,
+          snapshotAccount: account,
+          errorMessage: 'OAuth token revoked by user',
+        }),
+      ).rejects.toThrow(`Account ${account.id} (INSTAGRAM) is disconnected`);
+
+      // Verify the persisted state in DB is preserved as DISCONNECTED (never mutated to REAUTH_REQUIRED)
+      const persistedAccount = await prisma.socialAccount.findUniqueOrThrow({
+        where: { id: account.id },
+      });
+      expect(persistedAccount.status).toBe(SocialAccountStatus.DISCONNECTED);
+
+      txSpy.mockRestore();
+    });
+
+    it('12. repository integration: concurrent OAuth reconnect via SocialAccountRepository.upsertWithConnection wins over stale failure', async () => {
+      const socialAccountRepo = new SocialAccountRepository(prisma);
+
+      // 1. Create workspace
+      const ws = await prisma.workspace.create({
+        data: {
+          id: crypto.randomUUID(),
+          name: 'Repo Integration Workspace',
+          organization: {
+            create: {
+              id: crypto.randomUUID(),
+              name: 'Repo Integration Org',
+            },
+          },
+        },
+      });
+
+      const socialAccountId = crypto.randomUUID();
+      const connectionId = crypto.randomUUID();
+      const externalId = 'repo-test-external-id-12';
+      const initialEnc = encrypt('initial-expired-token-12');
+      const expiredDate = new Date(Date.now() - 120 * 1000);
+
+      // 2. Initial connect via real SocialAccountRepository
+      const { account: initialAccount } =
+        await socialAccountRepo.upsertWithConnection(
+          ws.id,
+          {
+            id: socialAccountId,
+            provider: SocialProvider.LINKEDIN,
+            externalId,
+            name: 'LinkedIn Test Account',
+            capabilities: ['PUBLISH'],
+            status: SocialAccountStatus.ACTIVE,
+          },
+          {
+            id: connectionId,
+            encryptedAccessToken: initialEnc.encrypted,
+            accessTokenIv: initialEnc.iv,
+            accessTokenAuthTag: initialEnc.authTag,
+            keyVersion: initialEnc.keyVersion,
+            expiresAt: expiredDate,
+          },
+        );
+
+      // 3. Worker reads initial snapshot before failure
+      const initialConnection = await prisma.socialConnection.findUniqueOrThrow(
+        {
+          where: { socialAccountId: initialAccount.id },
+        },
+      );
+
+      // 4. Concurrently, user re-authenticates in the dashboard via SocialAccountRepository.upsertWithConnection
+      const reconnectedEnc = encrypt('reconnected-valid-token-12');
+      const futureExpiresAt = new Date(Date.now() + 7200 * 1000); // 2 hours in future
+
+      await socialAccountRepo.upsertWithConnection(
+        ws.id,
+        {
+          id: socialAccountId,
+          provider: SocialProvider.LINKEDIN,
+          externalId,
+          name: 'LinkedIn Test Account Reconnected',
+          capabilities: ['PUBLISH', 'ANALYTICS'],
+          status: SocialAccountStatus.ACTIVE,
+        },
+        {
+          id: connectionId,
+          encryptedAccessToken: reconnectedEnc.encrypted,
+          accessTokenIv: reconnectedEnc.iv,
+          accessTokenAuthTag: reconnectedEnc.authTag,
+          keyVersion: reconnectedEnc.keyVersion,
+          expiresAt: futureExpiresAt,
+          grantedScopes: ['r_liteprofile', 'w_member_social'],
+        },
+      );
+
+      // 5. Stale worker attempts to handle permanent failure using the old expired snapshot
+      const tokenService = new TokenService(prisma);
+      const recoveredCreds = await (
+        tokenService as any
+      ).handlePermanentAuthFailure({
+        socialAccountId: initialAccount.id,
+        workspaceId: ws.id,
+        accountProvider: SocialProvider.LINKEDIN,
+        snapshotConnection: initialConnection,
+        snapshotAccount: initialAccount,
+        errorMessage: 'Stale worker encountered expired token',
+      });
+
+      // 6. Assertions:
+      // Worker safely recovers the new credentials written by upsertWithConnection
+      expect(recoveredCreds).toBeDefined();
+      expect(recoveredCreds.accessToken).toBe('reconnected-valid-token-12');
+
+      // Database state check: account remains ACTIVE, never degraded to REAUTH_REQUIRED
+      const persistedAccount = await prisma.socialAccount.findUniqueOrThrow({
+        where: { id: initialAccount.id },
+        include: { connection: true },
+      });
+      expect(persistedAccount.status).toBe(SocialAccountStatus.ACTIVE);
+      expect(persistedAccount.name).toBe('LinkedIn Test Account Reconnected');
+      expect(persistedAccount.connection?.expiresAt?.getTime()).toBe(
+        futureExpiresAt.getTime(),
+      );
+      expect(persistedAccount.connection?.grantedScopes).toEqual(
+        expect.arrayContaining(['r_liteprofile', 'w_member_social']),
+      );
+    });
+
+    it('13. repository integration: reconnect via upsertWithConnection on REAUTH_REQUIRED account restores ACTIVE and recovers credentials', async () => {
+      const socialAccountRepo = new SocialAccountRepository(prisma);
+
+      const ws = await prisma.workspace.create({
+        data: {
+          id: crypto.randomUUID(),
+          name: 'Repo Integration Workspace 13',
+          organization: {
+            create: {
+              id: crypto.randomUUID(),
+              name: 'Repo Integration Org 13',
+            },
+          },
+        },
+      });
+
+      const socialAccountId = crypto.randomUUID();
+      const connectionId = crypto.randomUUID();
+      const externalId = 'repo-test-external-id-13';
+      const initialEnc = encrypt('reauth-req-old-token-13');
+      const expiredDate = new Date(Date.now() - 3600 * 1000);
+
+      // 1. Account starts in REAUTH_REQUIRED state
+      const { account: initialAccount } =
+        await socialAccountRepo.upsertWithConnection(
+          ws.id,
+          {
+            id: socialAccountId,
+            provider: SocialProvider.YOUTUBE,
+            externalId,
+            name: 'YouTube Account Needs Reauth',
+            capabilities: ['PUBLISH'],
+            status: SocialAccountStatus.REAUTH_REQUIRED,
+          },
+          {
+            id: connectionId,
+            encryptedAccessToken: initialEnc.encrypted,
+            accessTokenIv: initialEnc.iv,
+            accessTokenAuthTag: initialEnc.authTag,
+            keyVersion: initialEnc.keyVersion,
+            expiresAt: expiredDate,
+          },
+        );
+
+      const staleSnapshotConnection =
+        await prisma.socialConnection.findUniqueOrThrow({
+          where: { socialAccountId: initialAccount.id },
+        });
+
+      // 2. User successfully reconnects via SocialAccountRepository.upsertWithConnection
+      const reconnectedEnc = encrypt('reconnected-fresh-yt-token-13');
+      const rotatedRefreshEnc = encrypt('reconnected-fresh-yt-refresh-13');
+      const validUntil = new Date(Date.now() + 3600 * 1000);
+
+      await socialAccountRepo.upsertWithConnection(
+        ws.id,
+        {
+          id: socialAccountId,
+          provider: SocialProvider.YOUTUBE,
+          externalId,
+          name: 'YouTube Account Restored',
+          capabilities: ['PUBLISH', 'ANALYTICS'],
+          status: SocialAccountStatus.ACTIVE,
+        },
+        {
+          id: connectionId,
+          encryptedAccessToken: reconnectedEnc.encrypted,
+          accessTokenIv: reconnectedEnc.iv,
+          accessTokenAuthTag: reconnectedEnc.authTag,
+          encryptedRefreshToken: rotatedRefreshEnc.encrypted,
+          refreshTokenIv: rotatedRefreshEnc.iv,
+          refreshTokenAuthTag: rotatedRefreshEnc.authTag,
+          keyVersion: reconnectedEnc.keyVersion,
+          expiresAt: validUntil,
+        },
+      );
+
+      // 3. Concurrently, a lingering stale failure handler fires with the old snapshot
+      const tokenService = new TokenService(prisma);
+      const creds = await (tokenService as any).handlePermanentAuthFailure({
+        socialAccountId: initialAccount.id,
+        workspaceId: ws.id,
+        accountProvider: SocialProvider.YOUTUBE,
+        snapshotConnection: staleSnapshotConnection,
+        snapshotAccount: initialAccount,
+        errorMessage: 'Stale refresh failure on superseded credentials',
+      });
+
+      // 4. Assertions:
+      expect(creds.accessToken).toBe('reconnected-fresh-yt-token-13');
+
+      const persistedAccount = await prisma.socialAccount.findUniqueOrThrow({
+        where: { id: initialAccount.id },
+        include: { connection: true },
+      });
+      // The account must be ACTIVE (restored by upsertWithConnection, not reverted by stale failure)
+      expect(persistedAccount.status).toBe(SocialAccountStatus.ACTIVE);
+      expect(persistedAccount.name).toBe('YouTube Account Restored');
     });
   });
 });

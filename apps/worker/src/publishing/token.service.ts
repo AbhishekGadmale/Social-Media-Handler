@@ -486,6 +486,12 @@ export class TokenService {
           include: { connection: true },
         });
 
+        if (recheckAccount?.status === SocialAccountStatus.DISCONNECTED) {
+          return {
+            outcome: 'disconnected' as const,
+          };
+        }
+
         if (
           recheckAccount?.connection?.expiresAt &&
           recheckAccount.connection.expiresAt.getTime() > Date.now()
