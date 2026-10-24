@@ -513,7 +513,8 @@ Following the project's 7-tier prioritization hierarchy:
 | **Tier 7: Concurrency & Data Integrity** | **Transactional Audit Writes for Draft Operations** | [`packages/database/src/repositories/AuditLogRepository.ts`](file:///C:/Users/bappa/agency-os/packages/database/src/repositories/AuditLogRepository.ts), [`apps/api/src/modules/core/audit.service.ts`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/core/audit.service.ts), [`apps/api/src/modules/publishing/services/publishing-application.service.ts`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/publishing/services/publishing-application.service.ts) | **MERGED** (PR #12, `8e94c62`) | Medium / Resolved & Audited | Complete |
 | **Tier 7: Concurrency & Data Integrity** | **`updateDraft` In-Transaction Locked-Variant Concurrency Serialization** | [`packages/database/src/repositories/PublishingRepository.ts`](file:///C:/Users/bappa/agency-os/packages/database/src/repositories/PublishingRepository.ts), [`apps/api/src/modules/publishing/services/publishing-application.service.ts`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/publishing/services/publishing-application.service.ts), [`apps/api/test/publishing.e2e-spec.ts`](file:///C:/Users/bappa/agency-os/apps/api/test/publishing.e2e-spec.ts) | **MERGED** (PR #14, `279b4c5`) | Low / Resolved & Fenced | Complete |
 | **Tier 7: Concurrency & Data Integrity** | **`deletePost` Locked-Variant Check TOCTOU Fencing** | [`apps/api/src/modules/publishing/services/publishing-application.service.ts`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/publishing/services/publishing-application.service.ts), [`apps/api/test/publishing.e2e-spec.ts`](file:///C:/Users/bappa/agency-os/apps/api/test/publishing.e2e-spec.ts) | **MERGED** (PR #15, `a702601`) | Low / Resolved & Fenced | Complete |
-| **Tier 7: Cleanup / Optimization** | Container Runtime Transpilation (`tsx` vs compiled `dist`) | `apps/api/Dockerfile`, `apps/worker/Dockerfile`, `packages/*/package.json`, `docs/phase-6-readiness.md` | **PR OPEN** (PR #17, branch `feat/compiled-workspace-packages`) | Low / Performance & Startup Optimization | Awaiting Muse review and merge of PR #17 |
+| **Tier 7: Cleanup / Optimization** | Container Runtime Transpilation (`tsx` vs compiled `dist`) | `apps/api/Dockerfile`, `apps/worker/Dockerfile`, `packages/*/package.json`, `docs/phase-6-readiness.md` | **MERGED / CLOSED** (PR #17, `c7ec09b`) | Low / Performance & Startup Optimization | Complete (Compiled workspace packages & node dist execution verified) |
+| **Tier 7: Non-Blocking Follow-Ups** | Production Docker Runner Image Slimming | `apps/api/Dockerfile`, `apps/worker/Dockerfile` | **QUEUED (NON-BLOCKING)** | Low / Image Optimization | Prune devDependencies and unused workspace packages in runner stages to reduce container image footprint |
 | **Tier 7: Non-Blocking Follow-Ups** | TokenService CAS Failure Recheck `DISCONNECTED` Guard | `apps/worker/src/publishing/token.service.ts` | **QUEUED (NON-BLOCKING)** | Low / Theoretical Edge Case | Check `recheckAccount.status !== DISCONNECTED` before returning recovered |
 | **Tier 7: Non-Blocking Follow-Ups** | TokenService Integration Test via `SocialAccountRepository.upsertWithConnection` | `apps/worker/src/publishing/token.service.spec.ts` | **QUEUED (NON-BLOCKING)** | Low / Test-Only Hardening | Exercise real repository upsert against stale failure handler |
 | **Tier 7: Non-Blocking Follow-Ups** | ESLint `no-floating-promises` Rule Escalation | `apps/api/package.json`, `.eslintrc.js` | **QUEUED (NON-BLOCKING)** | Low / Static Analysis Hardening | Evaluate escalating ESLint `no-floating-promises` from warning to error; check existing violations & migration scope |
@@ -525,13 +526,13 @@ Following the project's 7-tier prioritization hierarchy:
 
 ---
 
-### 4. Current In-Flight Focus Area: Container Runtime Transpilation (`tsx` vs Compiled `dist`)
+### 4. Current Implementation Focus: Completed Hardening & Next Priorities
 
-- **Priority Tier**: **Tier 7 (Cleanup / Performance & Startup Optimization)**
-- **Status**: **PR OPEN** (PR #17, branch `feat/compiled-workspace-packages`, pending review by Muse)
-- **Components**: [`apps/api/Dockerfile`](file:///C:/Users/bappa/agency-os/apps/api/Dockerfile), [`apps/worker/Dockerfile`](file:///C:/Users/bappa/agency-os/apps/worker/Dockerfile), [`packages/database`](file:///C:/Users/bappa/agency-os/packages/database), [`packages/providers`](file:///C:/Users/bappa/agency-os/packages/providers), [`packages/session`](file:///C:/Users/bappa/agency-os/packages/session), [`packages/shared`](file:///C:/Users/bappa/agency-os/packages/shared)
-- **Core Gap Addressed**:
-  Eliminated production container JIT transpilation (`npx tsx`) by compiling all internal workspace packages (`@agency-os/database`, `@agency-os/providers`, `@agency-os/session`, `@agency-os/shared`) to JavaScript with type declarations in `dist/`. Production containers start directly via `node dist/src/main.js` (API) and `node dist/main.js` (Worker). Full Docker Compose smoke tests, all 5 API E2E test suites, and monorepo typecheck/lint/tests verified.
+- **Recently Completed**: **Container Runtime Transpilation & Compiled Workspace Packaging** (**MERGED / CLOSED** in PR #17, merge commit [`c7ec09b`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/c7ec09b14fe70917ec51526cee482ac01b504f50)). Production API and Worker containers now run compiled JavaScript from `dist/` directly via standard `node`, with internal workspace packages compiled to `dist/` with `.d.ts` types and modern exports.
+- **Next Focus Areas (Non-Blocking Follow-Ups & Roadmap)**:
+  1. **Next.js Web Frontend Dashboard**: Implement analytics dashboard and core UX in `apps/web`.
+  2. **Production Docker Runner Image Slimming**: Optional optimization to prune workspace devDependencies and unused internal packages in final container stages.
+  3. **TokenService Non-Blocking Hardening**: CAS failure recheck `DISCONNECTED` guard and direct repository integration tests.
 
 ---
 
@@ -1022,12 +1023,13 @@ The final architecture employs a two-tier fencing model:
 ## Container Runtime Transpilation & Compiled Workspace Packaging (PR #17)
 
 ### 1. Implementation & Verification Summary
-- **Status**: **PR OPEN** (PR #17, branch `feat/compiled-workspace-packages`, pending review by Muse)
+- **Status**: **MERGED / CLOSED** (PR #17, merge commit [`c7ec09b14fe70917ec51526cee482ac01b504f50`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/c7ec09b14fe70917ec51526cee482ac01b504f50) / `c7ec09b`, merged 2026-10-24T17:30:45Z)
 - **Pull Request**: [#17](https://github.com/AbhishekGadmale/Social-Media-Handler/pull/17)
-- **Base Target**: `main` (`5a77a82`)
-- **PR HEAD SHA**: [`2c3d9d294187d09e1915b0f690f4928d8c4929f8`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/2c3d9d294187d09e1915b0f690f4928d8c4929f8) (`2c3d9d2`)
-- **Reviewer**: Pending Muse Review
-- **CI Status**: All 6/6 GitHub Actions check-runs completed **GREEN / SUCCESS** ([Run #39978227840](https://github.com/AbhishekGadmale/Social-Media-Handler/actions/runs/39978227840))
+- **Pre-Merge Base SHA**: [`5a77a82bec5963087bd91df999f81f2d190b0bab`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/5a77a82bec5963087bd91df999f81f2d190b0bab) (`5a77a82`)
+- **Reviewed PR Head SHA**: [`621423eb5823f6f3c60354fb45af32f909c304f9`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/621423eb5823f6f3c60354fb45af32f909c304f9) (`621423e`)
+- **Merge Commit SHA**: [`c7ec09b14fe70917ec51526cee482ac01b504f50`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/c7ec09b14fe70917ec51526cee482ac01b504f50) (`c7ec09b`)
+- **Reviewer**: Muse (APPROVED)
+- **Final CI Run**: [Run #39979168411](https://github.com/AbhishekGadmale/Social-Media-Handler/actions/runs/39979168411) (All 6 check runs completed **GREEN / SUCCESS** on reviewed HEAD `621423e`)
 - **Scope**: Eliminate production container JIT transpilation (`npx tsx`) in API and Worker containers by compiling all internal workspace packages (`@agency-os/database`, `@agency-os/providers`, `@agency-os/session`, `@agency-os/shared`) to JavaScript with `.d.ts` declaration files in `dist/`, running production containers via compiled Node.js (`node dist/src/main.js` and `node dist/main.js`).
 
 ### 2. Root Cause & Packaging Architecture
@@ -1070,12 +1072,18 @@ The final architecture employs a two-tier fencing model:
     - API container: `PID 1: pnpm ... start:prod`, `PID 32: node dist/src/main.js`. Exactly 0 `tsx` processes.
     - Worker container: `PID 1: pnpm ... start:prod`, `PID 18: node dist/main.js`. Exactly 0 `tsx` processes.
 
-- **GitHub Actions CI Verification (Run #39978227840 on HEAD `2c3d9d2`)**:
-  - CI Run: [`https://github.com/AbhishekGadmale/Social-Media-Handler/actions/runs/39978227840`](https://github.com/AbhishekGadmale/Social-Media-Handler/actions/runs/39978227840)
+- **GitHub Actions CI Verification (Run #39979168411 on Reviewed HEAD `621423e`)**:
+  - CI Run: [`https://github.com/AbhishekGadmale/Social-Media-Handler/actions/runs/39979168411`](https://github.com/AbhishekGadmale/Social-Media-Handler/actions/runs/39979168411)
   - All 6 check runs completed `success`:
-    - `Code Quality (Lint & Typecheck)`: Passed in 35s.
-    - `Application Builds`: Passed in 44s.
-    - `Tests`: Passed in 37s.
-    - `API E2E Tests`: Passed in 59s (79/79 tests passed across 5 suites).
-    - `Docker Build & Smoke Test`: Passed in 1m 40s (built `api`, `worker`, `web`, `migration`; compose stack healthy; `api` /health/ready returned 200).
-    - `GitGuardian Security Checks`: Passed in 14s.
+    - `Code Quality (Lint & Typecheck)`: Passed.
+    - `Application Builds`: Passed.
+    - `Tests`: Passed.
+    - `API E2E Tests`: Passed (79/79 tests passed across 5 suites).
+    - `Docker Build & Smoke Test`: Passed (built `api`, `worker`, `web`, `migration`; compose stack healthy; `api` /health/ready returned 200).
+    - `GitGuardian Security Checks`: Passed.
+
+### 4. Remaining Non-Blocking Follow-Ups
+1. **Production Docker Runner Image Slimming**:
+   - The production containers currently copy package workspaces and run standard multi-stage builds. A future optimization can prune unused internal build artifacts or dev dependencies from the runner stage to slim container image sizes further.
+2. **MinIO Bucket Creation & Healthcheck Hardening**:
+   - Retained from PR #16 follow-up list for test-environment resilience.
