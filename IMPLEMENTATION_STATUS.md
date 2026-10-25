@@ -534,7 +534,7 @@ Following the project's 7-tier prioritization hierarchy:
 - **Next Focus Areas (Non-Blocking Follow-Ups & Roadmap)**:
   1. **Next.js Web Frontend Dashboard**: Implement analytics dashboard and core UX in `apps/web`.
   2. **Production Docker Runner Image Slimming**: Optional optimization to prune workspace devDependencies and unused internal packages in final container stages.
-  3. **Non-Blocking Review Observations (PR #19)**: Optional `token.service.spec.ts` Test 11 spy cleanup in `try/finally` and dedicated CAS-recheck reconnect-recovery test.
+  3. **Non-Blocking Review Observations (PR #19)**: Optional `token.service.spec.ts` Test 11 spy cleanup in `try/finally` and dedicated CAS-recheck reconnect-recovery test (**RESOLVED / PR OPEN** in PR #21).
 
 ---
 
@@ -1138,8 +1138,8 @@ The final architecture employs a two-tier fencing model:
 
 ### 4. Non-Blocking Review Observations & Follow-Ups
 1. **Optional Test 11 Spy Cleanup Resilience**:
-   - In `apps/worker/src/publishing/token.service.spec.ts`, test 11 restores `txSpy` at the end of the test. A minor future hardening could wrap the assertion in a `try/finally` block so that `txSpy.mockRestore()` executes even if intermediate assertions throw.
+   - In `apps/worker/src/publishing/token.service.spec.ts`, test 11 was wrapped in a `try/finally` block to ensure `txSpy.mockRestore()` executes reliably even if assertions throw (**RESOLVED** in PR #21).
 2. **Optional CAS-Recheck Reconnect Recovery Test**:
-   - Test 12 and Test 13 exercise concurrent reconnect through `SocialAccountRepository.upsertWithConnection()` where `hasCredentialStateChanged` triggers recovery in Step 4. An optional additional test could specifically exercise the Step 5 CAS conflict recheck recovery path where `updateMany` returns count 0 and `recheckAccount` has valid reconnected credentials.
+   - Added Test 14 in `apps/worker/src/publishing/token.service.spec.ts` to deterministically exercise the Step 5 CAS-conflict recheck recovery path where concurrent OAuth reconnect races after initial read but before the CAS update (`updateMany` count 0). Verified that the recheck branch decrypts and returns the newly persisted credentials, account remains `ACTIVE`, and no stale status transition occurs (**RESOLVED** in PR #21).
 3. **Future Feature Dependency — Worker Catch-Path Disconnect Fencing**:
    - Retained as a future feature dependency when account disconnect API endpoints are introduced (`publishing.processor.ts`).

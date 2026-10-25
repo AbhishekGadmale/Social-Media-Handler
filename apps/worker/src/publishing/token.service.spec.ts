@@ -1107,25 +1107,27 @@ describe('TokenService', () => {
           });
         });
 
-      const tokenService = new TokenService(prisma);
-      await expect(
-        (tokenService as any).handlePermanentAuthFailure({
-          socialAccountId: account.id,
-          workspaceId: account.workspaceId,
-          accountProvider: 'INSTAGRAM',
-          snapshotConnection: connection,
-          snapshotAccount: account,
-          errorMessage: 'OAuth token revoked by user',
-        }),
-      ).rejects.toThrow(`Account ${account.id} (INSTAGRAM) is disconnected`);
+      try {
+        const tokenService = new TokenService(prisma);
+        await expect(
+          (tokenService as any).handlePermanentAuthFailure({
+            socialAccountId: account.id,
+            workspaceId: account.workspaceId,
+            accountProvider: 'INSTAGRAM',
+            snapshotConnection: connection,
+            snapshotAccount: account,
+            errorMessage: 'OAuth token revoked by user',
+          }),
+        ).rejects.toThrow(`Account ${account.id} (INSTAGRAM) is disconnected`);
 
-      // Verify the persisted state in DB is preserved as DISCONNECTED (never mutated to REAUTH_REQUIRED)
-      const persistedAccount = await prisma.socialAccount.findUniqueOrThrow({
-        where: { id: account.id },
-      });
-      expect(persistedAccount.status).toBe(SocialAccountStatus.DISCONNECTED);
-
-      txSpy.mockRestore();
+        // Verify the persisted state in DB is preserved as DISCONNECTED (never mutated to REAUTH_REQUIRED)
+        const persistedAccount = await prisma.socialAccount.findUniqueOrThrow({
+          where: { id: account.id },
+        });
+        expect(persistedAccount.status).toBe(SocialAccountStatus.DISCONNECTED);
+      } finally {
+        txSpy.mockRestore();
+      }
     });
 
     it('12. repository integration: concurrent OAuth reconnect via SocialAccountRepository.upsertWithConnection wins over stale failure', async () => {
@@ -1336,6 +1338,150 @@ describe('TokenService', () => {
       // The account must be ACTIVE (restored by upsertWithConnection, not reverted by stale failure)
       expect(persistedAccount.status).toBe(SocialAccountStatus.ACTIVE);
       expect(persistedAccount.name).toBe('YouTube Account Restored');
+    });
+
+    it('14. CAS-conflict recheck reconnect recovery: recovers valid credentials when OAuth reconnect races after initial read but before CAS update', async () => {
+      const socialAccountRepo = new SocialAccountRepository(prisma);
+
+      // 1. Create workspace
+      const ws = await prisma.workspace.create({
+        data: {
+          id: crypto.randomUUID(),
+          name: 'Repo Integration Workspace 14',
+          organization: {
+            create: {
+              id: crypto.randomUUID(),
+              name: 'Repo Integration Org 14',
+            },
+          },
+        },
+      });
+
+      const socialAccountId = crypto.randomUUID();
+      const connectionId = crypto.randomUUID();
+      const externalId = 'repo-test-external-id-14';
+      const initialEnc = encrypt('initial-expired-token-14');
+      const expiredDate = new Date(Date.now() - 120 * 1000);
+
+      // 2. Initial connect with expired token
+      const { account: initialAccount } =
+        await socialAccountRepo.upsertWithConnection(
+          ws.id,
+          {
+            id: socialAccountId,
+            provider: SocialProvider.LINKEDIN,
+            externalId,
+            name: 'LinkedIn Test Account 14',
+            capabilities: ['PUBLISH'],
+            status: SocialAccountStatus.ACTIVE,
+          },
+          {
+            id: connectionId,
+            encryptedAccessToken: initialEnc.encrypted,
+            accessTokenIv: initialEnc.iv,
+            accessTokenAuthTag: initialEnc.authTag,
+            keyVersion: initialEnc.keyVersion,
+            expiresAt: expiredDate,
+          },
+        );
+
+      // 3. Worker reads initial snapshot before failure
+      const initialConnection = await prisma.socialConnection.findUniqueOrThrow(
+        {
+          where: { socialAccountId: initialAccount.id },
+        },
+      );
+
+      const reconnectedEnc = encrypt('reconnected-cas-recheck-token-14');
+      const futureExpiresAt = new Date(Date.now() + 7200 * 1000); // 2 hours in future
+
+      // Intercept prisma.$transaction to orchestrate the precise race:
+      // The worker reads the unchanged snapshot (Step 1-3), bypassing Step 4.
+      // Then, right before the CAS status update executes, concurrent OAuth reconnect occurs.
+      const origTx = prisma.$transaction.bind(prisma);
+      let intercepted = false;
+      const txSpy = jest
+        .spyOn(prisma, '$transaction')
+        .mockImplementation(async (cb: any) => {
+          if (intercepted) {
+            return origTx(cb);
+          }
+          intercepted = true;
+          return origTx(async (tx: any) => {
+            const origUpdateMany = tx.socialAccount.updateMany.bind(
+              tx.socialAccount,
+            );
+            tx.socialAccount.updateMany = jest
+              .fn()
+              .mockImplementation(async (...args: any[]) => {
+                // Concurrently re-authenticate via real SocialAccountRepository
+                await socialAccountRepo.upsertWithConnection(
+                  ws.id,
+                  {
+                    id: socialAccountId,
+                    provider: SocialProvider.LINKEDIN,
+                    externalId,
+                    name: 'LinkedIn Reconnected via CAS Recheck',
+                    capabilities: ['PUBLISH', 'ANALYTICS'],
+                    status: SocialAccountStatus.ACTIVE,
+                  },
+                  {
+                    id: connectionId,
+                    encryptedAccessToken: reconnectedEnc.encrypted,
+                    accessTokenIv: reconnectedEnc.iv,
+                    accessTokenAuthTag: reconnectedEnc.authTag,
+                    keyVersion: reconnectedEnc.keyVersion,
+                    expiresAt: futureExpiresAt,
+                    grantedScopes: ['r_liteprofile', 'w_member_social'],
+                  },
+                );
+
+                // Execute real updateMany: because SocialAccount.updatedAt was touched in DB
+                // by upsertWithConnection, CAS updatedAt condition naturally returns { count: 0 }
+                return origUpdateMany(...args);
+              });
+            return cb(tx);
+          });
+        });
+
+      try {
+        const tokenService = new TokenService(prisma);
+        const recoveredCreds = await (
+          tokenService as any
+        ).handlePermanentAuthFailure({
+          socialAccountId: initialAccount.id,
+          workspaceId: ws.id,
+          accountProvider: SocialProvider.LINKEDIN,
+          snapshotConnection: initialConnection,
+          snapshotAccount: initialAccount,
+          errorMessage: 'Stale worker failure during concurrent reconnect',
+        });
+
+        // 4. Assertions:
+        // Worker must recover the newly persisted credentials from the CAS recheck branch
+        expect(recoveredCreds).toBeDefined();
+        expect(recoveredCreds.accessToken).toBe(
+          'reconnected-cas-recheck-token-14',
+        );
+
+        // Database state verification: account remains ACTIVE, never degraded to REAUTH_REQUIRED
+        const persistedAccount = await prisma.socialAccount.findUniqueOrThrow({
+          where: { id: initialAccount.id },
+          include: { connection: true },
+        });
+        expect(persistedAccount.status).toBe(SocialAccountStatus.ACTIVE);
+        expect(persistedAccount.name).toBe(
+          'LinkedIn Reconnected via CAS Recheck',
+        );
+        expect(persistedAccount.connection?.expiresAt?.getTime()).toBe(
+          futureExpiresAt.getTime(),
+        );
+        expect(persistedAccount.connection?.grantedScopes).toEqual(
+          expect.arrayContaining(['r_liteprofile', 'w_member_social']),
+        );
+      } finally {
+        txSpy.mockRestore();
+      }
     });
   });
 });
