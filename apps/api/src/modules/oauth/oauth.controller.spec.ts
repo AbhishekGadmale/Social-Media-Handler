@@ -387,24 +387,90 @@ describe('OAuthController', () => {
       );
     });
 
-    it('throws ForbiddenException if code or state is missing', async () => {
-      await expect(
-        controller.callbackProvider(
-          SocialProvider.YOUTUBE,
-          { code: '', state: 'state' },
-          mockReq as Request,
-          mockRes as Response,
-        ),
-      ).rejects.toThrow(ForbiddenException);
+    it('throws ForbiddenException and emits audit failure if code is missing', async () => {
+      mockAuditService.logActionBestEffort.mockClear();
 
       await expect(
         controller.callbackProvider(
           SocialProvider.YOUTUBE,
-          { code: 'code', state: '' },
+          { code: '', state: 'sensitive-state-token' },
           mockReq as Request,
           mockRes as Response,
         ),
-      ).rejects.toThrow(ForbiddenException);
+      ).rejects.toThrow(new ForbiddenException('Missing code or state'));
+
+      expect(mockAuditService.logActionBestEffort).toHaveBeenCalledTimes(1);
+      expect(mockAuditService.logActionBestEffort).toHaveBeenCalledWith({
+        action: 'OAUTH_CONNECTION_FAILED',
+        actorId: 'user-123',
+        targetType: 'SocialProvider',
+        targetId: SocialProvider.YOUTUBE,
+        requestId: 'req-1',
+        metadata: {
+          provider: SocialProvider.YOUTUBE,
+          reason: 'MISSING_CODE',
+        },
+      });
+
+      // Verify no sensitive state parameter leaked into audit metadata
+      const callArg = mockAuditService.logActionBestEffort.mock.calls[0][0];
+      expect(JSON.stringify(callArg)).not.toContain('sensitive-state-token');
+    });
+
+    it('throws ForbiddenException and emits audit failure if state is missing', async () => {
+      mockAuditService.logActionBestEffort.mockClear();
+
+      await expect(
+        controller.callbackProvider(
+          SocialProvider.YOUTUBE,
+          { code: 'sensitive-auth-code', state: '' },
+          mockReq as Request,
+          mockRes as Response,
+        ),
+      ).rejects.toThrow(new ForbiddenException('Missing code or state'));
+
+      expect(mockAuditService.logActionBestEffort).toHaveBeenCalledTimes(1);
+      expect(mockAuditService.logActionBestEffort).toHaveBeenCalledWith({
+        action: 'OAUTH_CONNECTION_FAILED',
+        actorId: 'user-123',
+        targetType: 'SocialProvider',
+        targetId: SocialProvider.YOUTUBE,
+        requestId: 'req-1',
+        metadata: {
+          provider: SocialProvider.YOUTUBE,
+          reason: 'MISSING_STATE',
+        },
+      });
+
+      // Verify no sensitive auth code parameter leaked into audit metadata
+      const callArg = mockAuditService.logActionBestEffort.mock.calls[0][0];
+      expect(JSON.stringify(callArg)).not.toContain('sensitive-auth-code');
+    });
+
+    it('throws ForbiddenException and emits audit failure if both code and state are missing', async () => {
+      mockAuditService.logActionBestEffort.mockClear();
+
+      await expect(
+        controller.callbackProvider(
+          SocialProvider.YOUTUBE,
+          { code: '', state: '' },
+          mockReq as Request,
+          mockRes as Response,
+        ),
+      ).rejects.toThrow(new ForbiddenException('Missing code or state'));
+
+      expect(mockAuditService.logActionBestEffort).toHaveBeenCalledTimes(1);
+      expect(mockAuditService.logActionBestEffort).toHaveBeenCalledWith({
+        action: 'OAUTH_CONNECTION_FAILED',
+        actorId: 'user-123',
+        targetType: 'SocialProvider',
+        targetId: SocialProvider.YOUTUBE,
+        requestId: 'req-1',
+        metadata: {
+          provider: SocialProvider.YOUTUBE,
+          reason: 'MISSING_CODE_AND_STATE',
+        },
+      });
     });
 
     it('emits OAUTH_PROVIDER_DENIED when callback has error in query', async () => {

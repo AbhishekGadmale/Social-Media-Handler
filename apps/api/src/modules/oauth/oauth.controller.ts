@@ -109,6 +109,25 @@ export class OAuthController {
     }
 
     if (!code || !state) {
+      const reason =
+        !code && !state
+          ? 'MISSING_CODE_AND_STATE'
+          : !code
+            ? 'MISSING_CODE'
+            : 'MISSING_STATE';
+
+      this.auditService.logActionBestEffort({
+        action: AuditAction.OAUTH_CONNECTION_FAILED,
+        actorId: userId,
+        targetType: 'SocialProvider',
+        targetId: provider,
+        requestId,
+        metadata: {
+          provider,
+          reason,
+        },
+      });
+
       throw new ForbiddenException('Missing code or state');
     }
 
