@@ -517,6 +517,7 @@ Following the project's 7-tier prioritization hierarchy:
 | **Tier 7: Non-Blocking Follow-Ups** | Production Docker Runner Image Slimming | `apps/api/Dockerfile`, `apps/worker/Dockerfile` | **QUEUED (NON-BLOCKING)** | Low / Image Optimization | Prune devDependencies and unused workspace packages in runner stages to reduce container image footprint |
 | **Tier 7: Non-Blocking Follow-Ups** | TokenService CAS Failure Recheck `DISCONNECTED` Guard | `apps/worker/src/publishing/token.service.ts` | **MERGED / CLOSED** (PR #19, `cfc7924`) | Low / Concurrency Safety Hardening | Fenced `recheckAccount.status === DISCONNECTED` to prevent returning recovered credentials or overwriting status |
 | **Tier 7: Non-Blocking Follow-Ups** | TokenService Integration Test via `SocialAccountRepository.upsertWithConnection` | `apps/worker/src/publishing/token.service.spec.ts` | **MERGED / CLOSED** (PR #19, `cfc7924`) | Low / Integration Test Hardening | Direct domain repository integration tests for concurrent OAuth reconnects against stale failure handlers |
+| **Tier 7: Non-Blocking Follow-Ups** | TokenService CAS-Recheck Reconnect Recovery Coverage & Test 11 Spy Cleanup | `apps/worker/src/publishing/token.service.spec.ts` | **MERGED / CLOSED** (PR #21, `365653f`) | Low / Test Suite Resilience | Test 11 `try/finally` spy cleanup and Test 14 Step 5 CAS conflict recheck credential recovery |
 | **Tier 7: Non-Blocking Follow-Ups** | ESLint `no-floating-promises` Rule Escalation | `apps/api/package.json`, `.eslintrc.js` | **QUEUED (NON-BLOCKING)** | Low / Static Analysis Hardening | Evaluate escalating ESLint `no-floating-promises` from warning to error; check existing violations & migration scope |
 | **Tier 7: Non-Blocking Follow-Ups** | Failed Login Audit Accuracy Enrichment | `apps/api/src/modules/auth/auth.controller.ts` | **QUEUED (NON-BLOCKING)** | Low / Security Audit Detail | Record actual auth failure reason for `AUTH_LOGIN_FAILED` without logging credentials, tokens, or secrets |
 | **Tier 7: Non-Blocking Follow-Ups** | OAuth Callback Missing Parameter Failure Audit | `apps/api/src/modules/oauth/oauth.controller.ts` | **QUEUED (NON-BLOCKING)** | Low / Security Audit Detail | Add `FAILED` audit event when OAuth callbacks miss required `code` or `state`, using safe metadata only |
@@ -529,12 +530,13 @@ Following the project's 7-tier prioritization hierarchy:
 ### 4. Current Implementation Focus: Completed Hardening & Next Priorities
 
 - **Recently Completed**:
+  - **TokenService CAS-Recheck Reconnect Recovery Coverage & Test 11 Spy Cleanup** (**MERGED / CLOSED** in PR #21, merge commit [`365653f`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/365653fc4812857eadc97444988735649f274881), reviewed HEAD [`e5432e6`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/e5432e6be8711d865aef122d3d9dc5c36d6b4ff1)). Wrapped Test 11's `txSpy.mockRestore()` in a `try/finally` block to guarantee spy cleanup on failure, and added Test 14 in `apps/worker/src/publishing/token.service.spec.ts` to deterministically verify Step 5 CAS conflict recheck recovery when a concurrent OAuth reconnect persists fresh credentials.
   - **TokenService CAS-Failure Recheck `DISCONNECTED` Guard & Direct Repository Integration Testing** (**MERGED / CLOSED** in PR #19, merge commit [`cfc7924`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/cfc7924fb7d3704988ec7f81b3f13160a8799737), reviewed HEAD [`9a44a2a`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/9a44a2aa792861e586ab371b45df12ba2b3ceeea)). Prevents returning active credentials or overwriting `DISCONNECTED` status during CAS conflicts, and adds direct domain repository integration coverage using `SocialAccountRepository.upsertWithConnection()`.
   - **Container Runtime Transpilation & Compiled Workspace Packaging** (**MERGED / CLOSED** in PR #17, merge commit [`c7ec09b`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/c7ec09b14fe70917ec51526cee482ac01b504f50)). Production API and Worker containers now run compiled JavaScript from `dist/` directly via standard `node`, with internal workspace packages compiled to `dist/` with `.d.ts` types and modern exports.
 - **Next Focus Areas (Non-Blocking Follow-Ups & Roadmap)**:
   1. **Next.js Web Frontend Dashboard**: Implement analytics dashboard and core UX in `apps/web`.
   2. **Production Docker Runner Image Slimming**: Optional optimization to prune workspace devDependencies and unused internal packages in final container stages.
-  3. **Non-Blocking Review Observations (PR #19)**: Optional `token.service.spec.ts` Test 11 spy cleanup in `try/finally` and dedicated CAS-recheck reconnect-recovery test (**RESOLVED / PR OPEN** in PR #21).
+  3. **Worker Catch-Path Disconnect Fencing**: Guard `PublishingProcessor` catch paths against resurrecting `DISCONNECTED` accounts when disconnect API endpoints are introduced (Future Feature Dependency).
 
 ---
 
@@ -1138,8 +1140,48 @@ The final architecture employs a two-tier fencing model:
 
 ### 4. Non-Blocking Review Observations & Follow-Ups
 1. **Optional Test 11 Spy Cleanup Resilience**:
-   - In `apps/worker/src/publishing/token.service.spec.ts`, test 11 was wrapped in a `try/finally` block to ensure `txSpy.mockRestore()` executes reliably even if assertions throw (**RESOLVED** in PR #21).
+   - In `apps/worker/src/publishing/token.service.spec.ts`, test 11 was wrapped in a `try/finally` block to ensure `txSpy.mockRestore()` executes reliably even if assertions throw (**MERGED / CLOSED** in PR #21, merge commit [`365653f`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/365653fc4812857eadc97444988735649f274881)).
 2. **Optional CAS-Recheck Reconnect Recovery Test**:
-   - Added Test 14 in `apps/worker/src/publishing/token.service.spec.ts` to deterministically exercise the Step 5 CAS-conflict recheck recovery path where concurrent OAuth reconnect races after initial read but before the CAS update (`updateMany` count 0). Verified that the recheck branch decrypts and returns the newly persisted credentials, account remains `ACTIVE`, and no stale status transition occurs (**RESOLVED** in PR #21).
+   - Added Test 14 in `apps/worker/src/publishing/token.service.spec.ts` to deterministically exercise the Step 5 CAS-conflict recheck recovery path where concurrent OAuth reconnect races after initial read but before the CAS update (`updateMany` count 0). Verified that the recheck branch decrypts and returns the newly persisted credentials, account remains `ACTIVE`, and no stale status transition occurs (**MERGED / CLOSED** in PR #21, merge commit [`365653f`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/365653fc4812857eadc97444988735649f274881)).
 3. **Future Feature Dependency — Worker Catch-Path Disconnect Fencing**:
+   - Retained as a future feature dependency when account disconnect API endpoints are introduced (`publishing.processor.ts`).
+---
+
+## 21. TokenService CAS-Recheck Reconnect Recovery Tests & Test 11 Spy Cleanup (Branch `test/token-service-cas-recheck-recovery` — MERGED)
+
+### 1. Summary & Motivation
+- **Status**: **MERGED** (PR #21, merge commit [`365653fc4812857eadc97444988735649f274881`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/365653fc4812857eadc97444988735649f274881))
+- **Pull Request**: [#21](https://github.com/AbhishekGadmale/Social-Media-Handler/pull/21)
+- **Branch**: `test/token-service-cas-recheck-recovery`
+- **Pre-Merge Base SHA**: [`b2d347757a91127d35b9cc7c512f076caefc1662`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/b2d347757a91127d35b9cc7c512f076caefc1662) (`b2d3477`)
+- **Reviewed Head SHA**: [`e5432e6be8711d865aef122d3d9dc5c36d6b4ff1`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/e5432e6be8711d865aef122d3d9dc5c36d6b4ff1) (`e5432e6`)
+- **Merge Commit SHA**: [`365653fc4812857eadc97444988735649f274881`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/365653fc4812857eadc97444988735649f274881) (`365653f`)
+- **Merge Timestamp**: `2026-10-25T08:32:46Z`
+- **CI Run**: [Run #40123049146](https://github.com/AbhishekGadmale/Social-Media-Handler/actions/runs/40123049146) (6/6 check runs green on reviewed HEAD `e5432e6`)
+- **Post-Merge Push CI Run**: [Run #40177049204](https://github.com/AbhishekGadmale/Social-Media-Handler/actions/runs/40177049204) (All 5 push check runs green on `main` `365653f`)
+- **Reviewer**: Muse (APPROVED)
+
+### 2. Scope & Implementation Details
+1. **Test 11 Spy Cleanup Resilience**:
+   - In `apps/worker/src/publishing/token.service.spec.ts`, test 11 (`11. CAS conflict recheck DISCONNECTED guard`) wraps `tokenService.handlePermanentAuthFailure()` and assertions inside a `try/finally` block.
+   - Guarantees `txSpy.mockRestore()` executes reliably in `finally` even if intermediate assertions throw, preventing mock leakage across subsequent tests.
+2. **Test 14 CAS-Recheck Reconnect Recovery Coverage**:
+   - Added Test 14 (`14. CAS-conflict recheck reconnect recovery: recovers valid credentials when OAuth reconnect races after initial read but before CAS update`) to deterministically exercise Step 5 of `handlePermanentAuthFailure()`.
+   - Uses an `intercepted` latch on `prisma.$transaction` to prevent recursive transaction interception when calling `SocialAccountRepository.upsertWithConnection()`.
+   - Bypasses Step 4 by capturing an unchanged initial snapshot before entering `handlePermanentAuthFailure()`.
+   - Triggers a real concurrent OAuth reconnect right before `tx.socialAccount.updateMany` executes.
+   - PostgreSQL naturally returns `count: 0` because `SocialAccount.updatedAt` changed.
+   - Step 5 CAS conflict recheck reads the reconnected account from the database, confirms valid credentials, decrypts the fresh token, and returns `{ outcome: 'recovered' }` while preserving the account as `ACTIVE`.
+
+### 3. Verification & Test Evidence
+- **Test Suite Verification**:
+   - `apps/worker/src/publishing/token.service.spec.ts`: 31/31 tests passing (including Test 11 with `try/finally` and new Test 14).
+   - Worker Unit Tests: 9/9 suites, 119/119 tests passing.
+   - API E2E Tests: 5/5 suites, 79/79 tests passing.
+   - Monorepo Lint & Typecheck: 15/15 tasks passing.
+   - GitHub Actions CI Run #40123049146: All 6 check runs green on reviewed HEAD `e5432e6`.
+   - GitHub Actions Post-Merge Push CI Run #40177049204: All 5 push check runs green on `main` (`365653f`).
+
+### 4. Remaining Follow-Ups
+1. **Future Feature Dependency — Worker Catch-Path Disconnect Fencing**:
    - Retained as a future feature dependency when account disconnect API endpoints are introduced (`publishing.processor.ts`).
