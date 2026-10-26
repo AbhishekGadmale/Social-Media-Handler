@@ -3,6 +3,20 @@ import { UserRepository } from '@agency-os/database';
 import { SessionManager } from '@agency-os/session';
 import * as argon2 from '@node-rs/argon2';
 
+export type AuthFailureReason = 'USER_NOT_FOUND' | 'INVALID_PASSWORD';
+
+export class InvalidCredentialsException extends UnauthorizedException {
+  readonly reason: AuthFailureReason;
+  readonly resolvedUserId?: string;
+
+  constructor(reason: AuthFailureReason, resolvedUserId?: string) {
+    super('Invalid credentials');
+    this.name = 'UnauthorizedException';
+    this.reason = reason;
+    this.resolvedUserId = resolvedUserId;
+  }
+}
+
 @Injectable()
 export class AuthService {
   constructor(
@@ -16,12 +30,12 @@ export class AuthService {
   ): Promise<{ sessionId: string; user: any }> {
     const user = await this.userRepository.findByEmail(email);
     if (!user) {
-      throw new UnauthorizedException('Invalid credentials');
+      throw new InvalidCredentialsException('USER_NOT_FOUND');
     }
 
     const isValid = await argon2.verify(user.hashedPassword, passwordPlain);
     if (!isValid) {
-      throw new UnauthorizedException('Invalid credentials');
+      throw new InvalidCredentialsException('INVALID_PASSWORD', user.id);
     }
 
     const sessionId = await this.sessionManager.createSession(user.id);
