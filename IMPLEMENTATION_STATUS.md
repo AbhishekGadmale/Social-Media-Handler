@@ -520,7 +520,7 @@ Following the project's 7-tier prioritization hierarchy:
 | **Tier 7: Non-Blocking Follow-Ups** | TokenService CAS-Recheck Reconnect Recovery Coverage & Test 11 Spy Cleanup | `apps/worker/src/publishing/token.service.spec.ts` | **MERGED / CLOSED** (PR #21, `365653f`) | Low / Test Suite Resilience | Test 11 `try/finally` spy cleanup and Test 14 Step 5 CAS conflict recheck credential recovery |
 | **Tier 7: Non-Blocking Follow-Ups** | ESLint `no-floating-promises` Rule Escalation | `apps/api/package.json`, `.eslintrc.js` | **QUEUED (NON-BLOCKING)** | Low / Static Analysis Hardening | Evaluate escalating ESLint `no-floating-promises` from warning to error; check existing violations & migration scope |
 | **Tier 7: Non-Blocking Follow-Ups** | Failed Login Audit Accuracy Enrichment | `apps/api/src/modules/auth/auth.controller.ts` | **QUEUED (NON-BLOCKING)** | Low / Security Audit Detail | Record actual auth failure reason for `AUTH_LOGIN_FAILED` without logging credentials, tokens, or secrets |
-| **Tier 7: Non-Blocking Follow-Ups** | OAuth Callback Missing Parameter Failure Audit | `apps/api/src/modules/oauth/oauth.controller.ts` | **QUEUED (NON-BLOCKING)** | Low / Security Audit Detail | Add `FAILED` audit event when OAuth callbacks miss required `code` or `state`, using safe metadata only |
+| **Tier 7: Non-Blocking Follow-Ups** | OAuth Callback Missing Parameter Failure Audit | `apps/api/src/modules/oauth/oauth.controller.ts` | **MERGED / CLOSED** (PR #23, `9512337`) | Low / Security Audit Detail | Best-effort `OAUTH_CONNECTION_FAILED` audit logging on missing `code` or `state` with safe metadata |
 | **Tier 7: Future Feature Dependency** | Worker `PublishingProcessor` Catch-Path Disconnect Fencing | `apps/worker/src/publishing/publishing.processor.ts` | **FUTURE DEPENDENCY** | Low / Dependent on Future Disconnect API | Guard processor catch paths against resurrecting `DISCONNECTED` accounts |
 | **Tier 7: CI / Test Optimization** | CI PostgreSQL Service Publishing E2E Execution | `apps/api/test/publishing.e2e-spec.ts`, `.github/workflows/ci.yml` | **MERGED** (PR #13, `6bab30d`) | Low / Pipeline Test Breadth | Complete (Dedicated CI Job Verified) |
 | **Tier 7: CI / Test Optimization** | Broader API E2E CI Coverage (Accounts, Analytics, Auth, Media Storage) | `apps/api/test/*.e2e-spec.ts`, `.github/workflows/ci.yml` | **MERGED / CLOSED** (PR #16, `42723ab`) | Low / Pipeline Test Breadth | Complete (5/5 API E2E suites verified in CI) |
@@ -530,6 +530,7 @@ Following the project's 7-tier prioritization hierarchy:
 ### 4. Current Implementation Focus: Completed Hardening & Next Priorities
 
 - **Recently Completed**:
+  - **OAuth Callback Missing Parameter Failure Audit** (**MERGED / CLOSED** in PR #23, merge commit [`9512337`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/9512337d76d19fc5e769379b9f812b3a28c365cc), reviewed HEAD [`6356903`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/635690337e0454c95bebb6d79ffe0b3abcb7563b)). Recorded best-effort `OAUTH_CONNECTION_FAILED` audit events when OAuth callbacks arrive missing required `code` or `state` parameters with safe failure reasons (`MISSING_CODE`, `MISSING_STATE`, `MISSING_CODE_AND_STATE`) without leaking sensitive tokens into metadata, while preserving the existing `ForbiddenException('Missing code or state')` HTTP contract.
   - **TokenService CAS-Recheck Reconnect Recovery Coverage & Test 11 Spy Cleanup** (**MERGED / CLOSED** in PR #21, merge commit [`365653f`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/365653fc4812857eadc97444988735649f274881), reviewed HEAD [`e5432e6`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/e5432e6be8711d865aef122d3d9dc5c36d6b4ff1)). Wrapped Test 11's `txSpy.mockRestore()` in a `try/finally` block to guarantee spy cleanup on failure, and added Test 14 in `apps/worker/src/publishing/token.service.spec.ts` to deterministically verify Step 5 CAS conflict recheck recovery when a concurrent OAuth reconnect persists fresh credentials.
   - **TokenService CAS-Failure Recheck `DISCONNECTED` Guard & Direct Repository Integration Testing** (**MERGED / CLOSED** in PR #19, merge commit [`cfc7924`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/cfc7924fb7d3704988ec7f81b3f13160a8799737), reviewed HEAD [`9a44a2a`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/9a44a2aa792861e586ab371b45df12ba2b3ceeea)). Prevents returning active credentials or overwriting `DISCONNECTED` status during CAS conflicts, and adds direct domain repository integration coverage using `SocialAccountRepository.upsertWithConnection()`.
   - **Container Runtime Transpilation & Compiled Workspace Packaging** (**MERGED / CLOSED** in PR #17, merge commit [`c7ec09b`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/c7ec09b14fe70917ec51526cee482ac01b504f50)). Production API and Worker containers now run compiled JavaScript from `dist/` directly via standard `node`, with internal workspace packages compiled to `dist/` with `.d.ts` types and modern exports.
@@ -747,7 +748,7 @@ The final architecture employs a two-tier fencing model:
    - Added `logActionBestEffort(data: CreateAuditLogDto): void { this.logAction(data).catch((err) => { this.logger.error('Failed to write audit log (best-effort)', ...); }); }`.
 3. **Call Sites Updated**:
    - `apps/api/src/modules/auth/auth.controller.ts`: Login success, login failure, and logout use `this.auditService.logActionBestEffort`.
-   - `apps/api/src/modules/oauth/oauth.controller.ts`: Connect initiated, callback (success, reconnect, denied, failed), and select use `this.auditService.logActionBestEffort`.
+   - `apps/api/src/modules/oauth/oauth.controller.ts`: Connect initiated, callback (success, reconnect, denied, failed, and missing required parameter validation failures), and select use `this.auditService.logActionBestEffort`.
    - `apps/api/src/modules/accounts/accounts.controller.ts`: Trigger sync uses `this.auditService.logActionBestEffort`.
    - `apps/api/src/modules/media/media.service.ts`: Initiate upload and complete upload use `this.audit.logActionBestEffort`.
    - `apps/api/src/modules/publishing/services/publishing-application.service.ts`: All 13 post and publication mutations uncommented/wired with `await this.audit.logAction({...})`. Removed `as any` from `requestRemoteDelete`.
@@ -757,7 +758,7 @@ The final architecture employs a two-tier fencing model:
 - **Unit Test Suites Added & Updated**:
   - `apps/api/src/modules/core/audit.service.spec.ts`: 4 tests verifying reliable resolution, rejection propagation, best-effort non-throwing behavior, and error logging.
   - `apps/api/src/modules/auth/auth.controller.spec.ts`: 3 tests verifying best-effort audit emission on login success, login failure, and logout.
-  - `apps/api/src/modules/oauth/oauth.controller.spec.ts`: 12 tests verified and updated with `mockAuditService.logActionBestEffort`.
+  - `apps/api/src/modules/oauth/oauth.controller.spec.ts`: 14 tests verified and updated with `mockAuditService.logActionBestEffort` (including 3 missing parameter validation failure tests asserting safe metadata without credential leakage).
   - `apps/api/src/modules/accounts/accounts.controller.spec.ts`: 2 tests verified and updated with `mockAuditService.logActionBestEffort`.
   - `apps/api/src/modules/publishing/services/publishing-application.service.spec.ts`: 45 tests total (29 reconcile tests + 16 new audit tests covering all 13 actions, rejection propagation, no-double-logging in reconcile, and metadata redaction).
 - **Test Suite Results**:
@@ -772,7 +773,7 @@ The final architecture employs a two-tier fencing model:
 1. **Transactional Audit Writes**: Closed for `createDraft` and `updateDraft`. Implemented, verified, and merged in PR #12 ([`8e94c62`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/8e94c62846f6cd1599d41b3337a998054730d1a9)).
 2. **ESLint `no-floating-promises` Rule Escalation**: Evaluate escalating ESLint `no-floating-promises` from warning to error; first inspect existing violations and determine migration scope across all workspace packages.
 3. **Failed Login Audit Accuracy**: Record the actual authentication failure reason for `AUTH_LOGIN_FAILED`, without logging credentials, tokens, or other secrets.
-4. **OAuth Callback Failures**: Add a `FAILED` audit event when OAuth callbacks arrive missing required query parameters (`code` or `state`), using safe metadata only.
+4. **OAuth Callback Failures**: Closed for missing `code`/`state` parameters. Implemented, verified, and merged in PR #23 ([`9512337`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/9512337d76d19fc5e769379b9f812b3a28c365cc)).
 
 ---
 
@@ -1185,3 +1186,54 @@ The final architecture employs a two-tier fencing model:
 ### 4. Remaining Follow-Ups
 1. **Future Feature Dependency — Worker Catch-Path Disconnect Fencing**:
    - Retained as a future feature dependency when account disconnect API endpoints are introduced (`publishing.processor.ts`).
+---
+
+## 23. OAuth Callback Missing Parameter Failure Audit (Branch `fix/oauth-missing-parameter-audit` — MERGED)
+
+### 1. Summary & Motivation
+- **Status**: **MERGED** (PR #23, merge commit [`9512337d76d19fc5e769379b9f812b3a28c365cc`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/9512337d76d19fc5e769379b9f812b3a28c365cc))
+- **Pull Request**: [#23](https://github.com/AbhishekGadmale/Social-Media-Handler/pull/23)
+- **Branch**: `fix/oauth-missing-parameter-audit`
+- **Pre-Merge Base SHA**: [`cfb93010a40f80aec06fac5702eccdc04d5c801e`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/cfb93010a40f80aec06fac5702eccdc04d5c801e) (`cfb9301`)
+- **Reviewed Head SHA**: [`635690337e0454c95bebb6d79ffe0b3abcb7563b`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/635690337e0454c95bebb6d79ffe0b3abcb7563b) (`6356903`)
+- **Merge Commit SHA**: [`9512337d76d19fc5e769379b9f812b3a28c365cc`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/9512337d76d19fc5e769379b9f812b3a28c365cc) (`9512337`)
+- **Merge Timestamp**: `2026-10-25T16:36:41Z`
+- **Pre-Merge CI Run**: [Run #40211027219](https://github.com/AbhishekGadmale/Social-Media-Handler/actions/runs/40211027219) (6/6 check runs green on reviewed HEAD `6356903`)
+- **Post-Merge Push CI Run**: [Run #40212506660](https://github.com/AbhishekGadmale/Social-Media-Handler/actions/runs/40212506660) (All 5 push check runs green on `main` `9512337`)
+- **Reviewer**: Muse (APPROVED)
+
+### 2. Scope & Implementation Details
+1. **Audit Logging on Missing Callback Parameters**:
+   - In `apps/api/src/modules/oauth/oauth.controller.ts`, prior to throwing `ForbiddenException('Missing code or state')` when `!code || !state`, the controller records a best-effort audit event:
+     - Action: `AuditAction.OAUTH_CONNECTION_FAILED`
+     - Actor ID: `userId`
+     - Target Type: `'SocialProvider'`
+     - Target ID: `provider`
+     - Request ID: `requestId`
+     - Metadata: `{ provider, reason }` where `reason` is safely categorized as `'MISSING_CODE_AND_STATE'`, `'MISSING_CODE'`, or `'MISSING_STATE'`.
+   - Preserves the existing HTTP contract by still throwing `ForbiddenException('Missing code or state')`.
+2. **Credential & Secret Protection in Audit Logs**:
+   - Raw authorization `code` and CSRF `state` tokens are never stored in audit metadata, preventing accidental credential exposure or token leakage in compliance and security event trails.
+3. **Controller Unit Test Suite Expansion**:
+   - Updated `apps/api/src/modules/oauth/oauth.controller.spec.ts` with 3 dedicated regression tests covering:
+     - Missing `code` (with present state): verifies `ForbiddenException`, audit action `OAUTH_CONNECTION_FAILED`, reason `MISSING_CODE`, and asserts state string is absent from audit call metadata.
+     - Missing `state` (with present code): verifies `ForbiddenException`, audit action `OAUTH_CONNECTION_FAILED`, reason `MISSING_STATE`, and asserts authorization code is absent from audit call metadata.
+     - Missing both `code` and `state`: verifies `ForbiddenException`, audit action `OAUTH_CONNECTION_FAILED`, and reason `MISSING_CODE_AND_STATE`.
+
+### 3. Verification & Test Evidence
+- **Test Suite Verification**:
+   - `apps/api/src/modules/oauth/oauth.controller.spec.ts`: 14/14 tests passing.
+   - Full API Unit Test Suite: 17/17 test files, 188/188 tests passing.
+   - Monorepo Lint & Typecheck: All tasks passing with 0 errors.
+   - Pre-Merge CI Run #40211027219: All 6 check runs green on reviewed HEAD `6356903` (`GitGuardian`, `Application Builds`, `Tests`, `Code Quality`, `Docker Build & Smoke Test`, `API E2E Tests`).
+   - GitHub Actions Post-Merge Push CI Run #40212506660: All 5 push check runs green on `main` (`9512337`).
+
+### 4. Remaining Follow-Ups
+1. **ESLint `no-floating-promises` Rule Escalation**:
+   - Evaluate escalating ESLint `no-floating-promises` from warning to error; check existing violations and migration scope across workspace packages.
+2. **Failed Login Audit Accuracy Enrichment**:
+   - Record actual authentication failure reason for `AUTH_LOGIN_FAILED` without logging credentials or secrets (`apps/api/src/modules/auth/auth.controller.ts`).
+3. **Production Docker Runner Image Slimming**:
+   - Optional optimization to prune devDependencies and unused workspace packages in runner stages (`apps/api/Dockerfile`, `apps/worker/Dockerfile`).
+4. **Future Feature Dependency — Worker Catch-Path Disconnect Fencing**:
+   - Retained as a future feature dependency when account disconnect API endpoints are introduced (`apps/worker/src/publishing/publishing.processor.ts`).
