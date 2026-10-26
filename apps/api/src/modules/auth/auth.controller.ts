@@ -9,7 +9,7 @@ import {
   HttpCode,
   HttpStatus,
 } from '@nestjs/common';
-import { AuthService } from './auth.service';
+import { AuthService, InvalidCredentialsException } from './auth.service';
 import type { Response, Request } from 'express';
 import { AuthGuard } from './guards/auth.guard';
 import { WorkspaceGuard } from './guards/workspace.guard';
@@ -61,12 +61,22 @@ export class AuthController {
         requestId,
       });
     } catch (e) {
-      this.auditService.logActionBestEffort({
-        action: AuditAction.AUTH_LOGIN_FAILED,
-        targetType: 'User',
-        requestId,
-        metadata: { reason: 'invalid_credentials' },
-      });
+      if (e instanceof InvalidCredentialsException) {
+        this.auditService.logActionBestEffort({
+          action: AuditAction.AUTH_LOGIN_FAILED,
+          targetType: 'User',
+          ...(e.resolvedUserId ? { targetId: e.resolvedUserId } : {}),
+          requestId,
+          metadata: { reason: e.reason },
+        });
+      } else {
+        this.auditService.logActionBestEffort({
+          action: AuditAction.AUTH_LOGIN_FAILED,
+          targetType: 'User',
+          requestId,
+          metadata: { reason: 'INTERNAL_ERROR' },
+        });
+      }
       throw e;
     }
 

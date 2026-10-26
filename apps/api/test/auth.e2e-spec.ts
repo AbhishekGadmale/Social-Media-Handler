@@ -138,7 +138,7 @@ describe('AuthController (e2e)', () => {
   let sessionCookie: string;
   let csrfToken: string;
 
-  it('/api/v1/auth/login (POST) - fails with generic message for wrong password', async () => {
+  it('/api/v1/auth/login (POST) - fails with generic message for wrong password and logs INVALID_PASSWORD', async () => {
     const res = await request(app.getHttpServer())
       .post('/api/v1/auth/login')
       .send({ email: testUser.email, password: 'wrongpassword' });
@@ -147,16 +147,50 @@ describe('AuthController (e2e)', () => {
     expect(res.body.error).toBeDefined();
     expect(res.body.error.code).toBe('UnauthorizedException');
     expect(res.body.error.message).toBe('Invalid credentials');
+
+    const requestId = res.body.error.requestId;
+    let auditLog = await prisma.auditLog.findFirst({
+      where: { requestId, action: 'AUTH_LOGIN_FAILED' },
+    });
+    for (let i = 0; i < 5 && !auditLog; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      auditLog = await prisma.auditLog.findFirst({
+        where: { requestId, action: 'AUTH_LOGIN_FAILED' },
+      });
+    }
+    expect(auditLog).toBeDefined();
+    expect(auditLog?.targetType).toBe('User');
+    expect(auditLog?.targetId).toBe(testUser.id);
+    expect((auditLog?.metadata as any)?.reason).toBe('INVALID_PASSWORD');
+    expect(JSON.stringify(auditLog)).not.toContain('wrongpassword');
   });
 
-  it('/api/v1/auth/login (POST) - fails with generic message for wrong email', async () => {
+  it('/api/v1/auth/login (POST) - fails with generic message for wrong email and logs USER_NOT_FOUND', async () => {
     const res = await request(app.getHttpServer())
       .post('/api/v1/auth/login')
       .send({ email: 'nonexistent@example.com', password: 'correctpassword' });
 
     expect(res.status).toBe(401);
     expect(res.body.error).toBeDefined();
+    expect(res.body.error.code).toBe('UnauthorizedException');
     expect(res.body.error.message).toBe('Invalid credentials');
+
+    const requestId = res.body.error.requestId;
+    let auditLog = await prisma.auditLog.findFirst({
+      where: { requestId, action: 'AUTH_LOGIN_FAILED' },
+    });
+    for (let i = 0; i < 5 && !auditLog; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      auditLog = await prisma.auditLog.findFirst({
+        where: { requestId, action: 'AUTH_LOGIN_FAILED' },
+      });
+    }
+    expect(auditLog).toBeDefined();
+    expect(auditLog?.targetType).toBe('User');
+    expect(auditLog?.targetId).toBeNull();
+    expect((auditLog?.metadata as any)?.reason).toBe('USER_NOT_FOUND');
+    expect(JSON.stringify(auditLog)).not.toContain('correctpassword');
+    expect(JSON.stringify(auditLog)).not.toContain('nonexistent@example.com');
   });
 
   it('/api/v1/auth/login (POST) - success issues valid session and csrf cookies', async () => {
