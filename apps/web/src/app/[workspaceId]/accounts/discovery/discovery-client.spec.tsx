@@ -130,8 +130,12 @@ describe('DiscoveryClientPage', () => {
       profiles: [{ id: 'p1', name: 'Page One' }, { id: 'p2', name: 'Page Two' }]
     });
 
-    // Mock post with a slight delay
-    mockApiPost.mockImplementation(() => new Promise((resolve) => setTimeout(() => resolve({ success: true }), 10)));
+    // Controlled deferred promise instead of arbitrary wall-clock timer
+    let resolvePost!: (value: { success: boolean }) => void;
+    const postPromise = new Promise<{ success: boolean }>((resolve) => {
+      resolvePost = resolve;
+    });
+    mockApiPost.mockImplementation(() => postPromise);
 
     render(<DiscoveryClientPage workspaceId={workspaceId} />, { wrapper: createWrapper() });
 
@@ -139,20 +143,28 @@ describe('DiscoveryClientPage', () => {
       expect(screen.getByText('Page One')).toBeInTheDocument();
     });
 
-    // Submit
-    const connectBtn = screen.getByRole('button', { name: 'Connect Accounts' });
-    await user.click(connectBtn);
+    try {
+      // Submit
+      const connectBtn = screen.getByRole('button', { name: 'Connect Accounts' });
+      await user.click(connectBtn);
 
-    // Double submit prevent
-    expect(connectBtn).toBeDisabled();
-    expect(connectBtn).toHaveTextContent('Connecting...');
+      // Double submit prevent while request is unresolved
+      expect(connectBtn).toBeDisabled();
+      expect(connectBtn).toHaveTextContent('Connecting...');
 
-    await waitFor(() => {
-      expect(mockApiPost).toHaveBeenCalledWith('workspaces/ws-1/oauth/discoveries/disc-1/select', {
-        profileIds: ['p1', 'p2']
+      // Explicitly resolve the in-flight request
+      resolvePost({ success: true });
+
+      await waitFor(() => {
+        expect(mockApiPost).toHaveBeenCalledWith('workspaces/ws-1/oauth/discoveries/disc-1/select', {
+          profileIds: ['p1', 'p2']
+        });
+        expect(mockPush).toHaveBeenCalledWith('/ws-1/accounts');
       });
-      expect(mockPush).toHaveBeenCalledWith('/ws-1/accounts');
-    });
+    } finally {
+      // Guarantee promise resolution on test failure to avoid dangling promises
+      resolvePost({ success: true });
+    }
   });
 
   it('12/13/14. expired/403/error discovery shows reconnect message safely', async () => {
