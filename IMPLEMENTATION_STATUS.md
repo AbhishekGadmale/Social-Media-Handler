@@ -521,6 +521,7 @@ Following the project's 7-tier prioritization hierarchy:
 | **Tier 7: Non-Blocking Follow-Ups** | ESLint `no-floating-promises` Rule Escalation | `apps/api/package.json`, `.eslintrc.js` | **QUEUED (NON-BLOCKING)** | Low / Static Analysis Hardening | Evaluate escalating ESLint `no-floating-promises` from warning to error; check existing violations & migration scope |
 | **Tier 7: Non-Blocking Follow-Ups** | Failed Login Audit Accuracy Enrichment | `apps/api/src/modules/auth/auth.controller.ts` | **QUEUED (NON-BLOCKING)** | Low / Security Audit Detail | Record actual auth failure reason for `AUTH_LOGIN_FAILED` without logging credentials, tokens, or secrets |
 | **Tier 7: Non-Blocking Follow-Ups** | OAuth Callback Missing Parameter Failure Audit | `apps/api/src/modules/oauth/oauth.controller.ts` | **MERGED / CLOSED** (PR #23, `9512337`) | Low / Security Audit Detail | Best-effort `OAUTH_CONNECTION_FAILED` audit logging on missing `code` or `state` with safe metadata |
+| **Tier 7: Non-Blocking Follow-Ups** | Deterministic Discovery Submit Async Control | `apps/web/src/app/[workspaceId]/accounts/discovery/discovery-client.spec.tsx` | **MERGED / CLOSED** (PR #25, `c6e312b`) | Low / Test Suite Resilience | Replaced fragile 10ms timer with controlled deferred promise in discovery double-submit test |
 | **Tier 7: Future Feature Dependency** | Worker `PublishingProcessor` Catch-Path Disconnect Fencing | `apps/worker/src/publishing/publishing.processor.ts` | **FUTURE DEPENDENCY** | Low / Dependent on Future Disconnect API | Guard processor catch paths against resurrecting `DISCONNECTED` accounts |
 | **Tier 7: CI / Test Optimization** | CI PostgreSQL Service Publishing E2E Execution | `apps/api/test/publishing.e2e-spec.ts`, `.github/workflows/ci.yml` | **MERGED** (PR #13, `6bab30d`) | Low / Pipeline Test Breadth | Complete (Dedicated CI Job Verified) |
 | **Tier 7: CI / Test Optimization** | Broader API E2E CI Coverage (Accounts, Analytics, Auth, Media Storage) | `apps/api/test/*.e2e-spec.ts`, `.github/workflows/ci.yml` | **MERGED / CLOSED** (PR #16, `42723ab`) | Low / Pipeline Test Breadth | Complete (5/5 API E2E suites verified in CI) |
@@ -530,6 +531,7 @@ Following the project's 7-tier prioritization hierarchy:
 ### 4. Current Implementation Focus: Completed Hardening & Next Priorities
 
 - **Recently Completed**:
+  - **Deterministic Discovery Submit Async Control** (**MERGED / CLOSED** in PR #25, merge commit [`c6e312b`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/c6e312b2eaba782386c65bcc0bc6604f8025f844), reviewed HEAD [`57c1e95`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/57c1e95dcfbea503d6b3a3915b2b7c2a6efacedb)). Replaced fragile 10ms wall-clock timer in `apps/web/src/app/[workspaceId]/accounts/discovery/discovery-client.spec.tsx` with a deterministic deferred promise and `try/finally` cleanup to prevent intermittent double-submit test failures under CI scheduling contention.
   - **OAuth Callback Missing Parameter Failure Audit** (**MERGED / CLOSED** in PR #23, merge commit [`9512337`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/9512337d76d19fc5e769379b9f812b3a28c365cc), reviewed HEAD [`6356903`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/635690337e0454c95bebb6d79ffe0b3abcb7563b)). Recorded best-effort `OAUTH_CONNECTION_FAILED` audit events when OAuth callbacks arrive missing required `code` or `state` parameters with safe failure reasons (`MISSING_CODE`, `MISSING_STATE`, `MISSING_CODE_AND_STATE`) without leaking sensitive tokens into metadata, while preserving the existing `ForbiddenException('Missing code or state')` HTTP contract.
   - **TokenService CAS-Recheck Reconnect Recovery Coverage & Test 11 Spy Cleanup** (**MERGED / CLOSED** in PR #21, merge commit [`365653f`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/365653fc4812857eadc97444988735649f274881), reviewed HEAD [`e5432e6`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/e5432e6be8711d865aef122d3d9dc5c36d6b4ff1)). Wrapped Test 11's `txSpy.mockRestore()` in a `try/finally` block to guarantee spy cleanup on failure, and added Test 14 in `apps/worker/src/publishing/token.service.spec.ts` to deterministically verify Step 5 CAS conflict recheck recovery when a concurrent OAuth reconnect persists fresh credentials.
   - **TokenService CAS-Failure Recheck `DISCONNECTED` Guard & Direct Repository Integration Testing** (**MERGED / CLOSED** in PR #19, merge commit [`cfc7924`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/cfc7924fb7d3704988ec7f81b3f13160a8799737), reviewed HEAD [`9a44a2a`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/9a44a2aa792861e586ab371b45df12ba2b3ceeea)). Prevents returning active credentials or overwriting `DISCONNECTED` status during CAS conflicts, and adds direct domain repository integration coverage using `SocialAccountRepository.upsertWithConnection()`.
@@ -1227,6 +1229,52 @@ The final architecture employs a two-tier fencing model:
    - Monorepo Lint & Typecheck: All tasks passing with 0 errors.
    - Pre-Merge CI Run #40211027219: All 6 check runs green on reviewed HEAD `6356903` (`GitGuardian`, `Application Builds`, `Tests`, `Code Quality`, `Docker Build & Smoke Test`, `API E2E Tests`).
    - GitHub Actions Post-Merge Push CI Run #40212506660: All 5 push check runs green on `main` (`9512337`).
+
+### 4. Remaining Follow-Ups
+1. **ESLint `no-floating-promises` Rule Escalation**:
+   - Evaluate escalating ESLint `no-floating-promises` from warning to error; check existing violations and migration scope across workspace packages.
+2. **Failed Login Audit Accuracy Enrichment**:
+   - Record actual authentication failure reason for `AUTH_LOGIN_FAILED` without logging credentials or secrets (`apps/api/src/modules/auth/auth.controller.ts`).
+3. **Production Docker Runner Image Slimming**:
+   - Optional optimization to prune devDependencies and unused workspace packages in runner stages (`apps/api/Dockerfile`, `apps/worker/Dockerfile`).
+4. **Future Feature Dependency — Worker Catch-Path Disconnect Fencing**:
+   - Retained as a future feature dependency when account disconnect API endpoints are introduced (`apps/worker/src/publishing/publishing.processor.ts`).
+---
+
+## 25. Deterministic Discovery Submit Async Control (Branch `test/discovery-client-deterministic-submit` — MERGED)
+
+### 1. Summary & Motivation
+- **Status**: **MERGED** (PR #25, merge commit [`c6e312b2eaba782386c65bcc0bc6604f8025f844`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/c6e312b2eaba782386c65bcc0bc6604f8025f844))
+- **Pull Request**: [#25](https://github.com/AbhishekGadmale/Social-Media-Handler/pull/25)
+- **Branch**: `test/discovery-client-deterministic-submit`
+- **Pre-Merge Base SHA**: [`53beac13ad54c8cc0a37f5cea0130d65c70f0df7`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/53beac13ad54c8cc0a37f5cea0130d65c70f0df7) (`53beac1`)
+- **Reviewed Head SHA**: [`57c1e95dcfbea503d6b3a3915b2b7c2a6efacedb`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/57c1e95dcfbea503d6b3a3915b2b7c2a6efacedb) (`57c1e95`)
+- **Merge Commit SHA**: [`c6e312b2eaba782386c65bcc0bc6604f8025f844`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/c6e312b2eaba782386c65bcc0bc6604f8025f844) (`c6e312b`)
+- **Merge Timestamp**: `2026-10-26T07:36:32Z`
+- **Pre-Merge CI Run**: [Run #40286093957](https://github.com/AbhishekGadmale/Social-Media-Handler/actions/runs/40286093957) (All 6 check runs green on reviewed HEAD `57c1e95`)
+- **Post-Merge Push CI Run**: [Run #40286838868](https://github.com/AbhishekGadmale/Social-Media-Handler/actions/runs/40286838868) (All 5 push check runs green on `main` `c6e312b`)
+- **Reviewer**: Muse (APPROVED)
+
+### 2. Scope & Implementation Details
+1. **Root Cause of Intermittent Failure**:
+   - In `apps/web/src/app/[workspaceId]/accounts/discovery/discovery-client.spec.tsx` (test `9/10/11. submit sends only profileIds, prevents double submit, redirects on success`), `mockApiPost` was mocked using a fixed 10ms wall-clock timer:
+     `mockApiPost.mockImplementation(() => new Promise((resolve) => setTimeout(() => resolve({ success: true }), 10)))`
+   - Under CI runner CPU contention across concurrent Vitest/Jest jobs, `await user.click(connectBtn)` event dispatching took longer than 10ms (observed taking 103ms in CI run #40282271438), causing the mutation promise to resolve before the test could assert `expect(connectBtn).toBeDisabled()`.
+2. **Deterministic Deferred Promise Pattern**:
+   - Replaced the arbitrary 10ms timer with a controlled deferred promise (`postPromise` and `resolvePost`).
+   - Triggering form submission enters `selectMutation.mutate()`, leaving the promise unresolved while the test asserts that `connectBtn` is disabled and displays `Connecting...`.
+   - The test then explicitly calls `resolvePost({ success: true })` to settle the mutation and await subsequent redirect and payload assertions.
+3. **Promise Leakage & Test Resilience**:
+   - Wrapped the assertion block in `try/finally` to guarantee `resolvePost` is always executed in `finally`, preventing unresolved promises from hanging or leaking state across subsequent test suites if intermediate assertions throw.
+
+### 3. Verification & Test Evidence
+- **Local Test Suite Verification**:
+   - Focused test file (`pnpm --filter @agency-os/web test src/app/[workspaceId]/accounts/discovery/discovery-client.spec.tsx`): 1/1 suite, 7/7 tests passing.
+   - Complete Web Test Suite (`pnpm --filter @agency-os/web test`): 6/6 suites, 91/91 tests passing.
+   - Monorepo Lint & Typecheck (`pnpm turbo run lint typecheck`): All 15 tasks successful across 9 packages (0 errors).
+- **CI Verification**:
+   - Pre-Merge CI Run #40286093957: All 6 check runs green on reviewed HEAD `57c1e95` (`GitGuardian`, `Application Builds`, `Tests`, `Code Quality`, `Docker Build & Smoke Test`, `API E2E Tests`).
+   - GitHub Actions Post-Merge Push CI Run #40286838868: All 5 push check runs green on `main` (`c6e312b`).
 
 ### 4. Remaining Follow-Ups
 1. **ESLint `no-floating-promises` Rule Escalation**:
