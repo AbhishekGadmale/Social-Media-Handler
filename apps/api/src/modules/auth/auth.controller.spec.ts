@@ -202,30 +202,11 @@ describe('AuthController', () => {
       expect(payloadStr).not.toContain('Database connection lost');
     });
 
-    it('does not mask the original exception if logActionBestEffort encounters an error', async () => {
-      authServiceMock.login.mockRejectedValueOnce(
-        new InvalidCredentialsException('USER_NOT_FOUND'),
-      );
-      auditServiceMock.logActionBestEffort.mockImplementationOnce(() => {
-        // Even if an unexpected error occurs inside logActionBestEffort
-        throw new Error('Audit backend logger failure');
-      });
-
-      // Since logActionBestEffort is designed as non-blocking, if the controller implementation
-      // invokes it, any unexpected synchronous error inside a badly-mocked helper shouldn't mask
-      // unless unhandled. But let's verify what happens:
-      // In reality, logActionBestEffort has an internal .catch, but in unit tests, if logActionBestEffort is a mock
-      // that does not throw, the exception propagates.
-    });
-
-    it('audit write failure does not mask original successful login or credentials failure', async () => {
-      // In production, AuditService.logActionBestEffort handles internal errors safely.
-      // Here we verify controller invokes logActionBestEffort and proceeds cleanly.
+    it('invokes logActionBestEffort and propagates InvalidCredentialsException on credential failure', async () => {
       authServiceMock.login.mockRejectedValueOnce(
         new InvalidCredentialsException('INVALID_PASSWORD', 'user-safe-1'),
       );
 
-      // Verify that calling login rejects with InvalidCredentialsException
       await expect(
         controller.login(
           { email: 'user@example.com', password: 'wrong' },
