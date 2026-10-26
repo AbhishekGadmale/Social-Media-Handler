@@ -1313,7 +1313,7 @@ The final architecture employs a two-tier fencing model:
    - In `apps/api/src/modules/auth/auth.controller.ts`, updated `login()` catch block:
      - For `InvalidCredentialsException`: emits `AuditAction.AUTH_LOGIN_FAILED` with `metadata: { reason: e.reason }` and `targetId: e.resolvedUserId` (only populated for `INVALID_PASSWORD`; omitted for `USER_NOT_FOUND`).
      - For unexpected errors (e.g. database/Redis connection failure): emits `AuditAction.AUTH_LOGIN_FAILED` with `metadata: { reason: 'INTERNAL_ERROR' }` without `targetId`, and rethrows the original error to preserve 500 status and logging.
-     - Preserves OWASP / CWE-204 client contract: external HTTP responses remain generic 401 Unauthorized `{ statusCode: 401, message: 'Invalid credentials', error: 'Unauthorized' }` with no account enumeration leakage.
+     - Preserves OWASP / CWE-204 client contract: external HTTP responses remain generic 401 Unauthorized `{ error: { code: 'UnauthorizedException', message: 'Invalid credentials', requestId } }` with no account enumeration leakage.
      - Strictly prevents secret leakage: passwords, password hashes, and raw database exception strings are never passed to audit metadata.
 3. **Test Suite Expansion & Finding M1 Remediation**:
    - Added unit test suite `apps/api/src/modules/auth/auth.service.spec.ts` covering success, `USER_NOT_FOUND`, `INVALID_PASSWORD`, error propagation, and logout.
