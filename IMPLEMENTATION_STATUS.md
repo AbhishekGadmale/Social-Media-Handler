@@ -519,7 +519,7 @@ Following the project's 7-tier prioritization hierarchy:
 | **Tier 7: Non-Blocking Follow-Ups** | TokenService Integration Test via `SocialAccountRepository.upsertWithConnection` | `apps/worker/src/publishing/token.service.spec.ts` | **MERGED / CLOSED** (PR #19, `cfc7924`) | Low / Integration Test Hardening | Direct domain repository integration tests for concurrent OAuth reconnects against stale failure handlers |
 | **Tier 7: Non-Blocking Follow-Ups** | TokenService CAS-Recheck Reconnect Recovery Coverage & Test 11 Spy Cleanup | `apps/worker/src/publishing/token.service.spec.ts` | **MERGED / CLOSED** (PR #21, `365653f`) | Low / Test Suite Resilience | Test 11 `try/finally` spy cleanup and Test 14 Step 5 CAS conflict recheck credential recovery |
 | **Tier 7: Non-Blocking Follow-Ups** | ESLint `no-floating-promises` Rule Escalation | `apps/api/package.json`, `.eslintrc.js` | **QUEUED (NON-BLOCKING)** | Low / Static Analysis Hardening | Evaluate escalating ESLint `no-floating-promises` from warning to error; check existing violations & migration scope |
-| **Tier 7: Non-Blocking Follow-Ups** | Failed Login Audit Accuracy Enrichment | `apps/api/src/modules/auth/auth.controller.ts` | **QUEUED (NON-BLOCKING)** | Low / Security Audit Detail | Record actual auth failure reason for `AUTH_LOGIN_FAILED` without logging credentials, tokens, or secrets |
+| **Tier 7: Non-Blocking Follow-Ups** | Failed Login Audit Accuracy Enrichment | `apps/api/src/modules/auth/auth.controller.ts` | **MERGED / CLOSED** (PR #27, `f41afaf`) | Low / Security Audit Detail | Record actual auth failure reason for `AUTH_LOGIN_FAILED` without logging credentials, tokens, or secrets |
 | **Tier 7: Non-Blocking Follow-Ups** | OAuth Callback Missing Parameter Failure Audit | `apps/api/src/modules/oauth/oauth.controller.ts` | **MERGED / CLOSED** (PR #23, `9512337`) | Low / Security Audit Detail | Best-effort `OAUTH_CONNECTION_FAILED` audit logging on missing `code` or `state` with safe metadata |
 | **Tier 7: Non-Blocking Follow-Ups** | Deterministic Discovery Submit Async Control | `apps/web/src/app/[workspaceId]/accounts/discovery/discovery-client.spec.tsx` | **MERGED / CLOSED** (PR #25, `c6e312b`) | Low / Test Suite Resilience | Replaced fragile 10ms timer with controlled deferred promise in discovery double-submit test |
 | **Tier 7: Future Feature Dependency** | Worker `PublishingProcessor` Catch-Path Disconnect Fencing | `apps/worker/src/publishing/publishing.processor.ts` | **FUTURE DEPENDENCY** | Low / Dependent on Future Disconnect API | Guard processor catch paths against resurrecting `DISCONNECTED` accounts |
@@ -531,6 +531,7 @@ Following the project's 7-tier prioritization hierarchy:
 ### 4. Current Implementation Focus: Completed Hardening & Next Priorities
 
 - **Recently Completed**:
+  - **Failed Login Audit Accuracy Enrichment** (**MERGED / CLOSED** in PR #27, merge commit [`f41afaf`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/f41afaf5ba3d98c60ceb060e783708088814eb15), reviewed HEAD [`a13ea54`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/a13ea547d4bb9f420b1806c87d5490227b577cf4)). Enriched failed login audit logging by distinguishing internal authentication failure reasons (`USER_NOT_FOUND`, `INVALID_PASSWORD`, `INTERNAL_ERROR`) and safely associating internal user ID on invalid passwords, while strictly preserving generic 401 client error responses to prevent account enumeration, preventing secret leakage, and resolving Muse test-integrity finding M1.
   - **Deterministic Discovery Submit Async Control** (**MERGED / CLOSED** in PR #25, merge commit [`c6e312b`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/c6e312b2eaba782386c65bcc0bc6604f8025f844), reviewed HEAD [`57c1e95`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/57c1e95dcfbea503d6b3a3915b2b7c2a6efacedb)). Replaced fragile 10ms wall-clock timer in `apps/web/src/app/[workspaceId]/accounts/discovery/discovery-client.spec.tsx` with a deterministic deferred promise and `try/finally` cleanup to prevent intermittent double-submit test failures under CI scheduling contention.
   - **OAuth Callback Missing Parameter Failure Audit** (**MERGED / CLOSED** in PR #23, merge commit [`9512337`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/9512337d76d19fc5e769379b9f812b3a28c365cc), reviewed HEAD [`6356903`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/635690337e0454c95bebb6d79ffe0b3abcb7563b)). Recorded best-effort `OAUTH_CONNECTION_FAILED` audit events when OAuth callbacks arrive missing required `code` or `state` parameters with safe failure reasons (`MISSING_CODE`, `MISSING_STATE`, `MISSING_CODE_AND_STATE`) without leaking sensitive tokens into metadata, while preserving the existing `ForbiddenException('Missing code or state')` HTTP contract.
   - **TokenService CAS-Recheck Reconnect Recovery Coverage & Test 11 Spy Cleanup** (**MERGED / CLOSED** in PR #21, merge commit [`365653f`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/365653fc4812857eadc97444988735649f274881), reviewed HEAD [`e5432e6`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/e5432e6be8711d865aef122d3d9dc5c36d6b4ff1)). Wrapped Test 11's `txSpy.mockRestore()` in a `try/finally` block to guarantee spy cleanup on failure, and added Test 14 in `apps/worker/src/publishing/token.service.spec.ts` to deterministically verify Step 5 CAS conflict recheck recovery when a concurrent OAuth reconnect persists fresh credentials.
@@ -1234,7 +1235,7 @@ The final architecture employs a two-tier fencing model:
 1. **ESLint `no-floating-promises` Rule Escalation**:
    - Evaluate escalating ESLint `no-floating-promises` from warning to error; check existing violations and migration scope across workspace packages.
 2. **Failed Login Audit Accuracy Enrichment**:
-   - Record actual authentication failure reason for `AUTH_LOGIN_FAILED` without logging credentials or secrets (`apps/api/src/modules/auth/auth.controller.ts`).
+   - Record actual authentication failure reason for `AUTH_LOGIN_FAILED` without logging credentials or secrets (`apps/api/src/modules/auth/auth.controller.ts`) (**MERGED / CLOSED** in PR #27, merge commit [`f41afaf`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/f41afaf5ba3d98c60ceb060e783708088814eb15)).
 3. **Production Docker Runner Image Slimming**:
    - Optional optimization to prune devDependencies and unused workspace packages in runner stages (`apps/api/Dockerfile`, `apps/worker/Dockerfile`).
 4. **Future Feature Dependency — Worker Catch-Path Disconnect Fencing**:
@@ -1284,4 +1285,57 @@ The final architecture employs a two-tier fencing model:
 3. **Production Docker Runner Image Slimming**:
    - Optional optimization to prune devDependencies and unused workspace packages in runner stages (`apps/api/Dockerfile`, `apps/worker/Dockerfile`).
 4. **Future Feature Dependency — Worker Catch-Path Disconnect Fencing**:
+   - Retained as a future feature dependency when account disconnect API endpoints are introduced (`apps/worker/src/publishing/publishing.processor.ts`).
+
+---
+
+## 27. Failed Login Audit Accuracy Enrichment (Branch `fix/auth-failed-login-audit-enrichment` — MERGED)
+
+### 1. Summary & Motivation
+- **Status**: **MERGED** (PR #27, merge commit [`f41afaf5ba3d98c60ceb060e783708088814eb15`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/f41afaf5ba3d98c60ceb060e783708088814eb15))
+- **Pull Request**: [#27](https://github.com/AbhishekGadmale/Social-Media-Handler/pull/27)
+- **Branch**: `fix/auth-failed-login-audit-enrichment`
+- **Pre-Merge Base SHA**: [`33629b5139b9637f59446e7d7b59cd8e4b5b6d98`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/33629b5139b9637f59446e7d7b59cd8e4b5b6d98) (`33629b5`)
+- **Reviewed Head SHA**: [`a13ea547d4bb9f420b1806c87d5490227b577cf4`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/a13ea547d4bb9f420b1806c87d5490227b577cf4) (`a13ea54`)
+- **Initial Feature Head SHA**: [`d36f2477d3599e33ab6cec000d8cad831ae1d63a`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/d36f2477d3599e33ab6cec000d8cad831ae1d63a) (`d36f247`)
+- **Merge Commit SHA**: [`f41afaf5ba3d98c60ceb060e783708088814eb15`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/f41afaf5ba3d98c60ceb060e783708088814eb15) (`f41afaf`)
+- **Merge Timestamp**: `2026-10-26T15:00:37Z`
+- **Pre-Merge CI Run**: All 6 check runs green on reviewed HEAD `a13ea54` (`GitGuardian`, `Application Builds`, `Tests`, `Code Quality`, `Docker Build & Smoke Test`, `API E2E Tests`).
+- **Post-Merge Push CI Run**: [Run #40345077579](https://github.com/AbhishekGadmale/Social-Media-Handler/actions/runs/40345077579) (All 5 push check runs green on `main` `f41afaf`).
+- **Reviewer**: Muse (APPROVED)
+
+### 2. Scope & Implementation Details
+1. **Accurate Failed Login Categorization**:
+   - In `apps/api/src/modules/auth/auth.service.ts`, introduced `InvalidCredentialsException` extending `UnauthorizedException` with an internal `reason: 'USER_NOT_FOUND' | 'INVALID_PASSWORD'` and optional `resolvedUserId?: string`. Sets `this.name = 'UnauthorizedException'` to preserve the exact public HTTP error code contract.
+   - Throws `InvalidCredentialsException('USER_NOT_FOUND')` when no account exists for the provided email.
+   - Throws `InvalidCredentialsException('INVALID_PASSWORD', user.id)` when an account exists but password verification fails.
+2. **Controller Audit Attribution & Error Isolation**:
+   - In `apps/api/src/modules/auth/auth.controller.ts`, updated `login()` catch block:
+     - For `InvalidCredentialsException`: emits `AuditAction.AUTH_LOGIN_FAILED` with `metadata: { reason: e.reason }` and `targetId: e.resolvedUserId` (only populated for `INVALID_PASSWORD`; omitted for `USER_NOT_FOUND`).
+     - For unexpected errors (e.g. database/Redis connection failure): emits `AuditAction.AUTH_LOGIN_FAILED` with `metadata: { reason: 'INTERNAL_ERROR' }` without `targetId`, and rethrows the original error to preserve 500 status and logging.
+     - Preserves OWASP / CWE-204 client contract: external HTTP responses remain generic 401 Unauthorized `{ statusCode: 401, message: 'Invalid credentials', error: 'Unauthorized' }` with no account enumeration leakage.
+     - Strictly prevents secret leakage: passwords, password hashes, and raw database exception strings are never passed to audit metadata.
+3. **Test Suite Expansion & Finding M1 Remediation**:
+   - Added unit test suite `apps/api/src/modules/auth/auth.service.spec.ts` covering success, `USER_NOT_FOUND`, `INVALID_PASSWORD`, error propagation, and logout.
+   - Expanded unit tests in `apps/api/src/modules/auth/auth.controller.spec.ts` covering audit reasons, safe user attribution, credential non-leakage, and infrastructure error handling.
+   - Addressed Muse review Finding M1: removed vacuous test with no assertions and retitled adjacent test to accurately reflect that it verifies `logActionBestEffort` invocation and `InvalidCredentialsException` propagation on credential failure.
+   - Updated API E2E tests (`apps/api/test/auth.e2e-spec.ts`) asserting live PostgreSQL `AuditLog` row persistence with expected reasons and target IDs.
+
+### 3. Verification & Test Evidence
+- **Test Suite Verification**:
+   - `apps/api/src/modules/auth/auth.controller.spec.ts`: 6/6 tests passing.
+   - `apps/api/src/modules/auth/auth.service.spec.ts`: 6/6 tests passing.
+   - `apps/api/src/modules/core/audit.service.spec.ts`: 5/5 tests passing.
+   - Full API Unit Test Suite: 18/18 test files, 197/197 tests passing.
+   - API E2E Test Suite (`pnpm --filter @agency-os/api test:e2e`): 5/5 suites, 79/79 tests passing (`accounts`, `analytics`, `auth`, `publishing`, `media.storage`).
+   - Monorepo Lint & Typecheck: All tasks passing (0 errors).
+   - Pre-Merge CI: All 6 check runs green on reviewed HEAD `a13ea54`.
+   - Post-Merge Push CI Run #40345077579: All 5 push check runs green on `main` (`f41afaf`).
+
+### 4. Remaining Follow-Ups
+1. **ESLint `no-floating-promises` Rule Escalation**:
+   - Evaluate escalating ESLint `no-floating-promises` from warning to error; check existing violations and migration scope across workspace packages.
+2. **Production Docker Runner Image Slimming**:
+   - Optional optimization to prune devDependencies and unused workspace packages in runner stages (`apps/api/Dockerfile`, `apps/worker/Dockerfile`).
+3. **Future Feature Dependency — Worker Catch-Path Disconnect Fencing**:
    - Retained as a future feature dependency when account disconnect API endpoints are introduced (`apps/worker/src/publishing/publishing.processor.ts`).
