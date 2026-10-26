@@ -1223,7 +1223,7 @@ The final architecture employs a two-tier fencing model:
 ### 3. Verification & Test Evidence
 - **Test Suite Verification**:
    - `apps/api/src/modules/oauth/oauth.controller.spec.ts`: 14/14 tests passing.
-   - Full API Unit Test Suite: 18/18 test files, 188/188 tests passing.
+   - Full API Unit Test Suite: 17/17 test files, 188/188 tests passing.
    - Monorepo Lint & Typecheck: All tasks passing with 0 errors.
    - Pre-Merge CI Run #40211027219: All 6 check runs green on reviewed HEAD `6356903` (`GitGuardian`, `Application Builds`, `Tests`, `Code Quality`, `Docker Build & Smoke Test`, `API E2E Tests`).
    - GitHub Actions Post-Merge Push CI Run #40212506660: All 5 push check runs green on `main` (`9512337`).
