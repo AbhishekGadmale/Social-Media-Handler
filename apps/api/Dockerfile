@@ -22,7 +22,21 @@ COPY --from=builder /app/out/full/ .
 # Generate Prisma Client
 RUN pnpm --filter @agency-os/database exec prisma generate
 RUN pnpm turbo run build --filter=@agency-os/api
-RUN pnpm --config.confirmModulesPurge=false prune --prod
+
+# Preserve generated Prisma client before reinstalling dependencies
+RUN mkdir -p /tmp/prisma-generated && \
+    cp -r node_modules/.pnpm/@prisma+client*/node_modules/.prisma /tmp/prisma-generated/
+
+# Reinstall strictly production dependencies across all workspace packages
+RUN rm -rf node_modules apps/*/node_modules packages/*/node_modules
+RUN pnpm install --prod --frozen-lockfile
+
+# Restore the generated Prisma client into the production node_modules
+RUN cp -r /tmp/prisma-generated/.prisma node_modules/.pnpm/@prisma+client*/node_modules/ && \
+    mkdir -p node_modules/.prisma && \
+    cp -r /tmp/prisma-generated/.prisma/* node_modules/.prisma/ && \
+    rm -rf /tmp/prisma-generated
+
 RUN rm -rf \
   apps/api/src \
   apps/api/test \

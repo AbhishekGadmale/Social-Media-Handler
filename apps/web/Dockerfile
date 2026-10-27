@@ -21,7 +21,11 @@ COPY --from=builder /app/out/full/ .
 ARG NEXT_PUBLIC_API_URL
 ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:3001/api/v1}
 RUN pnpm turbo run build --filter=@agency-os/web
-RUN pnpm --config.confirmModulesPurge=false prune --prod
+
+# Reinstall strictly production dependencies across all workspace packages
+RUN rm -rf node_modules apps/*/node_modules packages/*/node_modules
+RUN pnpm install --prod --frozen-lockfile
+
 RUN rm -rf \
   apps/web/src \
   apps/web/test-setup.ts \
