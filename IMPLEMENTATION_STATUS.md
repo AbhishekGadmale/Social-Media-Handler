@@ -518,7 +518,7 @@ Following the project's 7-tier prioritization hierarchy:
 | **Tier 7: Non-Blocking Follow-Ups** | TokenService CAS Failure Recheck `DISCONNECTED` Guard | `apps/worker/src/publishing/token.service.ts` | **MERGED / CLOSED** (PR #19, `cfc7924`) | Low / Concurrency Safety Hardening | Fenced `recheckAccount.status === DISCONNECTED` to prevent returning recovered credentials or overwriting status |
 | **Tier 7: Non-Blocking Follow-Ups** | TokenService Integration Test via `SocialAccountRepository.upsertWithConnection` | `apps/worker/src/publishing/token.service.spec.ts` | **MERGED / CLOSED** (PR #19, `cfc7924`) | Low / Integration Test Hardening | Direct domain repository integration tests for concurrent OAuth reconnects against stale failure handlers |
 | **Tier 7: Non-Blocking Follow-Ups** | TokenService CAS-Recheck Reconnect Recovery Coverage & Test 11 Spy Cleanup | `apps/worker/src/publishing/token.service.spec.ts` | **MERGED / CLOSED** (PR #21, `365653f`) | Low / Test Suite Resilience | Test 11 `try/finally` spy cleanup and Test 14 Step 5 CAS conflict recheck credential recovery |
-| **Tier 7: Non-Blocking Follow-Ups** | ESLint `no-floating-promises` Rule Escalation | `apps/api/package.json`, `.eslintrc.js` | **QUEUED (NON-BLOCKING)** | Low / Static Analysis Hardening | Evaluate escalating ESLint `no-floating-promises` from warning to error; check existing violations & migration scope |
+| **Tier 7: Non-Blocking Follow-Ups** | ESLint `no-floating-promises` Rule Escalation | `apps/api/eslint.config.mjs`, `apps/worker/eslint.config.mjs` | **MERGED / CLOSED** (PR #29, `57e8c21`) | Low / Static Analysis Hardening | Evaluate escalating ESLint `no-floating-promises` from warning to error; check existing violations & migration scope |
 | **Tier 7: Non-Blocking Follow-Ups** | Failed Login Audit Accuracy Enrichment | `apps/api/src/modules/auth/auth.controller.ts` | **MERGED / CLOSED** (PR #27, `f41afaf`) | Low / Security Audit Detail | Record actual auth failure reason for `AUTH_LOGIN_FAILED` without logging credentials, tokens, or secrets |
 | **Tier 7: Non-Blocking Follow-Ups** | OAuth Callback Missing Parameter Failure Audit | `apps/api/src/modules/oauth/oauth.controller.ts` | **MERGED / CLOSED** (PR #23, `9512337`) | Low / Security Audit Detail | Best-effort `OAUTH_CONNECTION_FAILED` audit logging on missing `code` or `state` with safe metadata |
 | **Tier 7: Non-Blocking Follow-Ups** | Deterministic Discovery Submit Async Control | `apps/web/src/app/[workspaceId]/accounts/discovery/discovery-client.spec.tsx` | **MERGED / CLOSED** (PR #25, `c6e312b`) | Low / Test Suite Resilience | Replaced fragile 10ms timer with controlled deferred promise in discovery double-submit test |
@@ -531,6 +531,7 @@ Following the project's 7-tier prioritization hierarchy:
 ### 4. Current Implementation Focus: Completed Hardening & Next Priorities
 
 - **Recently Completed**:
+  - **ESLint `no-floating-promises` Rule Escalation** (**MERGED / CLOSED** in PR #29, merge commit [`57e8c21`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/57e8c21904714ae8005506a1dc102aff4c16422e), reviewed HEAD [`f70d12f`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/f70d12f39f1adbdcbe7750f342af1951fd9f3525)). Escalated `@typescript-eslint/no-floating-promises` from warning to error in `apps/api/eslint.config.mjs` and `apps/worker/eslint.config.mjs`; type-aware enforcement verified, no pre-existing violations, no runtime change.
   - **Failed Login Audit Accuracy Enrichment** (**MERGED / CLOSED** in PR #27, merge commit [`f41afaf`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/f41afaf5ba3d98c60ceb060e783708088814eb15), reviewed HEAD [`a13ea54`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/a13ea547d4bb9f420b1806c87d5490227b577cf4)). Enriched failed login audit logging by distinguishing internal authentication failure reasons (`USER_NOT_FOUND`, `INVALID_PASSWORD`, `INTERNAL_ERROR`) and safely associating internal user ID on invalid passwords, while strictly preserving generic 401 client error responses to prevent account enumeration, preventing secret leakage, and resolving Muse test-integrity finding M1.
   - **Deterministic Discovery Submit Async Control** (**MERGED / CLOSED** in PR #25, merge commit [`c6e312b`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/c6e312b2eaba782386c65bcc0bc6604f8025f844), reviewed HEAD [`57c1e95`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/57c1e95dcfbea503d6b3a3915b2b7c2a6efacedb)). Replaced fragile 10ms wall-clock timer in `apps/web/src/app/[workspaceId]/accounts/discovery/discovery-client.spec.tsx` with a deterministic deferred promise and `try/finally` cleanup to prevent intermittent double-submit test failures under CI scheduling contention.
   - **OAuth Callback Missing Parameter Failure Audit** (**MERGED / CLOSED** in PR #23, merge commit [`9512337`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/9512337d76d19fc5e769379b9f812b3a28c365cc), reviewed HEAD [`6356903`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/635690337e0454c95bebb6d79ffe0b3abcb7563b)). Recorded best-effort `OAUTH_CONNECTION_FAILED` audit events when OAuth callbacks arrive missing required `code` or `state` parameters with safe failure reasons (`MISSING_CODE`, `MISSING_STATE`, `MISSING_CODE_AND_STATE`) without leaking sensitive tokens into metadata, while preserving the existing `ForbiddenException('Missing code or state')` HTTP contract.
@@ -1334,8 +1335,47 @@ The final architecture employs a two-tier fencing model:
 
 ### 4. Remaining Follow-Ups
 1. **ESLint `no-floating-promises` Rule Escalation**:
-   - Evaluate escalating ESLint `no-floating-promises` from warning to error; check existing violations and migration scope across workspace packages.
+   - Evaluate escalating ESLint `no-floating-promises` from warning to error; check existing violations and migration scope across workspace packages. (**MERGED / CLOSED** in PR #29, merge commit [`57e8c21`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/57e8c21904714ae8005506a1dc102aff4c16422e)).
 2. **Production Docker Runner Image Slimming**:
    - Optional optimization to prune devDependencies and unused workspace packages in runner stages (`apps/api/Dockerfile`, `apps/worker/Dockerfile`).
 3. **Future Feature Dependency — Worker Catch-Path Disconnect Fencing**:
+   - Retained as a future feature dependency when account disconnect API endpoints are introduced (`apps/worker/src/publishing/publishing.processor.ts`).
+
+---
+
+## 29. ESLint `no-floating-promises` Rule Escalation (Branch `feat/escalate-eslint-no-floating-promises` — MERGED)
+
+### 1. Summary & Motivation
+- **Status**: **MERGED** (PR #29, merge commit [`57e8c21904714ae8005506a1dc102aff4c16422e`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/57e8c21904714ae8005506a1dc102aff4c16422e))
+- **Pull Request**: [#29](https://github.com/AbhishekGadmale/Social-Media-Handler/pull/29)
+- **Branch**: `feat/escalate-eslint-no-floating-promises`
+- **Pre-Merge Base SHA**: [`9b5be58a5ef5354492269e3281ce19276b38072b`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/9b5be58a5ef5354492269e3281ce19276b38072b) (`9b5be58`)
+- **Reviewed Head SHA**: [`f70d12f39f1adbdcbe7750f342af1951fd9f3525`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/f70d12f39f1adbdcbe7750f342af1951fd9f3525) (`f70d12f`)
+- **Merge Commit SHA**: [`57e8c21904714ae8005506a1dc102aff4c16422e`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/57e8c21904714ae8005506a1dc102aff4c16422e) (`57e8c21`)
+- **Merge Timestamp**: `2026-10-27T11:18:01Z`
+- **Pre-Merge CI Run**: [Run #40361296187](https://github.com/AbhishekGadmale/Social-Media-Handler/actions/runs/40361296187) (All 6 check runs green on reviewed HEAD `f70d12f`)
+- **Post-Merge Push CI Run**: [Run #40495151321](https://github.com/AbhishekGadmale/Social-Media-Handler/actions/runs/40495151321) (All 5 push check runs green on `main` `57e8c21`)
+- **Reviewer**: Muse (APPROVED)
+
+### 2. Scope & Implementation Details
+1. **Rule escalation**:
+   - In `apps/api/eslint.config.mjs` (line 38) and `apps/worker/eslint.config.mjs` (line 36), changed `@typescript-eslint/no-floating-promises` from `'warn'` to `'error'`.
+   - Both configs extend `recommendedTypeChecked` with `parserOptions.projectService: true`, so the rule runs with full type information — the escalation is genuinely enforced, not a silent no-op.
+   - Lint globs (`{src,apps,libs,test}/**/*.ts`) cover source and test files; with no `--max-warnings` flag, `error` findings now fail CI while unrelated `warn` findings (e.g. `no-unsafe-argument`) remain non-blocking.
+2. **No missed locations**:
+   - Repository-wide search confirms the rule is defined only in these two configs; the web, database, and providers configs never defined it, so no third `warn` was left behind.
+3. **No behavior change**:
+   - Config-only change (+2/−2); no source, test, dependency, or schema changes; no runtime behavior modified.
+
+### 3. Verification & Test Evidence
+- **CI Verification**:
+  - Pre-Merge CI Run #40361296187: All 6 check runs green on reviewed HEAD `f70d12f` (`GitGuardian`, `Application Builds`, `Tests`, `Code Quality`, `Docker Build & Smoke Test`, `API E2E Tests`).
+  - GitHub Actions Post-Merge Push CI Run #40495151321: All 5 push check runs green on `main` (`57e8c21`).
+  - The green Code Quality run at `error` severity proves zero pre-existing floating-promise violations in the api/worker lint scope — the escalation introduced no cleanup debt.
+- **Review**: Independent Muse review APPROVED at reviewed HEAD `f70d12f` (config-only scope, type-aware enforcement verified, no missed locations).
+
+### 4. Remaining Follow-Ups
+1. **Production Docker Runner Image Slimming**:
+   - Optional optimization to prune devDependencies and unused workspace packages in runner stages (`apps/api/Dockerfile`, `apps/worker/Dockerfile`).
+2. **Future Feature Dependency — Worker Catch-Path Disconnect Fencing**:
    - Retained as a future feature dependency when account disconnect API endpoints are introduced (`apps/worker/src/publishing/publishing.processor.ts`).
