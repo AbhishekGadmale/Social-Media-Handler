@@ -245,17 +245,21 @@ jobs:
     name: Docker Build & Smoke Test
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      TOKEN_ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
     steps:
       - uses: actions/checkout@v4
       
       - name: Build Docker images
         env:
           NEXT_PUBLIC_API_URL: http://localhost:3001/api/v1
+          TOKEN_ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
         run: |
           docker compose build api worker web migration
           
       - name: Smoke test Compose stack
         env:
+          TOKEN_ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
           DATABASE_URL: postgresql://postgres:password@postgres:5432/agency_os?schema=public
           TEST_DATABASE_URL: postgresql://postgres:password@localhost:5432/agency_os_test?schema=public
           REDIS_URL: redis://redis:6379

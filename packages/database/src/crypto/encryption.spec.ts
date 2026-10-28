@@ -1,4 +1,7 @@
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import * as yaml from 'yaml';
 import { encrypt, decrypt, validateTokenEncryptionKey } from './encryption';
 
 describe('Encryption Utility', () => {
@@ -138,5 +141,64 @@ describe('Encryption Utility', () => {
   it('should throw if TOKEN_ENCRYPTION_KEY is not 32 bytes', () => {
     process.env.TOKEN_ENCRYPTION_KEY = '0123';
     expect(() => encrypt('test')).toThrow('TOKEN_ENCRYPTION_KEY must be a 32-byte hex string');
+  });
+
+  describe('Docker Compose & CI Secret Configuration', () => {
+    const composePath = path.resolve(__dirname, '../../../../docker-compose.yml');
+    const ciPath = path.resolve(__dirname, '../../../../.github/workflows/ci.yml');
+
+    it('requires an explicitly provided TOKEN_ENCRYPTION_KEY without default fallback in docker-compose.yml', () => {
+      const composeContent = fs.readFileSync(composePath, 'utf8');
+      const compose = yaml.parse(composeContent) as {
+        services?: {
+          api?: { environment?: Record<string, string> };
+          worker?: { environment?: Record<string, string> };
+        };
+      };
+
+      const apiEnv = compose.services?.api?.environment?.TOKEN_ENCRYPTION_KEY;
+      const workerEnv = compose.services?.worker?.environment?.TOKEN_ENCRYPTION_KEY;
+
+      expect(apiEnv).toBeDefined();
+      expect(workerEnv).toBeDefined();
+
+      // Must not contain hardcoded fallback (":-")
+      expect(apiEnv).not.toContain(':-');
+      expect(workerEnv).not.toContain(':-');
+
+      // Must use required interpolation syntax (":?")
+      expect(apiEnv).toContain(':?');
+      expect(workerEnv).toContain(':?');
+
+      // Both services must use identical required key interpolation
+      expect(apiEnv).toBe(workerEnv);
+    });
+
+    it('explicitly provides test-only TOKEN_ENCRYPTION_KEY in GitHub Actions docker smoke test', () => {
+      const ciContent = fs.readFileSync(ciPath, 'utf8');
+      const ci = yaml.parse(ciContent) as {
+        jobs?: {
+          docker?: {
+            env?: Record<string, string>;
+            steps?: Array<{ name?: string; env?: Record<string, string> }>;
+          };
+        };
+      };
+
+      const dockerJob = ci.jobs?.docker;
+      expect(dockerJob).toBeDefined();
+
+      const smokeStep = dockerJob?.steps?.find(
+        (s) => s.name === 'Smoke test Compose stack',
+      );
+      expect(smokeStep).toBeDefined();
+
+      // Check that TOKEN_ENCRYPTION_KEY is provided either at job env or step env
+      const testKey =
+        smokeStep?.env?.TOKEN_ENCRYPTION_KEY ?? dockerJob?.env?.TOKEN_ENCRYPTION_KEY;
+      expect(testKey).toBe(
+        '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+      );
+    });
   });
 });
