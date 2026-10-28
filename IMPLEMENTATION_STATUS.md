@@ -30,11 +30,11 @@
 ### Phase 6: Hardening
 **Status**: PARTIAL
 - **Evidence**:
-  - **Security Hardening (Token Encryption)**: PARTIAL. AES-256-GCM encryption is fully implemented in `packages/database/src/crypto/encryption.ts` and used in the worker. However, `.env.example` is missing the `TOKEN_ENCRYPTION_KEY`.
+  - **Security Hardening (Token Encryption)**: COMPLETE AND VERIFIED. AES-256-GCM encryption is fully implemented in `packages/database/src/crypto/encryption.ts` and used across the API and worker. Shared `validateTokenEncryptionKey()` enforces exactly 64 hexadecimal characters (32 bytes) fail-fast during bootstrap before application initialization. Extensive unit and startup test coverage verified.
   - **Rate Limiting**: PARTIAL. `@nestjs/throttler` is registered in `app.module.ts`, and `ThrottlerGuard` is applied specifically to the `/login` route in `auth.controller.ts`. Global API rate limiting is not yet active.
   - **Audit Logging**: NOT STARTED. No audit modules, services, or middleware exist in `apps/api`.
   - **Staging/Deployment Hardening**: NOT STARTED. No staging configurations or deployment workflows exist.
-  - **Secret Management**: PARTIAL. Core encryption exists, but advanced secrets management is pending.
+  - **Secret Management**: PARTIAL. Environment variable templates documented in `.env.example` (including `TOKEN_ENCRYPTION_KEY`, LinkedIn OAuth credentials [`LINKEDIN_CLIENT_ID`, `LINKEDIN_CLIENT_SECRET`], and `FRONTEND_URL`). `docker-compose.yml` requires an explicitly supplied `TOKEN_ENCRYPTION_KEY` for API and Worker services with zero default secret fallbacks. Test-only key explicitly supplied in CI smoke testing. Production external secret store integration (e.g., Vault / AWS Secrets Manager) remains deferred.
   - **Observability**: NOT STARTED. The specification requires Structured Pino logs, but standard NestJS `Logger` is still being used across the API and worker.
   - **Tenancy Verification**: COMPLETE AND VERIFIED. Cross-workspace checks and `WorkspaceGuard` are enforced (e.g., in `analytics.controller.ts`).
   - **OAuth Hardening (CSRF/PKCE)**: COMPLETE AND VERIFIED. `auth.guard.ts` enforces CSRF headers for mutations. `linkedin.provider.ts` supports PKCE via `codeChallenge` and `codeVerifier`.
@@ -47,11 +47,11 @@
 
 1. **Last definitely completed phase**: Phase 5 (Analytics).
 2. **Current active phase**: Phase 6 (Hardening).
-3. **Exact Phase 6 items already finished**: Tenancy verification (WorkspaceGuard), OAuth Hardening (PKCE + CSRF), Token Encryption (AES-256-GCM logic), Queue Reliability (BullMQ backoffs), Ingress Rate Limiting (`APP_GUARD` + Redis Throttler), Audit Logging (`AuditService` and transactional audit persistence), Container Hardening (Node `dist` execution, workspace-aware production Docker runner slimming).
-4. **Exact Phase 6 items partially implemented**: Secret management (keys missing from `.env.example`).
+3. **Exact Phase 6 items already finished**: Tenancy verification (WorkspaceGuard), OAuth Hardening (PKCE + CSRF), Token Encryption (AES-256-GCM logic + fail-fast 64-hex startup validation in API/Worker), Environment Secret Documentation (.env.example templates), Docker Compose Required Secret Enforcement, Queue Reliability (BullMQ backoffs), Ingress Rate Limiting (`APP_GUARD` + Redis Throttler), Audit Logging (`AuditService` and transactional audit persistence), Container Hardening (Node `dist` execution, workspace-aware production Docker runner slimming).
+4. **Exact Phase 6 items partially implemented**: Secret management (environment configuration and fail-fast startup validation complete; production external secrets vault integration remains deferred).
 5. **Exact Phase 6 items not started**: Observability (structured Pino logger), Staging/deployment hardening.
 6. **Most likely last task Claude Code was working on**: Implementing the background analytics synchronization worker (`apps/worker/src/sync/sync.processor.ts`) and writing its tests, while concurrently adding initial Phase 6 queue reliability and token encryption logic necessary for the worker to function securely.
-7. **Exact next task that should be continued**: Complete Phase 6 backend hardening (Structured Pino observability, Staging/deployment hardening, Environment secret documentation).
+7. **Exact next task that should be continued**: Complete remaining Phase 6 backend hardening (Structured Pino observability, Staging/deployment hardening).
 
 ---
 
@@ -507,6 +507,7 @@ Following the project's 7-tier prioritization hierarchy:
 | **Tier 4: Provider Token** | Centralized worker token refresh & lifecycle management | `packages/providers/`, `apps/worker/src/publishing/token.service.ts` | **MERGED** (PR #5, `0d862ca`) | High / Resolved | Complete |
 | **Tier 5: API / OAuth Contract** | Deterministic `API_PUBLIC_URL` for OAuth callbacks | `apps/api/src/config/public-url.ts`, `apps/api/src/modules/oauth/oauth.controller.ts` | **MERGED** (PR #4, `28b9a2c`) | Medium / Resolved | Complete |
 | **Tier 5: Product Core Feature** | **Phase 5: Unified Workspace Analytics Dashboard & Account Detail View** | `apps/web/src/app/[workspaceId]/analytics/` | **MERGED / CLOSED** (PR #33, `90e6447`) | Medium / Core Product Capability | Authenticated workspace overview metrics, per-account breakdown, 30-day historical trend charts via recharts, loading/empty/403 states, 20 unit tests |
+| **Tier 6: Deployment Hardening** | **Phase 6: Environment Secret Management & Fail-Fast Token Encryption Startup Validation** | `packages/database/src/crypto/encryption.ts`, `apps/api/src/main.ts`, `apps/worker/src/main.ts`, `docker-compose.yml`, `.env.example` | **MERGED / CLOSED** (PR #35, `cb63286`) | Medium / Security Hardening | 64-hex key validation, fail-fast startup checks, required compose secret interpolation, CI smoke test key provisioning, 23 unit tests |
 | **Tier 6: Deployment Hardening** | **Security Event Audit Logging Coverage & Explicit Persistence Semantics** | [`apps/api/src/modules/core/audit.service.ts`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/core/audit.service.ts), [`apps/api/src/modules/publishing/services/publishing-application.service.ts`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/publishing/services/publishing-application.service.ts), [`packages/database/src/repositories/AuditLogRepository.ts`](file:///C:/Users/bappa/agency-os/packages/database/src/repositories/AuditLogRepository.ts) | **MERGED** (PR #11, `546316a`) | Medium / Resolved & Audited | Complete |
 | **Tier 6: Deployment Hardening** | Cross-Subdomain CSRF Deployment Architecture | `apps/api/src/modules/auth/auth.controller.ts`, `docs/phase-6-readiness.md` | **DOCUMENTED ARCHITECTURE CONSTRAINT** | Informational / Ingress Topology Requirement | Front web & API under unified reverse proxy or configure parent domain |
 | **Tier 6: Deployment Hardening** | Global Distributed Rate Limiting via Redis Throttler | `apps/api/src/app.module.ts`, `apps/api/src/modules/core/redis-throttler.storage.ts` | **VERIFIED COMPLETE** | Medium / Ingress Abuse Prevention | Complete (`APP_GUARD` + Redis store verified) |
@@ -532,6 +533,7 @@ Following the project's 7-tier prioritization hierarchy:
 ### 4. Current Implementation Focus: Completed Hardening & Next Priorities
 
 - **Recently Completed**:
+  - **Phase 6: Environment Secret Management & Fail-Fast Token Encryption Startup Validation** (**MERGED / CLOSED** in PR #35, merge commit [`cb63286`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/cb63286355dce02a5b3d4bf79cfb2ceaff7d21a0), reviewed HEAD [`e34c493`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/e34c49357873847ed42561417ac07dac471654a1)). Implemented shared 64-hexadecimal character (32-byte) `TOKEN_ENCRYPTION_KEY` validation in `packages/database/src/crypto/encryption.ts` (`validateTokenEncryptionKey`) and fail-fast startup enforcement before NestJS/BullMQ initialization in both API (`apps/api/src/main.ts`) and Worker (`apps/worker/src/main.ts`). Updated `.env.example` with documented encryption key generation instructions, LinkedIn OAuth variables (`LINKEDIN_CLIENT_ID`, `LINKEDIN_CLIENT_SECRET`), and frontend URL (`FRONTEND_URL` with default `http://localhost:3000`). Hardened `docker-compose.yml` to require explicitly supplied `TOKEN_ENCRYPTION_KEY` for API and Worker services via required-variable interpolation (`:?`) with zero default secret fallbacks, while explicitly provisioning a test-only key in `.github/workflows/ci.yml` for CI smoke testing. Added 23 regression and startup tests across database, API, and worker packages.
   - **Phase 5: Unified Workspace Analytics Dashboard & Account Detail View** (**MERGED / CLOSED** in PR #33, merge commit [`90e6447`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/90e64477a688f1d0b44aa596e0f493ee17d67ea2), reviewed HEAD [`8400d82`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/8400d82156b69b408fac5f97485f9e9712e0d362)). Delivered authenticated workspace analytics overview in `apps/web/src/app/[workspaceId]/analytics/page.tsx` displaying aggregated summary cards (Total Followers, Total Engagement, Connected Accounts, Active Accounts), per-account breakdown with provider badges and status indicators (`ACTIVE`, `REAUTH_REQUIRED`, `DISCONNECTED`), and account drill-down with 30-day historical trend charts via `recharts` (`apps/web/src/app/[workspaceId]/analytics/[accountId]/page.tsx`). Handles honest loading (`role="status"`), empty, 403 access-denied, and error states with refresh/retry actions and aligned navigation. 20 unit tests added across 2 new test suites. (Note: Overview displays latest recorded daily snapshots; date-range query filtering is not supported by the backend overview endpoint).
   - **Production Docker Runner Image Slimming & Attack Surface Pruning** (**MERGED / CLOSED** in PR #31, merge commit [`673e401`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/673e40139dcc0c50b11def35be6df364b237d5b6), reviewed HEAD [`9bbe864`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/9bbe864cf6964d13227045cd5cfcbb103567bf1b)). Slimmed production runner images for API, Worker, and Web via workspace-aware production reinstall (`pnpm install --prod --frozen-lockfile`), safely preserved and restored generated Prisma runtime client artifacts, pruned build/test/source trees, and hardened CI smoke test with verified database readiness and direct Prisma database query probe.
   - **ESLint `no-floating-promises` Rule Escalation** (**MERGED / CLOSED** in PR #29, merge commit [`57e8c21`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/57e8c21904714ae8005506a1dc102aff4c16422e), reviewed HEAD [`f70d12f`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/f70d12f39f1adbdcbe7750f342af1951fd9f3525)). Escalated `@typescript-eslint/no-floating-promises` from warning to error in `apps/api/eslint.config.mjs` and `apps/worker/eslint.config.mjs`; type-aware enforcement verified, no pre-existing violations, no runtime change.
@@ -542,7 +544,7 @@ Following the project's 7-tier prioritization hierarchy:
   - **TokenService CAS-Failure Recheck `DISCONNECTED` Guard & Direct Repository Integration Testing** (**MERGED / CLOSED** in PR #19, merge commit [`cfc7924`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/cfc7924fb7d3704988ec7f81b3f13160a8799737), reviewed HEAD [`9a44a2a`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/9a44a2aa792861e586ab371b45df12ba2b3ceeea)). Prevents returning active credentials or overwriting `DISCONNECTED` status during CAS conflicts, and adds direct domain repository integration coverage using `SocialAccountRepository.upsertWithConnection()`.
   - **Container Runtime Transpilation & Compiled Workspace Packaging** (**MERGED / CLOSED** in PR #17, merge commit [`c7ec09b`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/c7ec09b14fe70917ec51526cee482ac01b504f50)). Production API and Worker containers now run compiled JavaScript from `dist/` directly via standard `node`, with internal workspace packages compiled to `dist/` with `.d.ts` types and modern exports.
 - **Next Focus Areas (Non-Blocking Follow-Ups & Roadmap)**:
-  1. **Phase 6 Hardening**: Observability (structured Pino logger), staging/production deployment configurations, environment secret management.
+  1. **Phase 6 Hardening**: Observability (structured Pino logger), staging/production deployment configurations.
   2. **Worker Catch-Path Disconnect Fencing**: Guard `PublishingProcessor` catch paths against resurrecting `DISCONNECTED` accounts when disconnect API endpoints are introduced (Future Feature Dependency).
 
 ---
@@ -1508,6 +1510,74 @@ The final architecture employs a two-tier fencing model:
 
 ### 4. Remaining Follow-Ups
 1. **Phase 6 Hardening**:
-   - Complete remaining Phase 6 backend hardening: Structured Pino observability logger, staging/production deployment configurations, environment secret management.
+   - Complete remaining Phase 6 backend hardening: Structured Pino observability logger, staging/production deployment configurations.
+2. **Future Feature Dependency — Worker Catch-Path Disconnect Fencing**:
+   - Retained as a future feature dependency when account disconnect API endpoints are introduced (`apps/worker/src/publishing/publishing.processor.ts`).
+
+
+---
+
+## 33. Phase 6 — Environment Secret Management & Fail-Fast Token Encryption Startup Validation (Branch `feat/token-encryption-startup-validation` — MERGED)
+
+### 1. Summary & Motivation
+- **Status**: **MERGED** (PR #35, merge commit [`cb63286355dce02a5b3d4bf79cfb2ceaff7d21a0`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/cb63286355dce02a5b3d4bf79cfb2ceaff7d21a0))
+- **Pull Request**: [#35](https://github.com/AbhishekGadmale/Social-Media-Handler/pull/35)
+- **Branch**: `feat/token-encryption-startup-validation`
+- **Pre-Merge Base SHA**: [`44c67e66a1886109af829f7aae01af4d6a99418d`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/44c67e66a1886109af829f7aae01af4d6a99418d) (`44c67e6`)
+- **Reviewed Head SHA**: [`e34c49357873847ed42561417ac07dac471654a1`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/e34c49357873847ed42561417ac07dac471654a1) (`e34c493`)
+- **Merge Commit SHA**: [`cb63286355dce02a5b3d4bf79cfb2ceaff7d21a0`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/cb63286355dce02a5b3d4bf79cfb2ceaff7d21a0) (`cb63286`)
+- **Merge Strategy**: Standard GitHub merge commit (2 parents: `44c67e6` and `e34c493`)
+- **Merge Timestamp**: `2026-10-28T17:59:42Z`
+- **Pre-Merge CI Checks**: [Commit `e34c493` Checks](https://github.com/AbhishekGadmale/Social-Media-Handler/pull/35/checks) (All 6 check runs green on reviewed HEAD `e34c493`)
+- **Post-Merge Push CI Run**: [Run #40740935679](https://github.com/AbhishekGadmale/Social-Media-Handler/actions/runs/40740935679) (All 5 push check runs green on `main` `cb63286`)
+- **Reviewer**: Muse (APPROVED)
+
+### 2. Scope & Implementation Details
+1. **Shared 32-Byte Token Encryption Key Validation (`packages/database/src/crypto/encryption.ts`)**:
+   - Implemented and exported `validateTokenEncryptionKey(env?: Record<string, string | undefined>): Buffer`.
+   - Enforces that `TOKEN_ENCRYPTION_KEY` is present, non-empty, and exactly 64 hexadecimal characters (representing 32 bytes for AES-256-GCM).
+   - Rejects missing, undefined, empty, non-hex, or incorrect-length strings (e.g., 32-character or 63-character strings) with clear error messages, while key-generation guidance via `openssl rand -hex 32` is provided in `.env.example` and the Docker Compose required-variable error message.
+   - Accepts uppercase, lowercase, and mixed-case hex, trimming leading and trailing whitespace safely.
+   - Updated `encrypt()` and `decrypt()` to consume the validated key buffer via `validateTokenEncryptionKey()`.
+2. **Fail-Fast Startup Validation in API and Worker**:
+   - **API Bootstrap (`apps/api/src/main.ts`)**: Placed `validateTokenEncryptionKey()` at the entry point of `bootstrap()` before `NestFactory.create(AppModule)` and port binding, ensuring invalid encryption-key configuration causes the API to fail immediately at startup rather than waiting until the first token-encryption/decryption operation.
+   - **Worker Bootstrap (`apps/worker/src/main.ts`)**: Placed `validateTokenEncryptionKey()` at the entry point of `bootstrap()` before initializing the Nest application context and BullMQ queue processors, ensuring invalid encryption-key configuration causes the worker to fail fast at startup before consuming jobs from queues.
+3. **Environment Template Documentation (`.env.example`)**:
+   - Documented `TOKEN_ENCRYPTION_KEY` with explicit generation instructions (`openssl rand -hex 32`).
+   - Completed documented environment variables for LinkedIn OAuth integration: `LINKEDIN_CLIENT_ID` and `LINKEDIN_CLIENT_SECRET`.
+   - Documented frontend application URL configuration: `FRONTEND_URL` (default `http://localhost:3000`).
+4. **Docker Compose Secret Hardening (`docker-compose.yml`)**:
+   - Removed hardcoded default key fallbacks (`${TOKEN_ENCRYPTION_KEY:-0123456789abcdef...}`) from both `api` and `worker` services.
+   - Replaced with required-variable interpolation syntax:
+     `${TOKEN_ENCRYPTION_KEY:?TOKEN_ENCRYPTION_KEY must be set; generate one with openssl rand -hex 32}`
+   - Docker Compose now aborts with a clear descriptive error message if `TOKEN_ENCRYPTION_KEY` is omitted or empty, preventing silent insecure deployments.
+5. **CI Docker Smoke Test Secret Provisioning (`.github/workflows/ci.yml`)**:
+   - Explicitly passed a dedicated test-only 64-hex key, scoped to the Docker CI job and explicitly configured for the `Build Docker images` and `Smoke test Compose stack` steps so automated compose smoke testing succeeds without requiring default secrets in `docker-compose.yml`. This key is strictly test-only and does not serve as a production secret or default.
+
+### 3. Verification & Test Evidence
+- **Database Unit Tests (`packages/database/src/crypto/encryption.spec.ts`)**:
+  - 17 unit tests verifying key length, hex validation, whitespace trimming, case insensitivity, default vs provided environment records, and error messages.
+  - Automated regression tests parsing `docker-compose.yml` to assert required `:?` interpolation without `:-` fallbacks for `api` and `worker`, and verifying CI smoke test key provisioning using zero external dependencies.
+- **API Startup Tests (`apps/api/src/main.spec.ts`)**:
+  - 3 unit tests verifying fast failure on missing key, fast failure on invalid key format, and successful initialization when a valid 64-hex key is provided.
+- **Worker Startup Tests (`apps/worker/src/main.spec.ts`)**:
+  - 3 unit tests verifying fast failure on missing key, fast failure on invalid key format, and successful initialization when a valid 64-hex key is provided.
+- **Monorepo Code Quality**:
+  - Monorepo lint and typecheck completed successfully, corroborated by green CI checks.
+  - Application and package builds completed successfully.
+- **Pre-Merge CI (Commit `e34c493`)**:
+  - `GitGuardian Security Checks`: **SUCCESS** (Green)
+  - `Docker Build & Smoke Test`: **SUCCESS** (Green)
+  - `API E2E Tests`: **SUCCESS** (Green)
+  - `Application Builds`: **SUCCESS** (Green)
+  - `Tests`: **SUCCESS** (Green)
+  - `Code Quality (Lint & Typecheck)`: **SUCCESS** (Green)
+- **Post-Merge CI (Commit `cb63286` / Run #40740935679)**:
+  - All 5 push check runs completed with `success` on `main`.
+- **Review**: Independent Muse review APPROVED on reviewed HEAD `e34c493`.
+
+### 4. Remaining Follow-Ups
+1. **Phase 6 Hardening**:
+   - Complete remaining Phase 6 backend hardening: Structured Pino observability logger, staging/production deployment configurations.
 2. **Future Feature Dependency — Worker Catch-Path Disconnect Fencing**:
    - Retained as a future feature dependency when account disconnect API endpoints are introduced (`apps/worker/src/publishing/publishing.processor.ts`).
