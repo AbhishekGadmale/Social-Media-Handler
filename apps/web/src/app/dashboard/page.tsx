@@ -46,7 +46,7 @@ export default function Dashboard() {
                     <p className="text-sm text-gray-500">Role: {membership.role}</p>
                   </div>
                   <button 
-                    onClick={() => router.push(`/${membership.workspaceId}/accounts`)}
+                    onClick={() => router.push(`/${membership.workspaceId}/analytics`)}
                     className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-md hover:bg-blue-700"
                   >
                     Enter Workspace
