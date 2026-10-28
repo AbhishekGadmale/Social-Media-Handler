@@ -23,9 +23,9 @@
 - **Evidence**: `packages/providers/linkedin/linkedin.provider.ts` is implemented, supporting authorize URL generation, token exchange, PKCE, and basic profile fetching.
 
 ### Phase 5: Analytics
-**Status**: PARTIAL
-- **Evidence (Backend - COMPLETE)**: `apps/api/src/modules/analytics` exposes endpoints reading from `AccountMetricDaily` using Prisma. `apps/worker/src/sync/sync.processor.ts` successfully implements token decryption, calls provider capabilities (`getAccountMetrics`), and upserts data idempotently into PostgreSQL. Extensive unit tests exist in `sync.processor.spec.ts`.
-- **Evidence (Frontend - NOT STARTED)**: `apps/web/src/app/page.tsx` is an empty, default Next.js scaffold. The required unified workspace/account analytics dashboard does not exist.
+**Status**: COMPLETE AND VERIFIED
+- **Evidence (Backend - COMPLETE AND VERIFIED)**: `apps/api/src/modules/analytics` exposes endpoints reading from `AccountMetricDaily` using Prisma. `apps/worker/src/sync/sync.processor.ts` successfully implements token decryption, calls provider capabilities (`getAccountMetrics`), and upserts data idempotently into PostgreSQL. Extensive unit tests exist in `sync.processor.spec.ts`.
+- **Evidence (Frontend - COMPLETE AND VERIFIED)**: Authenticated workspace overview dashboard implemented at `apps/web/src/app/[workspaceId]/analytics/page.tsx`, displaying high-level aggregated summary cards (Total Followers, Total Engagement, Connected Accounts, Active Accounts) and per-account metric breakdowns with provider badges and status indicators (`ACTIVE`, `REAUTH_REQUIRED`, `DISCONNECTED`). Account drill-down view implemented at `apps/web/src/app/[workspaceId]/analytics/[accountId]/page.tsx` with 30-day historical trend charts via `recharts`. Implements honest loading skeleton (`role="status"`), empty onboarding states, 403 access-denied handling, header refresh/retry actions with spinning indicator during `isFetching`, and aligned workspace navigation (`/` redirecting to `/dashboard` and per-workspace card "Enter Workspace" CTA routing to `/[workspaceId]/analytics`). Comprehensive unit tests added in `page.spec.tsx` and `[accountId]/page.spec.tsx` (20 unit tests across 2 new test suites). *Limitation noted*: The overview displays the latest recorded daily snapshots per connected account; date-range query filtering is not supported by the backend overview endpoint.
 
 ### Phase 6: Hardening
 **Status**: PARTIAL
@@ -45,13 +45,13 @@
 
 ## Executive Summary
 
-1. **Last definitely completed phase**: Phase 4 (First OAuth provider).
-2. **Current active phase**: Phase 5 (Analytics) & Phase 6 (Hardening) being worked concurrently.
-3. **Exact Phase 6 items already finished**: Tenancy verification (WorkspaceGuard), OAuth Hardening (PKCE + CSRF), Token Encryption (AES-256-GCM logic), Queue Reliability (BullMQ backoffs).
-4. **Exact Phase 6 items partially implemented**: Rate limiting (Throttler started but not global), Secret management (keys missing from env).
-5. **Exact Phase 6 items not started**: Audit logging, Observability (Pino), Staging/deployment hardening.
+1. **Last definitely completed phase**: Phase 5 (Analytics).
+2. **Current active phase**: Phase 6 (Hardening).
+3. **Exact Phase 6 items already finished**: Tenancy verification (WorkspaceGuard), OAuth Hardening (PKCE + CSRF), Token Encryption (AES-256-GCM logic), Queue Reliability (BullMQ backoffs), Ingress Rate Limiting (`APP_GUARD` + Redis Throttler), Audit Logging (`AuditService` and transactional audit persistence), Container Hardening (Node `dist` execution, workspace-aware production Docker runner slimming).
+4. **Exact Phase 6 items partially implemented**: Secret management (keys missing from `.env.example`).
+5. **Exact Phase 6 items not started**: Observability (structured Pino logger), Staging/deployment hardening.
 6. **Most likely last task Claude Code was working on**: Implementing the background analytics synchronization worker (`apps/worker/src/sync/sync.processor.ts`) and writing its tests, while concurrently adding initial Phase 6 queue reliability and token encryption logic necessary for the worker to function securely.
-7. **Exact next task that should be continued**: Build the Next.js frontend dashboard (`apps/web`) to complete Phase 5, followed by finishing the remaining Phase 6 backend hardening (Audit logs, Pino observability, Global rate limiting).
+7. **Exact next task that should be continued**: Complete Phase 6 backend hardening (Structured Pino observability, Staging/deployment hardening, Environment secret documentation).
 
 ---
 
@@ -506,6 +506,7 @@ Following the project's 7-tier prioritization hierarchy:
 | **Tier 3: Publishing / Data Loss** | **Ambiguous Publication Reconciliation Transactionality, Metadata Synchronization, and Attributed RBAC** | [`apps/api/src/modules/publishing/services/publishing-application.service.ts`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/publishing/services/publishing-application.service.ts#L496-L623), [`apps/api/src/modules/publishing/controllers/publications.controller.ts`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/publishing/controllers/publications.controller.ts#L194-L207), [`docs/AMBIGUOUS_PUBLICATION_RECONCILIATION_ARCHITECTURE.md`](file:///C:/Users/bappa/agency-os/docs/AMBIGUOUS_PUBLICATION_RECONCILIATION_ARCHITECTURE.md) | **MERGED** (PR #7, `d7f2d71`) | High / Resolved & Hardened | Complete |
 | **Tier 4: Provider Token** | Centralized worker token refresh & lifecycle management | `packages/providers/`, `apps/worker/src/publishing/token.service.ts` | **MERGED** (PR #5, `0d862ca`) | High / Resolved | Complete |
 | **Tier 5: API / OAuth Contract** | Deterministic `API_PUBLIC_URL` for OAuth callbacks | `apps/api/src/config/public-url.ts`, `apps/api/src/modules/oauth/oauth.controller.ts` | **MERGED** (PR #4, `28b9a2c`) | Medium / Resolved | Complete |
+| **Tier 5: Product Core Feature** | **Phase 5: Unified Workspace Analytics Dashboard & Account Detail View** | `apps/web/src/app/[workspaceId]/analytics/` | **MERGED / CLOSED** (PR #33, `90e6447`) | Medium / Core Product Capability | Authenticated workspace overview metrics, per-account breakdown, 30-day historical trend charts via recharts, loading/empty/403 states, 20 unit tests |
 | **Tier 6: Deployment Hardening** | **Security Event Audit Logging Coverage & Explicit Persistence Semantics** | [`apps/api/src/modules/core/audit.service.ts`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/core/audit.service.ts), [`apps/api/src/modules/publishing/services/publishing-application.service.ts`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/publishing/services/publishing-application.service.ts), [`packages/database/src/repositories/AuditLogRepository.ts`](file:///C:/Users/bappa/agency-os/packages/database/src/repositories/AuditLogRepository.ts) | **MERGED** (PR #11, `546316a`) | Medium / Resolved & Audited | Complete |
 | **Tier 6: Deployment Hardening** | Cross-Subdomain CSRF Deployment Architecture | `apps/api/src/modules/auth/auth.controller.ts`, `docs/phase-6-readiness.md` | **DOCUMENTED ARCHITECTURE CONSTRAINT** | Informational / Ingress Topology Requirement | Front web & API under unified reverse proxy or configure parent domain |
 | **Tier 6: Deployment Hardening** | Global Distributed Rate Limiting via Redis Throttler | `apps/api/src/app.module.ts`, `apps/api/src/modules/core/redis-throttler.storage.ts` | **VERIFIED COMPLETE** | Medium / Ingress Abuse Prevention | Complete (`APP_GUARD` + Redis store verified) |
@@ -531,6 +532,7 @@ Following the project's 7-tier prioritization hierarchy:
 ### 4. Current Implementation Focus: Completed Hardening & Next Priorities
 
 - **Recently Completed**:
+  - **Phase 5: Unified Workspace Analytics Dashboard & Account Detail View** (**MERGED / CLOSED** in PR #33, merge commit [`90e6447`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/90e64477a688f1d0b44aa596e0f493ee17d67ea2), reviewed HEAD [`8400d82`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/8400d82156b69b408fac5f97485f9e9712e0d362)). Delivered authenticated workspace analytics overview in `apps/web/src/app/[workspaceId]/analytics/page.tsx` displaying aggregated summary cards (Total Followers, Total Engagement, Connected Accounts, Active Accounts), per-account breakdown with provider badges and status indicators (`ACTIVE`, `REAUTH_REQUIRED`, `DISCONNECTED`), and account drill-down with 30-day historical trend charts via `recharts` (`apps/web/src/app/[workspaceId]/analytics/[accountId]/page.tsx`). Handles honest loading (`role="status"`), empty, 403 access-denied, and error states with refresh/retry actions and aligned navigation. 20 unit tests added across 2 new test suites. (Note: Overview displays latest recorded daily snapshots; date-range query filtering is not supported by the backend overview endpoint).
   - **Production Docker Runner Image Slimming & Attack Surface Pruning** (**MERGED / CLOSED** in PR #31, merge commit [`673e401`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/673e40139dcc0c50b11def35be6df364b237d5b6), reviewed HEAD [`9bbe864`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/9bbe864cf6964d13227045cd5cfcbb103567bf1b)). Slimmed production runner images for API, Worker, and Web via workspace-aware production reinstall (`pnpm install --prod --frozen-lockfile`), safely preserved and restored generated Prisma runtime client artifacts, pruned build/test/source trees, and hardened CI smoke test with verified database readiness and direct Prisma database query probe.
   - **ESLint `no-floating-promises` Rule Escalation** (**MERGED / CLOSED** in PR #29, merge commit [`57e8c21`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/57e8c21904714ae8005506a1dc102aff4c16422e), reviewed HEAD [`f70d12f`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/f70d12f39f1adbdcbe7750f342af1951fd9f3525)). Escalated `@typescript-eslint/no-floating-promises` from warning to error in `apps/api/eslint.config.mjs` and `apps/worker/eslint.config.mjs`; type-aware enforcement verified, no pre-existing violations, no runtime change.
   - **Failed Login Audit Accuracy Enrichment** (**MERGED / CLOSED** in PR #27, merge commit [`f41afaf`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/f41afaf5ba3d98c60ceb060e783708088814eb15), reviewed HEAD [`a13ea54`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/a13ea547d4bb9f420b1806c87d5490227b577cf4)). Enriched failed login audit logging by distinguishing internal authentication failure reasons (`USER_NOT_FOUND`, `INVALID_PASSWORD`, `INTERNAL_ERROR`) and safely associating internal user ID on invalid passwords, while strictly preserving generic 401 client error responses to prevent account enumeration, preventing secret leakage, and resolving Muse test-integrity finding M1.
@@ -540,7 +542,7 @@ Following the project's 7-tier prioritization hierarchy:
   - **TokenService CAS-Failure Recheck `DISCONNECTED` Guard & Direct Repository Integration Testing** (**MERGED / CLOSED** in PR #19, merge commit [`cfc7924`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/cfc7924fb7d3704988ec7f81b3f13160a8799737), reviewed HEAD [`9a44a2a`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/9a44a2aa792861e586ab371b45df12ba2b3ceeea)). Prevents returning active credentials or overwriting `DISCONNECTED` status during CAS conflicts, and adds direct domain repository integration coverage using `SocialAccountRepository.upsertWithConnection()`.
   - **Container Runtime Transpilation & Compiled Workspace Packaging** (**MERGED / CLOSED** in PR #17, merge commit [`c7ec09b`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/c7ec09b14fe70917ec51526cee482ac01b504f50)). Production API and Worker containers now run compiled JavaScript from `dist/` directly via standard `node`, with internal workspace packages compiled to `dist/` with `.d.ts` types and modern exports.
 - **Next Focus Areas (Non-Blocking Follow-Ups & Roadmap)**:
-  1. **Next.js Web Frontend Dashboard**: Implement analytics dashboard and core UX in `apps/web`.
+  1. **Phase 6 Hardening**: Observability (structured Pino logger), staging/production deployment configurations, environment secret management.
   2. **Worker Catch-Path Disconnect Fencing**: Guard `PublishingProcessor` catch paths against resurrecting `DISCONNECTED` accounts when disconnect API endpoints are introduced (Future Feature Dependency).
 
 ---
@@ -1433,4 +1435,79 @@ The final architecture employs a two-tier fencing model:
 
 ### 4. Remaining Follow-Ups
 1. **Future Feature Dependency — Worker Catch-Path Disconnect Fencing**:
+   - Retained as a future feature dependency when account disconnect API endpoints are introduced (`apps/worker/src/publishing/publishing.processor.ts`).
+
+---
+
+## 32. Phase 5 — Unified Workspace Analytics Dashboard & Account Detail View (Branch `feat/workspace-analytics-dashboard` — MERGED)
+
+### 1. Summary & Motivation
+- **Status**: **MERGED** (PR #33, merge commit [`90e64477a688f1d0b44aa596e0f493ee17d67ea2`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/90e64477a688f1d0b44aa596e0f493ee17d67ea2))
+- **Pull Request**: [#33](https://github.com/AbhishekGadmale/Social-Media-Handler/pull/33)
+- **Branch**: `feat/workspace-analytics-dashboard`
+- **Pre-Merge Base SHA**: [`97f3428e5240d70907fe066c02b550cbc2cc346a`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/97f3428e5240d70907fe066c02b550cbc2cc346a) (`97f3428`)
+- **Reviewed Head SHA**: [`8400d82156b69b408fac5f97485f9e9712e0d362`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/8400d82156b69b408fac5f97485f9e9712e0d362) (`8400d82`)
+- **Merge Commit SHA**: [`90e64477a688f1d0b44aa596e0f493ee17d67ea2`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/90e64477a688f1d0b44aa596e0f493ee17d67ea2) (`90e6447`)
+- **Merge Strategy**: Standard GitHub merge commit (2 parents: `97f3428` and `8400d82`)
+- **Merge Timestamp**: `2026-10-28T11:56:30Z`
+- **Pre-Merge CI Run**: [Run #40679923292](https://github.com/AbhishekGadmale/Social-Media-Handler/actions/runs/40679923292) (All 6 check runs green on reviewed HEAD `8400d82`)
+- **Post-Merge Push CI Run**: [Run #40683828389](https://github.com/AbhishekGadmale/Social-Media-Handler/actions/runs/40683828389) (All 5 push check runs green on `main` `90e6447`)
+- **Reviewer**: Muse (APPROVED)
+
+### 2. Scope & Implementation Details
+1. **Unified Workspace Analytics Overview (`apps/web/src/app/[workspaceId]/analytics/page.tsx`)**:
+   - Authenticated client page querying `GET /api/v1/workspaces/:workspaceId/analytics/overview`.
+   - Aggregates top-level metrics across all connected accounts:
+     - **Total Followers**: Sum of latest daily followers across connected accounts.
+     - **Total Engagement**: Sum of latest daily engagement across connected accounts.
+     - **Connected Accounts**: Total count of social accounts associated with the workspace.
+     - **Active Accounts**: Count of accounts currently in `ACTIVE` status.
+   - Per-account breakdown list with provider icons/badges (`LINKEDIN`, etc.), account display name, status badges (`ACTIVE`, `REAUTH_REQUIRED`, `DISCONNECTED`), individual follower and engagement counts, and direct navigation link to account drill-down.
+   - For accounts in `REAUTH_REQUIRED`, provides explicit guidance and a link to accounts settings (`/[workspaceId]/accounts`) to reconnect.
+   - Comprehensive UI state handling:
+     - **Loading State**: Accessible skeleton cards with `role="status"` and `aria-label="Loading analytics"`.
+     - **Empty State**: Friendly onboarding prompt with CTA to connect a social account when no accounts exist.
+     - **Access Denied**: Clear 403 forbidden message when a user lacks access to the workspace.
+     - **Error State**: Resilient error banner with Retry action.
+     - **Header Refresh Action**: Manual refresh button with spinning icon state during `isFetching`.
+2. **Account Drill-Down Historical Trends (`apps/web/src/app/[workspaceId]/analytics/[accountId]/page.tsx`)**:
+   - Queries `GET /api/v1/workspaces/:workspaceId/analytics/accounts/:accountId` (the backend computes the 30-day history window server-side; the frontend does not pass a query parameter or request a custom date range).
+   - Visualizes 30-day historical follower and engagement trajectories using `recharts` responsive line charts.
+   - Displays account metadata header, current status badge, breadcrumb navigation back to workspace analytics, and date formatting.
+   - Provides honest empty-state handling if no metric history has been recorded yet.
+3. **Workspace Navigation Alignment**:
+   - Root route `apps/web/src/app/page.tsx` updated to redirect cleanly to `/dashboard`.
+   - Main dashboard (`apps/web/src/app/dashboard/page.tsx`) per-workspace card's "Enter Workspace" CTA routes to `/{workspaceId}/analytics`.
+4. **Delivered Limitations (Explicitly Documented)**:
+   - **Snapshot Limitation**: The overview dashboard displays the single latest recorded daily snapshot per connected account as returned by the existing backend endpoint. Date-range query filtering is not supported by the backend overview endpoint; date filtering was not implemented on the overview.
+5. **Non-Blocking Future Polish Observations (from Muse Review)**:
+   1. **Provider/status badge duplication**: Provider/status badge helper logic is duplicated across the overview and account pages, with slight divergence in reauthentication wording.
+   2. **Account not-found navigation fallback**: The account 404 state relies on `router.back()` without a fallback destination.
+   3. **Date-only timezone formatting**: Formatting date-only values in local time can shift the displayed date for users west of UTC. This follows the existing application convention and was not considered a merge blocker.
+
+### 3. Verification & Test Evidence
+- **Web Unit Tests**:
+   - Added 20 comprehensive unit tests across 2 new test suites:
+     - `apps/web/src/app/[workspaceId]/analytics/page.spec.tsx` (11 tests): Loading skeletons, metric card rendering, account breakdown table, active/reauth badges, empty state, 403 access-denied state, error state with retry, refresh trigger, and navigation links.
+     - `apps/web/src/app/[workspaceId]/analytics/[accountId]/page.spec.tsx` (9 tests): Account header, 30-day history query, recharts rendering, loading, and error states.
+   - `pnpm --filter @agency-os/web test`: 8/8 test suites passed, 111/111 tests passed.
+- **Monorepo Code Quality**:
+   - `pnpm turbo run lint`: 0 errors across all monorepo packages.
+   - `pnpm turbo run typecheck`: Typecheck green across the monorepo.
+   - `pnpm turbo run build`: All applications and packages compiled successfully.
+- **Pre-Merge CI (Commit `8400d82` / Run #40679923292)**:
+   - `GitGuardian Security Checks`: **SUCCESS** (Green)
+   - `CI / Application Builds`: **SUCCESS** (Green)
+   - `CI / Tests`: **SUCCESS** (Green)
+   - `CI / Code Quality (Lint & Typecheck)`: **SUCCESS** (Green)
+   - `CI / Docker Build & Smoke Test`: **SUCCESS** (Green)
+   - `CI / API E2E Tests`: **SUCCESS** (Green)
+- **Post-Merge CI (Commit `90e6447` / Run #40683828389)**:
+   - All 5 push check runs completed with `success` on `main`.
+- **Review**: Independent Muse review APPROVED on reviewed HEAD `8400d82`.
+
+### 4. Remaining Follow-Ups
+1. **Phase 6 Hardening**:
+   - Complete remaining Phase 6 backend hardening: Structured Pino observability logger, staging/production deployment configurations, environment secret management.
+2. **Future Feature Dependency — Worker Catch-Path Disconnect Fencing**:
    - Retained as a future feature dependency when account disconnect API endpoints are introduced (`apps/worker/src/publishing/publishing.processor.ts`).
