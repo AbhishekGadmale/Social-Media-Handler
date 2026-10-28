@@ -514,7 +514,7 @@ Following the project's 7-tier prioritization hierarchy:
 | **Tier 7: Concurrency & Data Integrity** | **`updateDraft` In-Transaction Locked-Variant Concurrency Serialization** | [`packages/database/src/repositories/PublishingRepository.ts`](file:///C:/Users/bappa/agency-os/packages/database/src/repositories/PublishingRepository.ts), [`apps/api/src/modules/publishing/services/publishing-application.service.ts`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/publishing/services/publishing-application.service.ts), [`apps/api/test/publishing.e2e-spec.ts`](file:///C:/Users/bappa/agency-os/apps/api/test/publishing.e2e-spec.ts) | **MERGED** (PR #14, `279b4c5`) | Low / Resolved & Fenced | Complete |
 | **Tier 7: Concurrency & Data Integrity** | **`deletePost` Locked-Variant Check TOCTOU Fencing** | [`apps/api/src/modules/publishing/services/publishing-application.service.ts`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/publishing/services/publishing-application.service.ts), [`apps/api/test/publishing.e2e-spec.ts`](file:///C:/Users/bappa/agency-os/apps/api/test/publishing.e2e-spec.ts) | **MERGED** (PR #15, `a702601`) | Low / Resolved & Fenced | Complete |
 | **Tier 7: Cleanup / Optimization** | Container Runtime Transpilation (`tsx` vs compiled `dist`) | `apps/api/Dockerfile`, `apps/worker/Dockerfile`, `packages/*/package.json`, `docs/phase-6-readiness.md` | **MERGED / CLOSED** (PR #17, `c7ec09b`) | Low / Performance & Startup Optimization | Complete (Compiled workspace packages & node dist execution verified) |
-| **Tier 7: Non-Blocking Follow-Ups** | Production Docker Runner Image Slimming | `apps/api/Dockerfile`, `apps/worker/Dockerfile` | **QUEUED (NON-BLOCKING)** | Low / Image Optimization | Prune devDependencies and unused workspace packages in runner stages to reduce container image footprint |
+| **Tier 7: Non-Blocking Follow-Ups** | Production Docker Runner Image Slimming & Attack Surface Pruning | `apps/api/Dockerfile`, `apps/worker/Dockerfile`, `apps/web/Dockerfile` | **MERGED / CLOSED** (PR #31, `673e401`) | Low / Image Optimization & Security | Pruned workspace devDependencies across runners via scoped prod reinstall, preserved Prisma runtime, and hardened CI smoke test |
 | **Tier 7: Non-Blocking Follow-Ups** | TokenService CAS Failure Recheck `DISCONNECTED` Guard | `apps/worker/src/publishing/token.service.ts` | **MERGED / CLOSED** (PR #19, `cfc7924`) | Low / Concurrency Safety Hardening | Fenced `recheckAccount.status === DISCONNECTED` to prevent returning recovered credentials or overwriting status |
 | **Tier 7: Non-Blocking Follow-Ups** | TokenService Integration Test via `SocialAccountRepository.upsertWithConnection` | `apps/worker/src/publishing/token.service.spec.ts` | **MERGED / CLOSED** (PR #19, `cfc7924`) | Low / Integration Test Hardening | Direct domain repository integration tests for concurrent OAuth reconnects against stale failure handlers |
 | **Tier 7: Non-Blocking Follow-Ups** | TokenService CAS-Recheck Reconnect Recovery Coverage & Test 11 Spy Cleanup | `apps/worker/src/publishing/token.service.spec.ts` | **MERGED / CLOSED** (PR #21, `365653f`) | Low / Test Suite Resilience | Test 11 `try/finally` spy cleanup and Test 14 Step 5 CAS conflict recheck credential recovery |
@@ -531,6 +531,7 @@ Following the project's 7-tier prioritization hierarchy:
 ### 4. Current Implementation Focus: Completed Hardening & Next Priorities
 
 - **Recently Completed**:
+  - **Production Docker Runner Image Slimming & Attack Surface Pruning** (**MERGED / CLOSED** in PR #31, merge commit [`673e401`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/673e40139dcc0c50b11def35be6df364b237d5b6), reviewed HEAD [`9bbe864`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/9bbe864cf6964d13227045cd5cfcbb103567bf1b)). Slimmed production runner images for API, Worker, and Web via workspace-aware production reinstall (`pnpm install --prod --frozen-lockfile`), safely preserved and restored generated Prisma runtime client artifacts, pruned build/test/source trees, and hardened CI smoke test with verified database readiness and direct Prisma database query probe.
   - **ESLint `no-floating-promises` Rule Escalation** (**MERGED / CLOSED** in PR #29, merge commit [`57e8c21`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/57e8c21904714ae8005506a1dc102aff4c16422e), reviewed HEAD [`f70d12f`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/f70d12f39f1adbdcbe7750f342af1951fd9f3525)). Escalated `@typescript-eslint/no-floating-promises` from warning to error in `apps/api/eslint.config.mjs` and `apps/worker/eslint.config.mjs`; type-aware enforcement verified, no pre-existing violations, no runtime change.
   - **Failed Login Audit Accuracy Enrichment** (**MERGED / CLOSED** in PR #27, merge commit [`f41afaf`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/f41afaf5ba3d98c60ceb060e783708088814eb15), reviewed HEAD [`a13ea54`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/a13ea547d4bb9f420b1806c87d5490227b577cf4)). Enriched failed login audit logging by distinguishing internal authentication failure reasons (`USER_NOT_FOUND`, `INVALID_PASSWORD`, `INTERNAL_ERROR`) and safely associating internal user ID on invalid passwords, while strictly preserving generic 401 client error responses to prevent account enumeration, preventing secret leakage, and resolving Muse test-integrity finding M1.
   - **Deterministic Discovery Submit Async Control** (**MERGED / CLOSED** in PR #25, merge commit [`c6e312b`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/c6e312b2eaba782386c65bcc0bc6604f8025f844), reviewed HEAD [`57c1e95`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/57c1e95dcfbea503d6b3a3915b2b7c2a6efacedb)). Replaced fragile 10ms wall-clock timer in `apps/web/src/app/[workspaceId]/accounts/discovery/discovery-client.spec.tsx` with a deterministic deferred promise and `try/finally` cleanup to prevent intermittent double-submit test failures under CI scheduling contention.
@@ -540,8 +541,7 @@ Following the project's 7-tier prioritization hierarchy:
   - **Container Runtime Transpilation & Compiled Workspace Packaging** (**MERGED / CLOSED** in PR #17, merge commit [`c7ec09b`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/c7ec09b14fe70917ec51526cee482ac01b504f50)). Production API and Worker containers now run compiled JavaScript from `dist/` directly via standard `node`, with internal workspace packages compiled to `dist/` with `.d.ts` types and modern exports.
 - **Next Focus Areas (Non-Blocking Follow-Ups & Roadmap)**:
   1. **Next.js Web Frontend Dashboard**: Implement analytics dashboard and core UX in `apps/web`.
-  2. **Production Docker Runner Image Slimming**: Optional optimization to prune workspace devDependencies and unused internal packages in final container stages.
-  3. **Worker Catch-Path Disconnect Fencing**: Guard `PublishingProcessor` catch paths against resurrecting `DISCONNECTED` accounts when disconnect API endpoints are introduced (Future Feature Dependency).
+  2. **Worker Catch-Path Disconnect Fencing**: Guard `PublishingProcessor` catch paths against resurrecting `DISCONNECTED` accounts when disconnect API endpoints are introduced (Future Feature Dependency).
 
 ---
 
@@ -1376,6 +1376,61 @@ The final architecture employs a two-tier fencing model:
 
 ### 4. Remaining Follow-Ups
 1. **Production Docker Runner Image Slimming**:
-   - Optional optimization to prune devDependencies and unused workspace packages in runner stages (`apps/api/Dockerfile`, `apps/worker/Dockerfile`).
+   - Optional optimization to prune devDependencies and unused workspace packages in runner stages (`apps/api/Dockerfile`, `apps/worker/Dockerfile`). (**MERGED / CLOSED** in PR #31, merge commit [`673e401`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/673e40139dcc0c50b11def35be6df364b237d5b6)).
 2. **Future Feature Dependency — Worker Catch-Path Disconnect Fencing**:
+   - Retained as a future feature dependency when account disconnect API endpoints are introduced (`apps/worker/src/publishing/publishing.processor.ts`).
+
+---
+
+## 31. Production Docker Runner Image Slimming & Attack Surface Pruning (Branch `feat/slim-production-docker-runners` — MERGED)
+
+### 1. Summary & Motivation
+- **Status**: **MERGED** (PR #31, merge commit [`673e40139dcc0c50b11def35be6df364b237d5b6`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/673e40139dcc0c50b11def35be6df364b237d5b6))
+- **Pull Request**: [#31](https://github.com/AbhishekGadmale/Social-Media-Handler/pull/31)
+- **Branch**: `feat/slim-production-docker-runners`
+- **Pre-Merge Base SHA**: [`554161594bb207ebba162712055e16042f9b0dd9`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/554161594bb207ebba162712055e16042f9b0dd9) (`5541615`)
+- **Reviewed Head SHA**: [`9bbe864cf6964d13227045cd5cfcbb103567bf1b`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/9bbe864cf6964d13227045cd5cfcbb103567bf1b) (`9bbe864`)
+- **Merge Commit SHA**: [`673e40139dcc0c50b11def35be6df364b237d5b6`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/673e40139dcc0c50b11def35be6df364b237d5b6) (`673e401`)
+- **Merge Timestamp**: `2026-10-28T10:05:17Z`
+- **Pre-Merge CI Run**: [Run #40524109156](https://github.com/AbhishekGadmale/Social-Media-Handler/actions/runs/40524109156) (All 6 check runs green on reviewed HEAD `9bbe864`)
+- **Post-Merge Push CI Run**: [Run #40669318801](https://github.com/AbhishekGadmale/Social-Media-Handler/actions/runs/40669318801) (All 5 push check runs green on `main` `673e401`)
+- **Reviewer**: Muse (APPROVED)
+
+### 2. Scope & Implementation Details
+1. **Workspace-Aware Production Dependency Slimming**:
+   - In pnpm monorepos, running `pnpm prune --prod` at the root does not recursively purge workspace packages' `devDependencies` (such as `vitest`, `eslint`, `typescript`, `@types/*`, `@nestjs/schematics`).
+   - Replaced root prune with a scoped production re-installation workflow in the Dockerfile installer stages (`apps/api/Dockerfile`, `apps/worker/Dockerfile`, `apps/web/Dockerfile`):
+     - After building workspace artifacts, purged all development `node_modules` (`rm -rf node_modules apps/*/node_modules packages/*/node_modules`).
+     - Executed `pnpm install --prod --frozen-lockfile` to install strictly production dependencies monorepo-wide, eliminating testing tools, linters, typecheckers, and compilers from the runner image layers.
+2. **Prisma Client Generation & Runtime Preservation**:
+   - Because `@prisma/client` depends on the generated client engine definitions, purging `node_modules` before production reinstall would remove generated Prisma artifacts.
+   - Preserved generated Prisma client definitions from `node_modules/.pnpm/@prisma+client*/node_modules/.prisma` to `/tmp/prisma-generated` prior to purging.
+   - Restored `/tmp/prisma-generated/.prisma` back into the production pnpm virtual store and root `.prisma` after the production install, ensuring runtime compatibility and query execution without devDependencies.
+3. **Attack Surface Reduction & Source Pruning**:
+   - Pruned source directories (`src/`), test files (`test/`, `*.spec.ts`), TypeScript configurations (`tsconfig*.json`), and build cache directories from runner stages before packaging.
+   - Enforced non-root execution across all runner images (`USER appuser`, primary group `appgroup`).
+4. **Hardened CI Docker Smoke Test**:
+   - Updated `.github/workflows/ci.yml`:
+     - Replaced permissive `curl -s` with `curl -fsS http://localhost:3001/api/health/ready` to fail fast on non-2xx responses (including HTTP 503 during startup).
+     - Explicitly asserted that response body contains verified database readiness (`"database":{"status":"up"}`).
+     - Added a direct Prisma database query probe executed within the API container (`docker compose exec -w /app/apps/api -T api node -e ... prisma.$queryRawUnsafe("SELECT 1 as test")`) exercising live PostgreSQL connectivity beyond basic HTTP health.
+     - Hardened Web frontend check with `curl -fsS http://localhost:3000` and non-zero exit traps.
+
+### 3. Verification & Test Evidence
+- **Container Dependency Inspection**:
+  - Verified 0 test or dev dependencies (`vitest`, `jest`, `eslint`, `typescript`, `tsx`, `@nestjs/schematics`) exist in final `agency-os-api` and `agency-os-worker` runner images.
+  - Runtime image sizes: `agency-os-api` content 128MB (disk 732MB), `agency-os-worker` content 128MB (disk 741MB), `agency-os-web` content 261MB (disk 1.17GB).
+- **Local Smoke Test**:
+  - Full docker-compose stack built and run locally (`api`, `worker`, `web`, `postgres`, `redis`, `migration`).
+  - Migration executed and exited with code 0.
+  - Direct Prisma database query probe `SELECT 1 as test` succeeded against PostgreSQL.
+  - Web container responded `HTTP/1.1 200 OK`.
+- **Pre-Merge CI**:
+  - GitHub Actions Pre-Merge CI Run #40524109156: All 6 check runs completed with `success` on reviewed HEAD `9bbe864`.
+- **Post-Merge CI**:
+  - GitHub Actions Post-Merge Push CI Run #40669318801: All 5 check runs completed with `success` on `main` (`673e401`).
+- **Review**: Independent Muse review APPROVED on reviewed HEAD `9bbe864`.
+
+### 4. Remaining Follow-Ups
+1. **Future Feature Dependency — Worker Catch-Path Disconnect Fencing**:
    - Retained as a future feature dependency when account disconnect API endpoints are introduced (`apps/worker/src/publishing/publishing.processor.ts`).
