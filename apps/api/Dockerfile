@@ -20,17 +20,56 @@ RUN pnpm install --frozen-lockfile
 
 COPY --from=builder /app/out/full/ .
 # Generate Prisma Client
-RUN pnpm --filter @agency-os/database exec prisma generate 
+RUN pnpm --filter @agency-os/database exec prisma generate
 RUN pnpm turbo run build --filter=@agency-os/api
+
+# Preserve generated Prisma client before reinstalling dependencies
+RUN mkdir -p /tmp/prisma-generated && \
+    cp -r node_modules/.pnpm/@prisma+client*/node_modules/.prisma /tmp/prisma-generated/
+
+# Reinstall strictly production dependencies across all workspace packages
+RUN rm -rf node_modules apps/*/node_modules packages/*/node_modules
+RUN pnpm install --prod --frozen-lockfile
+
+# Restore the generated Prisma client into the production node_modules
+RUN cp -r /tmp/prisma-generated/.prisma node_modules/.pnpm/@prisma+client*/node_modules/ && \
+    mkdir -p node_modules/.prisma && \
+    cp -r /tmp/prisma-generated/.prisma/* node_modules/.prisma/ && \
+    rm -rf /tmp/prisma-generated
+
+RUN rm -rf \
+  apps/api/src \
+  apps/api/test \
+  apps/api/scripts \
+  apps/api/test-argon2.js \
+  packages/*/src \
+  packages/*/test \
+  packages/providers/core \
+  packages/providers/linkedin \
+  packages/providers/meta \
+  packages/providers/storage \
+  packages/providers/youtube \
+  && find . -depth \( \
+    -name ".turbo" -o \
+    -name "tsconfig*.json" -o \
+    -name "eslint.config.*" -o \
+    -name "vitest.config.*" -o \
+    -name "jest*.json" -o \
+    -name "*.spec.*" -o \
+    -name "*.test.*" -o \
+    \( -name "*.ts" ! -name "*.d.ts" \) \
+  \) -not -path "*/node_modules/*" -exec rm -rf {} +
 
 FROM base AS runner
 WORKDIR /app
-COPY --from=installer /app .
 
 RUN addgroup -S appgroup && adduser -S appuser -G appgroup
+
+COPY --from=installer --chown=appuser:appgroup /app .
+
 USER appuser
 
 EXPOSE 3001
 ENV NODE_ENV=production
 
-CMD ["pnpm", "--filter", "@agency-os/api", "start:prod"]
+CMD ["node", "apps/api/dist/src/main.js"]

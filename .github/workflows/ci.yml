@@ -302,19 +302,45 @@ jobs:
           
           docker compose up -d api worker web
           
-          # Wait for API health check
+          # Wait for API health check (asserts HTTP 2xx and verified database readiness)
           echo "Waiting for API health..."
+          API_HEALTHY=false
           for i in {1..30}; do
-            curl -s http://localhost:3001/api/health/ready && break
+            RESPONSE=$(curl -fsS http://localhost:3001/api/health/ready 2>/dev/null) && {
+              echo "$RESPONSE" | grep -q '"database":{"status":"up"}' && {
+                API_HEALTHY=true
+                echo "API is ready: $RESPONSE"
+                break
+              }
+            }
             sleep 2
           done
-          
-          # Verify Web responds
+          if [ "$API_HEALTHY" != "true" ]; then
+            echo "API health check failed or returned non-2xx status!"
+            docker compose logs api
+            exit 1
+          fi
+
+          # Exercise direct Prisma database operation probe inside the API container
+          echo "Running Prisma database query probe..."
+          docker compose exec -w /app/apps/api -T api node -e 'const { PrismaClient } = require("@agency-os/database"); const prisma = new PrismaClient(); prisma.$queryRawUnsafe("SELECT 1 as test").then(() => { console.log("Prisma database query probe succeeded"); process.exit(0); }).catch((err) => { console.error("Prisma query probe failed:", err); process.exit(1); });'
+
+          # Verify Web responds with HTTP 2xx
           echo "Waiting for Web..."
+          WEB_HEALTHY=false
           for i in {1..30}; do
-            curl -s http://localhost:3000 && break
+            curl -fsS http://localhost:3000 >/dev/null 2>&1 && {
+              WEB_HEALTHY=true
+              echo "Web is ready"
+              break
+            }
             sleep 2
           done
+          if [ "$WEB_HEALTHY" != "true" ]; then
+            echo "Web readiness check failed or returned non-2xx status!"
+            docker compose logs web
+            exit 1
+          fi
           
           docker compose logs api
           docker compose logs worker

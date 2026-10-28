@@ -22,17 +22,35 @@ ARG NEXT_PUBLIC_API_URL
 ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:3001/api/v1}
 RUN pnpm turbo run build --filter=@agency-os/web
 
+# Reinstall strictly production dependencies across all workspace packages
+RUN rm -rf node_modules apps/*/node_modules packages/*/node_modules
+RUN pnpm install --prod --frozen-lockfile
+
+RUN rm -rf \
+  apps/web/src \
+  apps/web/test-setup.ts \
+  && find . -depth \( \
+    -name ".turbo" -o \
+    -name "tsconfig*.json" -o \
+    -name "eslint.config.*" -o \
+    -name "vitest.config.*" -o \
+    -name "jest*.json" -o \
+    -name "*.spec.*" -o \
+    -name "*.test.*" \
+  \) -not -path "*/node_modules/*" -exec rm -rf {} +
+
 FROM base AS runner
-WORKDIR /app
+WORKDIR /app/apps/web
 ENV NODE_ENV=production
 
 RUN addgroup -S appgroup && adduser -S appuser -G appgroup
-USER appuser
 
-COPY --from=installer /app .
+COPY --from=installer --chown=appuser:appgroup /app /app
+
+USER appuser
 
 EXPOSE 3000
 
 ENV PORT=3000
 
-CMD ["pnpm", "--filter", "@agency-os/web", "start"]
+CMD ["node", "node_modules/next/dist/bin/next", "start"]
