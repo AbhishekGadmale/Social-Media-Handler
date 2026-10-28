@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { encrypt, decrypt } from './encryption';
+import { encrypt, decrypt, validateTokenEncryptionKey } from './encryption';
 
 describe('Encryption Utility', () => {
   const originalEnv = process.env;
@@ -12,6 +12,86 @@ describe('Encryption Utility', () => {
 
   afterEach(() => {
     process.env = originalEnv;
+  });
+
+  describe('validateTokenEncryptionKey', () => {
+    const validKey = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+
+    it('returns a 32-byte buffer for a valid lowercase hex key', () => {
+      const buffer = validateTokenEncryptionKey({ TOKEN_ENCRYPTION_KEY: validKey });
+      expect(buffer).toBeInstanceOf(Buffer);
+      expect(buffer.length).toBe(32);
+      expect(buffer.toString('hex')).toBe(validKey);
+    });
+
+    it('returns a 32-byte buffer for a valid uppercase hex key', () => {
+      const upperKey = validKey.toUpperCase();
+      const buffer = validateTokenEncryptionKey({ TOKEN_ENCRYPTION_KEY: upperKey });
+      expect(buffer).toBeInstanceOf(Buffer);
+      expect(buffer.length).toBe(32);
+      expect(buffer.toString('hex')).toBe(validKey);
+    });
+
+    it('trims leading and trailing whitespace from a valid hex key', () => {
+      const buffer = validateTokenEncryptionKey({
+        TOKEN_ENCRYPTION_KEY: `  ${validKey}  `,
+      });
+      expect(buffer).toBeInstanceOf(Buffer);
+      expect(buffer.length).toBe(32);
+      expect(buffer.toString('hex')).toBe(validKey);
+    });
+
+    it('reads from process.env by default when no argument is supplied', () => {
+      process.env.TOKEN_ENCRYPTION_KEY = validKey;
+      const buffer = validateTokenEncryptionKey();
+      expect(buffer.length).toBe(32);
+      expect(buffer.toString('hex')).toBe(validKey);
+    });
+
+    it('throws when key is missing or undefined', () => {
+      expect(() => validateTokenEncryptionKey({})).toThrow(
+        'TOKEN_ENCRYPTION_KEY environment variable is missing.',
+      );
+      expect(() => validateTokenEncryptionKey({ TOKEN_ENCRYPTION_KEY: undefined })).toThrow(
+        'TOKEN_ENCRYPTION_KEY environment variable is missing.',
+      );
+    });
+
+    it('throws when key is empty string', () => {
+      expect(() => validateTokenEncryptionKey({ TOKEN_ENCRYPTION_KEY: '' })).toThrow(
+        'TOKEN_ENCRYPTION_KEY environment variable is missing.',
+      );
+    });
+
+    it('throws when key is whitespace only', () => {
+      expect(() => validateTokenEncryptionKey({ TOKEN_ENCRYPTION_KEY: '   ' })).toThrow(
+        'TOKEN_ENCRYPTION_KEY environment variable is missing.',
+      );
+    });
+
+    it('throws when hex string is too short (e.g. 63 chars or 32 chars)', () => {
+      const shortKey = validKey.slice(0, 63);
+      expect(() => validateTokenEncryptionKey({ TOKEN_ENCRYPTION_KEY: shortKey })).toThrow(
+        'TOKEN_ENCRYPTION_KEY must be a 32-byte hex string.',
+      );
+      expect(() => validateTokenEncryptionKey({ TOKEN_ENCRYPTION_KEY: '0123' })).toThrow(
+        'TOKEN_ENCRYPTION_KEY must be a 32-byte hex string.',
+      );
+    });
+
+    it('throws when hex string is too long (e.g. 65 chars)', () => {
+      const longKey = `${validKey}0`;
+      expect(() => validateTokenEncryptionKey({ TOKEN_ENCRYPTION_KEY: longKey })).toThrow(
+        'TOKEN_ENCRYPTION_KEY must be a 32-byte hex string.',
+      );
+    });
+
+    it('throws when key contains non-hex characters', () => {
+      const nonHexKey = validKey.slice(0, 63) + 'g';
+      expect(() => validateTokenEncryptionKey({ TOKEN_ENCRYPTION_KEY: nonHexKey })).toThrow(
+        'TOKEN_ENCRYPTION_KEY must be a 32-byte hex string.',
+      );
+    });
   });
 
   it('should encrypt and decrypt a string successfully', () => {

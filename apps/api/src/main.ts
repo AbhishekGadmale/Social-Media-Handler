@@ -10,8 +10,12 @@ import helmet from 'helmet';
 import { Logger } from 'nestjs-pino';
 import { configureTrustProxy } from './config/trust-proxy';
 import { getPublicApiUrl } from './config/public-url';
+import { validateTokenEncryptionKey } from '@agency-os/database';
 
-async function bootstrap() {
+export async function bootstrap() {
+  // Fail-fast startup validation for token encryption key
+  validateTokenEncryptionKey();
+
   const isProduction = process.env.NODE_ENV === 'production';
 
   // Fail-fast startup validation for API_PUBLIC_URL in production
@@ -63,4 +67,6 @@ async function bootstrap() {
     `Application is running on port: ${port} (` + (await app.getUrl()) + `)`,
   );
 }
-void bootstrap();
+if (process.env.NODE_ENV !== 'test') {
+  void bootstrap();
+}
