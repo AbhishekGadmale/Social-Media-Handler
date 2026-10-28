@@ -4,9 +4,107 @@ import { useParams, useRouter } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
 import { analyticsQueries } from '../../../../lib/query/analytics';
 import { ApiError } from '../../../../lib/api/client';
-import { AlertCircle, ArrowLeft, PlaySquare, HelpCircle, CheckCircle2, AlertTriangle, RefreshCw, BarChart3, Users, Activity } from 'lucide-react';
+import {
+  AlertCircle,
+  ArrowLeft,
+  PlaySquare,
+  Share2,
+  MessageSquare,
+  Camera,
+  Video,
+  Globe,
+  CheckCircle2,
+  AlertTriangle,
+  RefreshCw,
+  BarChart3,
+  Users,
+  Activity,
+} from 'lucide-react';
 import Link from 'next/link';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+  Legend,
+} from 'recharts';
+
+function getProviderBadge(provider: string) {
+  const p = (provider || '').toUpperCase();
+  switch (p) {
+    case 'LINKEDIN':
+      return {
+        icon: <Share2 className="w-8 h-8 text-blue-600" aria-hidden="true" />,
+        containerClass: 'bg-blue-50 text-blue-700',
+        label: 'LinkedIn',
+      };
+    case 'YOUTUBE':
+      return {
+        icon: <PlaySquare className="w-8 h-8 text-red-600" aria-hidden="true" />,
+        containerClass: 'bg-red-50 text-red-700',
+        label: 'YouTube',
+      };
+    case 'TWITTER':
+      return {
+        icon: <MessageSquare className="w-8 h-8 text-sky-600" aria-hidden="true" />,
+        containerClass: 'bg-sky-50 text-sky-700',
+        label: 'Twitter / X',
+      };
+    case 'INSTAGRAM':
+      return {
+        icon: <Camera className="w-8 h-8 text-pink-600" aria-hidden="true" />,
+        containerClass: 'bg-pink-50 text-pink-700',
+        label: 'Instagram',
+      };
+    case 'FACEBOOK':
+      return {
+        icon: <Globe className="w-8 h-8 text-indigo-600" aria-hidden="true" />,
+        containerClass: 'bg-indigo-50 text-indigo-700',
+        label: 'Facebook',
+      };
+    case 'TIKTOK':
+      return {
+        icon: <Video className="w-8 h-8 text-slate-700" aria-hidden="true" />,
+        containerClass: 'bg-slate-100 text-slate-800',
+        label: 'TikTok',
+      };
+    default:
+      return {
+        icon: <Globe className="w-8 h-8 text-gray-600" aria-hidden="true" />,
+        containerClass: 'bg-gray-100 text-gray-700',
+        label: provider || 'Other',
+      };
+  }
+}
+
+function getStatusBadge(status: string) {
+  const s = (status || '').toUpperCase();
+  switch (s) {
+    case 'ACTIVE':
+      return {
+        label: 'Active',
+        className: 'bg-green-50 text-green-700 border-green-200',
+      };
+    case 'REAUTH_REQUIRED':
+      return {
+        label: 'Reconnection Required',
+        className: 'bg-amber-50 text-amber-800 border-amber-200',
+      };
+    case 'DISCONNECTED':
+      return {
+        label: 'Disconnected',
+        className: 'bg-gray-100 text-gray-700 border-gray-200',
+      };
+    default:
+      return {
+        label: status || 'Unknown',
+        className: 'bg-gray-100 text-gray-700 border-gray-200',
+      };
+  }
+}
 
 export default function AccountAnalyticsPage() {
   const params = useParams();
@@ -19,7 +117,8 @@ export default function AccountAnalyticsPage() {
     isLoading,
     isError,
     error,
-    refetch
+    refetch,
+    isFetching,
   } = useQuery(analyticsQueries.account(workspaceId, accountId));
 
   const formatNumber = (num: number) => new Intl.NumberFormat('en-US').format(num);
@@ -27,19 +126,20 @@ export default function AccountAnalyticsPage() {
   const formatDate = (dateString: string) => {
     return new Intl.DateTimeFormat('en-US', {
       month: 'short',
-      day: 'numeric'
+      day: 'numeric',
+      year: 'numeric',
     }).format(new Date(dateString));
   };
 
-  const isYoutube = data?.account?.provider === 'YOUTUBE';
-  const isActive = data?.account?.status === 'ACTIVE';
   const isReauthRequired = data?.account?.status === 'REAUTH_REQUIRED';
+  const providerInfo = getProviderBadge(data?.account?.provider || '');
+  const statusInfo = getStatusBadge(data?.account?.status || '');
 
   const metrics = data?.metrics || [];
   const latestMetric = metrics.length > 0 ? metrics[metrics.length - 1] : null;
 
   // Format data for Recharts
-  const chartData = metrics.map(m => ({
+  const chartData = metrics.map((m) => ({
     ...m,
     formattedDate: formatDate(m.date),
   }));
@@ -72,7 +172,7 @@ export default function AccountAnalyticsPage() {
           <ArrowLeft className="w-4 h-4 mr-1.5" />
           Back to Overview
         </Link>
-        
+
         {isLoading ? (
           <div className="flex items-center gap-4 animate-pulse">
             <div className="w-16 h-16 bg-gray-200 rounded-full" />
@@ -82,32 +182,45 @@ export default function AccountAnalyticsPage() {
             </div>
           </div>
         ) : data?.account ? (
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
             <div className="flex items-center gap-4">
-              <div className={`p-4 rounded-full flex-shrink-0 ${isYoutube ? 'bg-red-50 text-red-600' : 'bg-gray-100 text-gray-600'}`}>
-                {isYoutube ? <PlaySquare className="w-8 h-8" aria-hidden="true" /> : <HelpCircle className="w-8 h-8" aria-hidden="true" />}
+              <div className={`p-4 rounded-full flex-shrink-0 ${providerInfo.containerClass}`}>
+                {providerInfo.icon}
               </div>
               <div>
                 <h1 className="text-3xl font-bold text-gray-900">{data.account.name || 'Unnamed Account'}</h1>
                 <div className="flex items-center mt-2 space-x-3 text-sm">
-                  <span className="text-gray-600 font-medium capitalize">{data.account.provider.toLowerCase()}</span>
-                  <span className="text-gray-300">&bull;</span>
-                  {isActive ? (
-                    <span className="inline-flex items-center text-green-700 font-medium">
-                      <CheckCircle2 className="w-4 h-4 mr-1.5" aria-hidden="true" />
-                      Active
-                    </span>
-                  ) : isReauthRequired ? (
-                    <span className="inline-flex items-center text-yellow-700 font-medium">
-                      <AlertTriangle className="w-4 h-4 mr-1.5" aria-hidden="true" />
-                      Reconnection Required
-                    </span>
-                  ) : (
-                    <span className="text-gray-500 font-medium">{data.account.status}</span>
-                  )}
+                  <span className="text-gray-600 font-medium">{providerInfo.label}</span>
+                  <span className="text-gray-300" aria-hidden="true">
+                    &bull;
+                  </span>
+                  <span
+                    className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium border ${statusInfo.className}`}
+                  >
+                    {data.account.status === 'ACTIVE' && (
+                      <CheckCircle2 className="w-3.5 h-3.5 mr-1" aria-hidden="true" />
+                    )}
+                    {data.account.status === 'REAUTH_REQUIRED' && (
+                      <AlertTriangle className="w-3.5 h-3.5 mr-1" aria-hidden="true" />
+                    )}
+                    {statusInfo.label}
+                  </span>
                 </div>
               </div>
             </div>
+
+            <button
+              onClick={() => refetch()}
+              disabled={isFetching}
+              className="self-start sm:self-auto inline-flex items-center px-3.5 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-lg text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-60 transition-colors"
+              aria-label="Refresh account analytics"
+            >
+              <RefreshCw
+                className={`w-4 h-4 mr-2 text-gray-500 ${isFetching ? 'animate-spin' : ''}`}
+                aria-hidden="true"
+              />
+              {isFetching ? 'Refreshing...' : 'Refresh'}
+            </button>
           </div>
         ) : null}
       </div>
@@ -131,6 +244,7 @@ export default function AccountAnalyticsPage() {
               <button
                 onClick={() => refetch()}
                 className="mt-6 inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-lg text-red-700 bg-red-100 hover:bg-red-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 transition-colors"
+                aria-label="Retry loading analytics"
               >
                 <RefreshCw className="w-4 h-4 mr-2" aria-hidden="true" />
                 Retry
@@ -139,9 +253,9 @@ export default function AccountAnalyticsPage() {
           )}
         </div>
       ) : isLoading ? (
-        <div className="space-y-6" role="status">
+        <div className="space-y-6" role="status" aria-label="Loading account metrics">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {[1, 2].map(i => (
+            {[1, 2].map((i) => (
               <div key={i} className="bg-white border rounded-xl p-6 shadow-sm animate-pulse">
                 <div className="h-4 bg-gray-200 rounded w-1/3 mb-4" />
                 <div className="h-10 bg-gray-200 rounded w-1/2" />
@@ -152,6 +266,7 @@ export default function AccountAnalyticsPage() {
             <div className="h-6 bg-gray-200 rounded w-1/4 mb-6" />
             <div className="flex-1 bg-gray-100 rounded-lg" />
           </div>
+          <span className="sr-only">Loading account metrics...</span>
         </div>
       ) : data ? (
         <>
@@ -237,62 +352,62 @@ export default function AccountAnalyticsPage() {
                 </p>
               </div>
             ) : (
-              <div className="h-[400px] w-full">
+              <div className="h-[400px] w-full" data-testid="performance-history-chart">
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart
                     data={chartData}
                     margin={{ top: 10, right: 10, left: 0, bottom: 0 }}
                   >
                     <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E5E7EB" />
-                    <XAxis 
-                      dataKey="formattedDate" 
+                    <XAxis
+                      dataKey="formattedDate"
                       axisLine={false}
                       tickLine={false}
                       tick={{ fill: '#6B7280', fontSize: 12 }}
                       dy={10}
                     />
-                    <YAxis 
+                    <YAxis
                       yAxisId="left"
                       axisLine={false}
                       tickLine={false}
                       tick={{ fill: '#6B7280', fontSize: 12 }}
-                      tickFormatter={(value) => 
+                      tickFormatter={(value) =>
                         value >= 1000 ? `${(value / 1000).toFixed(value >= 10000 ? 0 : 1)}k` : value
                       }
                       dx={-10}
                     />
-                    <YAxis 
+                    <YAxis
                       yAxisId="right"
                       orientation="right"
                       axisLine={false}
                       tickLine={false}
                       tick={{ fill: '#6B7280', fontSize: 12 }}
-                      tickFormatter={(value) => 
+                      tickFormatter={(value) =>
                         value >= 1000 ? `${(value / 1000).toFixed(value >= 10000 ? 0 : 1)}k` : value
                       }
                       dx={10}
                     />
-                    <Tooltip 
+                    <Tooltip
                       contentStyle={{ borderRadius: '8px', border: '1px solid #E5E7EB', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)' }}
                       labelStyle={{ fontWeight: 'bold', color: '#111827', marginBottom: '4px' }}
                     />
                     <Legend wrapperStyle={{ paddingTop: '20px' }} />
-                    <Line 
+                    <Line
                       yAxisId="left"
-                      type="monotone" 
-                      dataKey="followers" 
+                      type="monotone"
+                      dataKey="followers"
                       name="Followers"
-                      stroke="#3B82F6" 
+                      stroke="#3B82F6"
                       strokeWidth={3}
                       dot={{ r: 4, strokeWidth: 2 }}
                       activeDot={{ r: 6, strokeWidth: 0 }}
                     />
-                    <Line 
+                    <Line
                       yAxisId="right"
-                      type="monotone" 
-                      dataKey="engagement" 
+                      type="monotone"
+                      dataKey="engagement"
                       name="Engagement"
-                      stroke="#6366F1" 
+                      stroke="#6366F1"
                       strokeWidth={3}
                       dot={{ r: 4, strokeWidth: 2 }}
                       activeDot={{ r: 6, strokeWidth: 0 }}

@@ -4,8 +4,98 @@ import { useParams } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
 import { analyticsQueries } from '../../../lib/query/analytics';
 import { ApiError } from '../../../lib/api/client';
-import { AlertCircle, RefreshCw, BarChart3, Users, Link as LinkIcon, Activity, PlaySquare, HelpCircle, CheckCircle2, ChevronRight, AlertTriangle } from 'lucide-react';
+import {
+  AlertCircle,
+  RefreshCw,
+  BarChart3,
+  Users,
+  Link as LinkIcon,
+  Activity,
+  PlaySquare,
+  Share2,
+  MessageSquare,
+  Camera,
+  Video,
+  Globe,
+  CheckCircle2,
+  ChevronRight,
+  AlertTriangle,
+} from 'lucide-react';
 import Link from 'next/link';
+
+function getProviderBadge(provider: string) {
+  const p = (provider || '').toUpperCase();
+  switch (p) {
+    case 'LINKEDIN':
+      return {
+        icon: <Share2 className="w-5 h-5 text-blue-600" aria-hidden="true" />,
+        containerClass: 'bg-blue-50 text-blue-700',
+        label: 'LinkedIn',
+      };
+    case 'YOUTUBE':
+      return {
+        icon: <PlaySquare className="w-5 h-5 text-red-600" aria-hidden="true" />,
+        containerClass: 'bg-red-50 text-red-700',
+        label: 'YouTube',
+      };
+    case 'TWITTER':
+      return {
+        icon: <MessageSquare className="w-5 h-5 text-sky-600" aria-hidden="true" />,
+        containerClass: 'bg-sky-50 text-sky-700',
+        label: 'Twitter / X',
+      };
+    case 'INSTAGRAM':
+      return {
+        icon: <Camera className="w-5 h-5 text-pink-600" aria-hidden="true" />,
+        containerClass: 'bg-pink-50 text-pink-700',
+        label: 'Instagram',
+      };
+    case 'FACEBOOK':
+      return {
+        icon: <Globe className="w-5 h-5 text-indigo-600" aria-hidden="true" />,
+        containerClass: 'bg-indigo-50 text-indigo-700',
+        label: 'Facebook',
+      };
+    case 'TIKTOK':
+      return {
+        icon: <Video className="w-5 h-5 text-slate-700" aria-hidden="true" />,
+        containerClass: 'bg-slate-100 text-slate-800',
+        label: 'TikTok',
+      };
+    default:
+      return {
+        icon: <Globe className="w-5 h-5 text-gray-600" aria-hidden="true" />,
+        containerClass: 'bg-gray-100 text-gray-700',
+        label: provider || 'Other',
+      };
+  }
+}
+
+function getStatusBadge(status: string) {
+  const s = (status || '').toUpperCase();
+  switch (s) {
+    case 'ACTIVE':
+      return {
+        label: 'Active',
+        className: 'bg-green-50 text-green-700 border-green-200',
+      };
+    case 'REAUTH_REQUIRED':
+      return {
+        label: 'Reauth Required',
+        className: 'bg-amber-50 text-amber-800 border-amber-200',
+      };
+    case 'DISCONNECTED':
+      return {
+        label: 'Disconnected',
+        className: 'bg-gray-100 text-gray-700 border-gray-200',
+      };
+    default:
+      return {
+        label: status || 'Unknown',
+        className: 'bg-gray-100 text-gray-700 border-gray-200',
+      };
+  }
+}
 
 export default function AnalyticsDashboard() {
   const params = useParams();
@@ -16,7 +106,8 @@ export default function AnalyticsDashboard() {
     isLoading,
     isError,
     error,
-    refetch
+    refetch,
+    isFetching,
   } = useQuery(analyticsQueries.overview(workspaceId));
 
   const formatNumber = (num: number) => new Intl.NumberFormat('en-US').format(num);
@@ -25,22 +116,36 @@ export default function AnalyticsDashboard() {
     return new Intl.DateTimeFormat('en-US', {
       month: 'short',
       day: 'numeric',
-      year: 'numeric'
+      year: 'numeric',
     }).format(new Date(dateString));
   };
 
   return (
     <div className="p-8 max-w-7xl mx-auto space-y-8">
-      <div>
-        <h1 className="text-2xl font-bold text-gray-900">Analytics Overview</h1>
-        <p className="mt-2 text-sm text-gray-600">
-          High-level metrics for your connected social accounts.
-        </p>
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">Analytics Overview</h1>
+          <p className="mt-1 text-sm text-gray-600">
+            Latest recorded daily snapshot metrics across your connected social accounts.
+          </p>
+        </div>
+        <button
+          onClick={() => refetch()}
+          disabled={isFetching}
+          className="self-start sm:self-auto inline-flex items-center px-3.5 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-lg text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-60 transition-colors"
+          aria-label="Refresh analytics data"
+        >
+          <RefreshCw
+            className={`w-4 h-4 mr-2 text-gray-500 ${isFetching ? 'animate-spin' : ''}`}
+            aria-hidden="true"
+          />
+          {isFetching ? 'Refreshing...' : 'Refresh'}
+        </button>
       </div>
 
       {isLoading ? (
         <div className="space-y-8" role="status" aria-label="Loading analytics">
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
             {[1, 2, 3, 4].map((i) => (
               <div key={i} className="bg-white border rounded-xl p-6 shadow-sm animate-pulse">
                 <div className="h-4 bg-gray-200 rounded w-1/2 mb-4"></div>
@@ -104,14 +209,18 @@ export default function AnalyticsDashboard() {
         </div>
       ) : (
         <div className="space-y-8 animate-in fade-in duration-500">
-          
           {data && data.accountsRequiringReauth > 0 && (
             <div className="bg-yellow-50 border-l-4 border-yellow-400 p-4 rounded-r-lg flex items-start sm:items-center justify-between flex-col sm:flex-row gap-4">
               <div className="flex items-start sm:items-center">
-                <AlertTriangle className="h-5 w-5 text-yellow-400 mt-0.5 sm:mt-0 mr-3 flex-shrink-0" aria-hidden="true" />
+                <AlertTriangle
+                  className="h-5 w-5 text-yellow-500 mt-0.5 sm:mt-0 mr-3 flex-shrink-0"
+                  aria-hidden="true"
+                />
                 <div>
                   <h3 className="text-sm font-medium text-yellow-800">
-                    Action Required: {data.accountsRequiringReauth} account{data.accountsRequiringReauth > 1 ? 's' : ''} need reconnection
+                    {`Action Required: ${data.accountsRequiringReauth} account${
+                      data.accountsRequiringReauth > 1 ? 's need' : ' needs'
+                    } reconnection`}
                   </h3>
                   <p className="mt-1 text-sm text-yellow-700">
                     Some accounts have lost their connection and are no longer syncing data.
@@ -134,7 +243,9 @@ export default function AnalyticsDashboard() {
                 <Users className="w-5 h-5 mr-2 text-blue-500" aria-hidden="true" />
                 Total Followers
               </div>
-              <div className="text-3xl font-bold text-gray-900">{formatNumber(data?.totalFollowers || 0)}</div>
+              <div className="text-3xl font-bold text-gray-900">
+                {formatNumber(data?.totalFollowers || 0)}
+              </div>
             </div>
 
             <div className="bg-white rounded-xl border shadow-sm p-6 flex flex-col">
@@ -142,7 +253,9 @@ export default function AnalyticsDashboard() {
                 <Activity className="w-5 h-5 mr-2 text-indigo-500" aria-hidden="true" />
                 Total Engagement
               </div>
-              <div className="text-3xl font-bold text-gray-900">{formatNumber(data?.totalEngagement || 0)}</div>
+              <div className="text-3xl font-bold text-gray-900">
+                {formatNumber(data?.totalEngagement || 0)}
+              </div>
             </div>
 
             <div className="bg-white rounded-xl border shadow-sm p-6 flex flex-col">
@@ -150,7 +263,9 @@ export default function AnalyticsDashboard() {
                 <LinkIcon className="w-5 h-5 mr-2 text-emerald-500" aria-hidden="true" />
                 Connected Accounts
               </div>
-              <div className="text-3xl font-bold text-gray-900">{formatNumber(data?.accountsConnected || 0)}</div>
+              <div className="text-3xl font-bold text-gray-900">
+                {formatNumber(data?.accountsConnected || 0)}
+              </div>
             </div>
 
             <div className="bg-white rounded-xl border shadow-sm p-6 flex flex-col">
@@ -158,53 +273,83 @@ export default function AnalyticsDashboard() {
                 <CheckCircle2 className="w-5 h-5 mr-2 text-green-500" aria-hidden="true" />
                 Active Accounts
               </div>
-              <div className="text-3xl font-bold text-gray-900">{formatNumber(data?.accountsActive || 0)}</div>
+              <div className="text-3xl font-bold text-gray-900">
+                {formatNumber(data?.accountsActive || 0)}
+              </div>
             </div>
           </div>
 
           {/* Accounts Breakdown */}
           <div className="bg-white rounded-xl border shadow-sm overflow-hidden">
-            <div className="px-6 py-5 border-b bg-gray-50/50">
-              <h2 className="text-lg font-semibold text-gray-900">Account Performance</h2>
+            <div className="px-6 py-5 border-b bg-gray-50/50 flex items-center justify-between">
+              <div>
+                <h2 className="text-lg font-semibold text-gray-900">Account Performance</h2>
+                <p className="text-xs text-gray-500 mt-0.5">
+                  Latest recorded performance per connected social profile.
+                </p>
+              </div>
             </div>
-            
+
             <div className="divide-y divide-gray-100">
               {data?.accounts.map((account) => {
-                const isYoutube = account.provider === 'YOUTUBE';
-                const isActive = account.status === 'ACTIVE';
-                
+                const providerInfo = getProviderBadge(account.provider);
+                const statusInfo = getStatusBadge(account.status);
+
                 return (
-                  <div key={account.id} className="p-6 flex flex-col md:flex-row md:items-center justify-between gap-6 transition-colors hover:bg-gray-50/50">
+                  <div
+                    key={account.id}
+                    className="p-6 flex flex-col md:flex-row md:items-center justify-between gap-6 transition-colors hover:bg-gray-50/50"
+                  >
                     <div className="flex items-center gap-4 min-w-[240px]">
-                      <div className={`p-3 rounded-full flex-shrink-0 ${isYoutube ? 'bg-red-50 text-red-600' : 'bg-gray-100 text-gray-600'}`}>
-                        {isYoutube ? <PlaySquare className="w-6 h-6" aria-hidden="true" /> : <HelpCircle className="w-6 h-6" aria-hidden="true" />}
+                      <div
+                        className={`p-3 rounded-full flex-shrink-0 ${providerInfo.containerClass}`}
+                      >
+                        {providerInfo.icon}
                       </div>
                       <div>
-                        <h3 className="font-semibold text-gray-900 truncate max-w-[200px]">{account.name || 'Unnamed Account'}</h3>
+                        <h3 className="font-semibold text-gray-900 truncate max-w-[200px]">
+                          {account.name || 'Unnamed Account'}
+                        </h3>
                         <div className="flex items-center mt-1 space-x-2 text-xs">
-                          <span className="text-gray-500 capitalize">{account.provider.toLowerCase()}</span>
-                          <span className="text-gray-300">&bull;</span>
-                          <span className={isActive ? 'text-green-600 font-medium' : 'text-yellow-600 font-medium'}>
-                            {account.status}
+                          <span className="text-gray-500">{providerInfo.label}</span>
+                          <span className="text-gray-300" aria-hidden="true">
+                            &bull;
+                          </span>
+                          <span
+                            className={`inline-flex items-center px-1.5 py-0.5 rounded text-[11px] font-medium border ${statusInfo.className}`}
+                          >
+                            {statusInfo.label}
                           </span>
                         </div>
                       </div>
                     </div>
-                    
+
                     <div className="flex-1 grid grid-cols-2 md:grid-cols-3 gap-4 md:gap-8 items-center border-t md:border-t-0 pt-4 md:pt-0 border-gray-100">
                       {account.latestMetrics ? (
                         <>
                           <div className="flex flex-col">
-                            <span className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-1">Followers</span>
-                            <span className="text-lg font-semibold text-gray-900">{formatNumber(account.latestMetrics.followers)}</span>
+                            <span className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-1">
+                              Followers
+                            </span>
+                            <span className="text-lg font-semibold text-gray-900">
+                              {formatNumber(account.latestMetrics.followers)}
+                            </span>
                           </div>
                           <div className="flex flex-col">
-                            <span className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-1">Engagement</span>
-                            <span className="text-lg font-semibold text-gray-900">{formatNumber(account.latestMetrics.engagement)}</span>
+                            <span className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-1">
+                              Engagement
+                            </span>
+                            <span className="text-lg font-semibold text-gray-900">
+                              {formatNumber(account.latestMetrics.engagement)}
+                            </span>
                           </div>
                           <div className="flex flex-col col-span-2 md:col-span-1">
-                            <span className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-1">Last Updated</span>
-                            <span className="text-sm text-gray-700">{formatDate(account.latestMetrics.date)}</span>
+                            <span className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-1">
+                              Last Updated
+                            </span>
+                            <span className="text-sm text-gray-700">
+                              {formatDate(account.latestMetrics.date)}
+                            </span>
                           </div>
                         </>
                       ) : (
@@ -214,7 +359,7 @@ export default function AnalyticsDashboard() {
                       )}
                     </div>
 
-                    <div className="hidden md:flex ml-4">
+                    <div className="flex items-center ml-2 sm:ml-4">
                       <Link
                         href={`/${workspaceId}/analytics/${account.id}`}
                         className="p-2 text-gray-400 hover:text-gray-600 rounded-full hover:bg-gray-100 transition-colors"
