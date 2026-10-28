@@ -1408,7 +1408,7 @@ The final architecture employs a two-tier fencing model:
    - Restored `/tmp/prisma-generated/.prisma` back into the production pnpm virtual store and root `.prisma` after the production install, ensuring runtime compatibility and query execution without devDependencies.
 3. **Attack Surface Reduction & Source Pruning**:
    - Pruned source directories (`src/`), test files (`test/`, `*.spec.ts`), TypeScript configurations (`tsconfig*.json`), and build cache directories from runner stages before packaging.
-   - Enforced non-root execution across all runner images (`USER appuser:appgroup`, UID/GID 10001).
+   - Enforced non-root execution across all runner images (`USER appuser`, primary group `appgroup`).
 4. **Hardened CI Docker Smoke Test**:
    - Updated `.github/workflows/ci.yml`:
      - Replaced permissive `curl -s` with `curl -fsS http://localhost:3001/api/health/ready` to fail fast on non-2xx responses (including HTTP 503 during startup).
