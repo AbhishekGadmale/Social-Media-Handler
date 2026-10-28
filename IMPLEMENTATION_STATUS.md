@@ -25,7 +25,7 @@
 ### Phase 5: Analytics
 **Status**: COMPLETE AND VERIFIED
 - **Evidence (Backend - COMPLETE AND VERIFIED)**: `apps/api/src/modules/analytics` exposes endpoints reading from `AccountMetricDaily` using Prisma. `apps/worker/src/sync/sync.processor.ts` successfully implements token decryption, calls provider capabilities (`getAccountMetrics`), and upserts data idempotently into PostgreSQL. Extensive unit tests exist in `sync.processor.spec.ts`.
-- **Evidence (Frontend - COMPLETE AND VERIFIED)**: Authenticated workspace overview dashboard implemented at `apps/web/src/app/[workspaceId]/analytics/page.tsx`, displaying high-level aggregated summary cards (Total Followers, Total Engagement, Connected Accounts, Active Accounts) and per-account metric breakdowns with provider badges and status indicators (`ACTIVE`, `REAUTH_REQUIRED`, `DISCONNECTED`). Account drill-down view implemented at `apps/web/src/app/[workspaceId]/analytics/[accountId]/page.tsx` with 30-day historical trend charts via `recharts`. Implements honest loading skeleton (`role="status"`), empty onboarding states, 403 access-denied handling, header refresh/retry actions with spinning indicator during `isFetching`, and aligned workspace navigation (`/` redirecting to `/dashboard` and dashboard card CTA entering `/[workspaceId]/analytics`). Comprehensive unit tests added in `page.spec.tsx` and `[accountId]/page.spec.tsx` (20 unit tests across 2 new test suites). *Limitation noted*: The overview displays the latest recorded daily snapshots per connected account; date-range query filtering is not supported by the backend overview endpoint.
+- **Evidence (Frontend - COMPLETE AND VERIFIED)**: Authenticated workspace overview dashboard implemented at `apps/web/src/app/[workspaceId]/analytics/page.tsx`, displaying high-level aggregated summary cards (Total Followers, Total Engagement, Connected Accounts, Active Accounts) and per-account metric breakdowns with provider badges and status indicators (`ACTIVE`, `REAUTH_REQUIRED`, `DISCONNECTED`). Account drill-down view implemented at `apps/web/src/app/[workspaceId]/analytics/[accountId]/page.tsx` with 30-day historical trend charts via `recharts`. Implements honest loading skeleton (`role="status"`), empty onboarding states, 403 access-denied handling, header refresh/retry actions with spinning indicator during `isFetching`, and aligned workspace navigation (`/` redirecting to `/dashboard` and per-workspace card "Enter Workspace" CTA routing to `/[workspaceId]/analytics`). Comprehensive unit tests added in `page.spec.tsx` and `[accountId]/page.spec.tsx` (20 unit tests across 2 new test suites). *Limitation noted*: The overview displays the latest recorded daily snapshots per connected account; date-range query filtering is not supported by the backend overview endpoint.
 
 ### Phase 6: Hardening
 **Status**: PARTIAL
@@ -1471,29 +1471,29 @@ The final architecture employs a two-tier fencing model:
      - **Error State**: Resilient error banner with Retry action.
      - **Header Refresh Action**: Manual refresh button with spinning icon state during `isFetching`.
 2. **Account Drill-Down Historical Trends (`apps/web/src/app/[workspaceId]/analytics/[accountId]/page.tsx`)**:
-   - Queries `GET /api/v1/workspaces/:workspaceId/analytics/accounts/:accountId?days=30`.
-   - Visualizes 30-day historical follower and engagement trajectories using `recharts` responsive line and area charts.
+   - Queries `GET /api/v1/workspaces/:workspaceId/analytics/accounts/:accountId` (the backend computes the 30-day history window server-side; the frontend does not pass a query parameter or request a custom date range).
+   - Visualizes 30-day historical follower and engagement trajectories using `recharts` responsive line charts.
    - Displays account metadata header, current status badge, breadcrumb navigation back to workspace analytics, and date formatting.
    - Provides honest empty-state handling if no metric history has been recorded yet.
 3. **Workspace Navigation Alignment**:
    - Root route `apps/web/src/app/page.tsx` updated to redirect cleanly to `/dashboard`.
-   - Main dashboard (`apps/web/src/app/dashboard/page.tsx`) analytics card CTA aligned to enter `/[workspaceId]/analytics`.
+   - Main dashboard (`apps/web/src/app/dashboard/page.tsx`) per-workspace card's "Enter Workspace" CTA routes to `/{workspaceId}/analytics`.
 4. **Delivered Limitations (Explicitly Documented)**:
    - **Snapshot Limitation**: The overview dashboard displays the single latest recorded daily snapshot per connected account as returned by the existing backend endpoint. Date-range query filtering is not supported by the backend overview endpoint; date filtering was not implemented on the overview.
 5. **Non-Blocking Future Polish Observations (from Muse Review)**:
-   - *Refresh Action Throttle*: Optional debounce or minimum visual delay on the overview refresh button to prevent rapid consecutive clicks while a query is in-flight.
-   - *Trend Chart Fallback*: Optional fallback visualization when historical snapshots array has zero data points.
-   - *Backend Overview Date-Range Filtering*: Potential future enhancement to the API overview endpoint to support date-windowed aggregations.
+   1. **Provider/status badge duplication**: Provider/status badge helper logic is duplicated across the overview and account pages, with slight divergence in reauthentication wording.
+   2. **Account not-found navigation fallback**: The account 404 state relies on `router.back()` without a fallback destination.
+   3. **Date-only timezone formatting**: Formatting date-only values in local time can shift the displayed date for users west of UTC. This follows the existing application convention and was not considered a merge blocker.
 
 ### 3. Verification & Test Evidence
 - **Web Unit Tests**:
-   - Added 20 comprehensive unit tests across 2 new test files:
-     - `apps/web/src/app/[workspaceId]/analytics/page.spec.tsx` (10 tests): Loading skeletons, metric card rendering, account breakdown table, active/reauth badges, empty state, 403 access-denied state, error state with retry, refresh trigger, and navigation links.
-     - `apps/web/src/app/[workspaceId]/analytics/[accountId]/page.spec.tsx` (10 tests): Account header, 30-day history query, recharts rendering, breadcrumb navigation, loading, and error states.
+   - Added 20 comprehensive unit tests across 2 new test suites:
+     - `apps/web/src/app/[workspaceId]/analytics/page.spec.tsx` (11 tests): Loading skeletons, metric card rendering, account breakdown table, active/reauth badges, empty state, 403 access-denied state, error state with retry, refresh trigger, and navigation links.
+     - `apps/web/src/app/[workspaceId]/analytics/[accountId]/page.spec.tsx` (9 tests): Account header, 30-day history query, recharts rendering, loading, and error states.
    - `pnpm --filter @agency-os/web test`: 8/8 test suites passed, 111/111 tests passed.
 - **Monorepo Code Quality**:
    - `pnpm turbo run lint`: 0 errors across all monorepo packages.
-   - `pnpm turbo run typecheck`: 5/5 packages passed with 0 type errors.
+   - `pnpm turbo run typecheck`: Typecheck green across the monorepo.
    - `pnpm turbo run build`: All applications and packages compiled successfully.
 - **Pre-Merge CI (Commit `8400d82` / Run #40679923292)**:
    - `GitGuardian Security Checks`: **SUCCESS** (Green)
