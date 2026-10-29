@@ -7,6 +7,7 @@ import { Readable } from 'stream';
 import { BullModule } from '@nestjs/bullmq';
 import { ExecutionValidator } from './execution.validator';
 import { TokenService } from './token.service';
+import { getLoggerToken } from 'nestjs-pino';
 import crypto from 'crypto';
 
 const generateId = () => crypto.randomUUID();
@@ -77,6 +78,16 @@ describe('Worker Storage Integration', () => {
         { provide: ExecutionValidator, useValue: mockExecutionValidator },
         { provide: TokenService, useValue: mockTokenService },
         { provide: 'IObjectStorage', useValue: mockStorage },
+        {
+          provide: getLoggerToken(PublishingProcessor.name),
+          useValue: {
+            info: jest.fn(),
+            error: jest.fn(),
+            warn: jest.fn(),
+            debug: jest.fn(),
+            setContext: jest.fn(),
+          },
+        },
       ],
     }).compile();
 

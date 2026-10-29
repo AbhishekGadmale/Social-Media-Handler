@@ -71,11 +71,19 @@ describe('PublishingApplicationService - reconcile()', () => {
       logActionBestEffort: vi.fn(),
     } as any;
     validatorMock = {} as any;
+    const mockLogger = {
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+      debug: vi.fn(),
+      setContext: vi.fn(),
+    } as any;
 
     service = new PublishingApplicationService(
       prismaMock,
       auditMock,
       validatorMock,
+      mockLogger,
     );
   });
 
@@ -706,10 +714,19 @@ describe('PublishingApplicationService - Audit Logging Coverage', () => {
       lockVariantsForUpdate: vi.fn().mockResolvedValue([]),
     };
 
+    const mockLogger = {
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+      debug: vi.fn(),
+      setContext: vi.fn(),
+    } as any;
+
     service = new PublishingApplicationService(
       prismaMock,
       auditMock,
       validatorMock,
+      mockLogger,
     );
     (service as any).getRepo = vi.fn().mockReturnValue(repoMock);
   });

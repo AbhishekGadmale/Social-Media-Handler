@@ -10,9 +10,9 @@ import {
   ForbiddenException,
   NotFoundException,
   ParseUUIDPipe,
-  Logger,
   Body,
 } from '@nestjs/common';
+import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { ParseSocialProviderPipe } from './pipes/parse-social-provider.pipe';
 import { OAuthService } from './oauth.service';
 import { AuthGuard } from '../auth/guards/auth.guard';
@@ -31,14 +31,15 @@ import { RateLimitPolicies } from '../core/rate-limit.policies';
 import { AuditAction } from '@agency-os/database';
 import { AuditService } from '../core/audit.service';
 import { getPublicApiUrl } from '../../config/public-url';
+import { getOrCreateCorrelationId } from '../core/correlation-id.utils';
 
 @Controller()
 export class OAuthController {
-  private readonly logger = new Logger(OAuthController.name);
-
   constructor(
     private readonly oauthService: OAuthService,
     private readonly auditService: AuditService,
+    @InjectPinoLogger(OAuthController.name)
+    private readonly logger: PinoLogger,
   ) {}
 
   @Throttle({ default: RateLimitPolicies.expensive })
@@ -75,7 +76,7 @@ export class OAuthController {
       actorId: userId,
       targetType: 'SocialProvider',
       targetId: provider,
-      requestId: (req as any).id,
+      requestId: getOrCreateCorrelationId(req),
       metadata: { provider },
     });
 
@@ -92,7 +93,7 @@ export class OAuthController {
     @Res() res: Response,
   ) {
     const { code, state, error } = query;
-    const requestId = (req as any).id;
+    const requestId = getOrCreateCorrelationId(req);
     const userId = req.user!.id;
 
     if (error) {
@@ -141,6 +142,7 @@ export class OAuthController {
         state,
         code,
         redirectUri,
+        requestId,
       );
 
       if (result.requiresSelection) {
@@ -167,13 +169,17 @@ export class OAuthController {
       const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
       return res.redirect(`${frontendUrl}/${workspaceId}/accounts`);
     } catch (err: any) {
-      this.logger.error('OAuth connection failed', {
-        event: 'oauth.connection_failed',
-        provider,
-        errorClass: err?.name,
-        errorCode: err?.statusCode || err?.code,
-        errorMessage: err?.message,
-      });
+      this.logger.error(
+        {
+          event: 'oauth.connection_failed',
+          provider,
+          errorClass: err?.name,
+          errorCode: err?.statusCode || err?.code,
+          errorMessage: err?.message,
+          requestId,
+        },
+        'OAuth connection failed',
+      );
       this.auditService.logActionBestEffort({
         action: AuditAction.OAUTH_CONNECTION_FAILED,
         actorId: userId,
@@ -231,6 +237,7 @@ export class OAuthController {
     @Req() req: Request,
   ) {
     const userId = req.user!.id;
+    const requestId = getOrCreateCorrelationId(req);
     const { profileIds } = dto;
 
     const results = await this.oauthService.processDiscoverySelection(
@@ -238,6 +245,7 @@ export class OAuthController {
       workspaceId,
       userId,
       profileIds,
+      requestId,
     );
 
     for (const res of results) {
@@ -249,7 +257,7 @@ export class OAuthController {
         actorId: userId,
         targetType: 'SocialAccount',
         targetId: res.accountId,
-        requestId: (req as any).id || '',
+        requestId,
         metadata: {
           provider: res.provider,
           discoveryId,

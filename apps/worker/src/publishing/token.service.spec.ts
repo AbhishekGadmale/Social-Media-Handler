@@ -64,6 +64,13 @@ class MockRedis {
 }
 
 describe('TokenService', () => {
+  const mockLogger = {
+    info: jest.fn(),
+    warn: jest.fn(),
+    error: jest.fn(),
+    debug: jest.fn(),
+    setContext: jest.fn(),
+  } as any;
   let prisma: PrismaClient;
 
   beforeAll(() => {
@@ -154,7 +161,7 @@ describe('TokenService', () => {
       const ytProvider = providerRegistry.get('youtube');
       const refreshSpy = jest.spyOn(ytProvider as any, 'refreshCredentials');
 
-      const tokenService = new TokenService(prisma);
+      const tokenService = new TokenService(prisma, mockLogger);
       const creds = await tokenService.getExecutionCredentials(account.id);
 
       expect(creds.accessToken).toBe('fresh-access-token');
@@ -170,7 +177,7 @@ describe('TokenService', () => {
         expiresAt: null,
       });
 
-      const tokenService = new TokenService(prisma);
+      const tokenService = new TokenService(prisma, mockLogger);
       const creds = await tokenService.getExecutionCredentials(account.id);
 
       expect(creds.accessToken).toBe('perpetual-page-token');
@@ -198,7 +205,7 @@ describe('TokenService', () => {
           tokenType: 'Bearer',
         });
 
-      const tokenService = new TokenService(prisma);
+      const tokenService = new TokenService(prisma, mockLogger);
       const creds = await tokenService.getExecutionCredentials(account.id);
 
       expect(refreshSpy).toHaveBeenCalledWith('original-refresh-token');
@@ -238,7 +245,7 @@ describe('TokenService', () => {
           tokenType: 'Bearer',
         });
 
-      const tokenService = new TokenService(prisma);
+      const tokenService = new TokenService(prisma, mockLogger);
       await tokenService.getExecutionCredentials(account.id);
 
       const updatedConn = await prisma.socialConnection.findUniqueOrThrow({
@@ -274,7 +281,7 @@ describe('TokenService', () => {
           tokenType: 'Bearer',
         });
 
-      const tokenService = new TokenService(prisma);
+      const tokenService = new TokenService(prisma, mockLogger);
       await tokenService.getExecutionCredentials(account.id);
 
       const updatedConn = await prisma.socialConnection.findUniqueOrThrow({
@@ -300,7 +307,7 @@ describe('TokenService', () => {
         expiresAt: expiringInTwoMinutes,
       });
 
-      const tokenService = new TokenService(prisma);
+      const tokenService = new TokenService(prisma, mockLogger);
       const creds = await tokenService.getExecutionCredentials(account.id);
 
       expect(creds.accessToken).toBe('still-valid-meta-token');
@@ -331,7 +338,7 @@ describe('TokenService', () => {
         .spyOn(ytProvider as any, 'refreshCredentials')
         .mockRejectedValueOnce(error);
 
-      const tokenService = new TokenService(prisma);
+      const tokenService = new TokenService(prisma, mockLogger);
 
       await expect(
         tokenService.getExecutionCredentials(account.id),
@@ -361,7 +368,7 @@ describe('TokenService', () => {
         .spyOn(ytProvider as any, 'refreshCredentials')
         .mockRejectedValueOnce(error);
 
-      const tokenService = new TokenService(prisma);
+      const tokenService = new TokenService(prisma, mockLogger);
 
       await expect(
         tokenService.getExecutionCredentials(account.id),
@@ -384,7 +391,7 @@ describe('TokenService', () => {
         expiresAt: expiredDate,
       });
 
-      const tokenService = new TokenService(prisma);
+      const tokenService = new TokenService(prisma, mockLogger);
 
       await expect(
         tokenService.getExecutionCredentials(account.id),
@@ -405,7 +412,7 @@ describe('TokenService', () => {
         expiresAt: expiredDate,
       });
 
-      const tokenService = new TokenService(prisma);
+      const tokenService = new TokenService(prisma, mockLogger);
 
       await expect(
         tokenService.getExecutionCredentials(account.id),
@@ -433,7 +440,7 @@ describe('TokenService', () => {
         .spyOn(ytProvider as any, 'refreshCredentials')
         .mockRejectedValueOnce(error);
 
-      const tokenService = new TokenService(prisma);
+      const tokenService = new TokenService(prisma, mockLogger);
 
       await expect(
         tokenService.getExecutionCredentials(account.id),
@@ -465,7 +472,7 @@ describe('TokenService', () => {
         .spyOn(ytProvider as any, 'refreshCredentials')
         .mockRejectedValueOnce(error);
 
-      const tokenService = new TokenService(prisma);
+      const tokenService = new TokenService(prisma, mockLogger);
 
       await expect(
         tokenService.getExecutionCredentials(account.id),
@@ -495,7 +502,7 @@ describe('TokenService', () => {
         .spyOn(ytProvider as any, 'refreshCredentials')
         .mockRejectedValueOnce(error);
 
-      const tokenService = new TokenService(prisma);
+      const tokenService = new TokenService(prisma, mockLogger);
 
       await expect(
         tokenService.getExecutionCredentials(account.id),
@@ -535,8 +542,16 @@ describe('TokenService', () => {
           };
         });
 
-      const tokenService1 = new TokenService(prisma, mockRedis as any);
-      const tokenService2 = new TokenService(prisma, mockRedis as any);
+      const tokenService1 = new TokenService(
+        prisma,
+        mockLogger,
+        mockRedis as any,
+      );
+      const tokenService2 = new TokenService(
+        prisma,
+        mockLogger,
+        mockRedis as any,
+      );
 
       // Launch both simultaneously
       const [res1, res2] = await Promise.all([
@@ -553,7 +568,11 @@ describe('TokenService', () => {
 
     it('safe lock release: worker does NOT delete lock held by another worker if TTL expired', async () => {
       const mockRedis = new MockRedis();
-      const tokenService = new TokenService(prisma, mockRedis as any);
+      const tokenService = new TokenService(
+        prisma,
+        mockLogger,
+        mockRedis as any,
+      );
 
       const lockKey = 'lock:refresh:test-account-123';
       const tokenWorkerB = 'token-worker-b';
@@ -611,7 +630,7 @@ describe('TokenService', () => {
           throw error;
         });
 
-      const tokenService = new TokenService(prisma);
+      const tokenService = new TokenService(prisma, mockLogger);
 
       // Stale worker should not mark REAUTH_REQUIRED, but instead recover and return fresh token from DB
       const creds = await tokenService.getExecutionCredentials(account.id);
@@ -665,7 +684,7 @@ describe('TokenService', () => {
           };
         });
 
-      const tokenService = new TokenService(prisma);
+      const tokenService = new TokenService(prisma, mockLogger);
       const creds = await tokenService.getExecutionCredentials(account.id);
 
       // CAS should prevent Worker B from overwriting Worker A's credentials, and return Worker A's token
@@ -703,7 +722,7 @@ describe('TokenService', () => {
         .spyOn(ytProvider as any, 'refreshCredentials')
         .mockRejectedValueOnce(error);
 
-      const tokenService = new TokenService(prisma);
+      const tokenService = new TokenService(prisma, mockLogger);
       await expect(
         tokenService.getExecutionCredentials(account.id),
       ).rejects.toThrow(AuthRequiredError);
@@ -753,7 +772,7 @@ describe('TokenService', () => {
           throw error;
         });
 
-      const tokenService = new TokenService(prisma);
+      const tokenService = new TokenService(prisma, mockLogger);
       const creds = await tokenService.getExecutionCredentials(account.id);
 
       expect(creds.accessToken).toBe('fresh-token-from-worker-a-2');
@@ -803,7 +822,7 @@ describe('TokenService', () => {
           throw error;
         });
 
-      const tokenService = new TokenService(prisma);
+      const tokenService = new TokenService(prisma, mockLogger);
       const creds = await tokenService.getExecutionCredentials(account.id);
 
       expect(creds.accessToken).toBe('user-reconnected-access-token-3');
@@ -845,7 +864,7 @@ describe('TokenService', () => {
           throw error;
         });
 
-      const tokenService = new TokenService(prisma);
+      const tokenService = new TokenService(prisma, mockLogger);
       await expect(
         tokenService.getExecutionCredentials(account.id),
       ).rejects.toThrow(AuthRequiredError);
@@ -883,7 +902,7 @@ describe('TokenService', () => {
           throw error;
         });
 
-      const tokenService = new TokenService(prisma);
+      const tokenService = new TokenService(prisma, mockLogger);
       await expect(
         tokenService.getExecutionCredentials(account.id),
       ).rejects.toThrow(AuthRequiredError);
@@ -914,7 +933,7 @@ describe('TokenService', () => {
         .spyOn(liProvider as any, 'refreshCredentials')
         .mockRejectedValueOnce(error);
 
-      const tokenService = new TokenService(prisma);
+      const tokenService = new TokenService(prisma, mockLogger);
       await expect(
         tokenService.getExecutionCredentials(account.id),
       ).rejects.toThrow(AuthRequiredError);
@@ -936,7 +955,7 @@ describe('TokenService', () => {
         expiresAt: expiredDate,
       });
 
-      const tokenService = new TokenService(prisma);
+      const tokenService = new TokenService(prisma, mockLogger);
       await expect(
         tokenService.getExecutionCredentials(account.id),
       ).rejects.toThrow(AuthRequiredError);
@@ -969,7 +988,7 @@ describe('TokenService', () => {
         },
       });
 
-      const tokenService = new TokenService(prisma);
+      const tokenService = new TokenService(prisma, mockLogger);
       // Stale worker executes handlePermanentAuthFailure with the old snapshot connection
       const creds = await (tokenService as any).handlePermanentAuthFailure({
         socialAccountId: account.id,
@@ -1018,7 +1037,7 @@ describe('TokenService', () => {
           });
         });
 
-      const tokenService = new TokenService(prisma);
+      const tokenService = new TokenService(prisma, mockLogger);
       await expect(
         tokenService.getExecutionCredentials(account.id),
       ).rejects.toThrow(AuthRequiredError);
@@ -1056,7 +1075,7 @@ describe('TokenService', () => {
         },
       });
 
-      const tokenService = new TokenService(prisma);
+      const tokenService = new TokenService(prisma, mockLogger);
       // Stale worker executes handlePermanentAuthFailure with the old snapshot connection
       await expect(
         (tokenService as any).handlePermanentAuthFailure({
@@ -1108,7 +1127,7 @@ describe('TokenService', () => {
         });
 
       try {
-        const tokenService = new TokenService(prisma);
+        const tokenService = new TokenService(prisma, mockLogger);
         await expect(
           (tokenService as any).handlePermanentAuthFailure({
             socialAccountId: account.id,
@@ -1208,7 +1227,7 @@ describe('TokenService', () => {
       );
 
       // 5. Stale worker attempts to handle permanent failure using the old expired snapshot
-      const tokenService = new TokenService(prisma);
+      const tokenService = new TokenService(prisma, mockLogger);
       const recoveredCreds = await (
         tokenService as any
       ).handlePermanentAuthFailure({
@@ -1318,7 +1337,7 @@ describe('TokenService', () => {
       );
 
       // 3. Concurrently, a lingering stale failure handler fires with the old snapshot
-      const tokenService = new TokenService(prisma);
+      const tokenService = new TokenService(prisma, mockLogger);
       const creds = await (tokenService as any).handlePermanentAuthFailure({
         socialAccountId: initialAccount.id,
         workspaceId: ws.id,
@@ -1445,7 +1464,7 @@ describe('TokenService', () => {
         });
 
       try {
-        const tokenService = new TokenService(prisma);
+        const tokenService = new TokenService(prisma, mockLogger);
         const recoveredCreds = await (
           tokenService as any
         ).handlePermanentAuthFailure({

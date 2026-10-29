@@ -4,25 +4,29 @@ import {
   ArgumentsHost,
   HttpException,
   HttpStatus,
-  Logger,
 } from '@nestjs/common';
+import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { Request, Response } from 'express';
-import { generateId } from '@agency-os/database';
+import {
+  getOrCreateCorrelationId,
+  attachCorrelationIdToResponse,
+} from '../modules/core/correlation-id.utils';
+import { sanitizeRequestUrl } from '../modules/core/url-sanitizer.utils';
 
 @Catch()
 export class AllExceptionsFilter implements ExceptionFilter {
-  private readonly logger = new Logger(AllExceptionsFilter.name);
+  constructor(
+    @InjectPinoLogger(AllExceptionsFilter.name)
+    private readonly logger: PinoLogger,
+  ) {}
 
   catch(exception: unknown, host: ArgumentsHost) {
     const ctx = host.switchToHttp();
     const response = ctx.getResponse<Response>();
     const request = ctx.getRequest<Request>();
 
-    // In a real app we might grab a trace ID from OpenTelemetry
-    const requestId =
-      (request as any).id ||
-      (request.headers['x-request-id'] as string) ||
-      generateId();
+    // Extract pre-assigned ID or validate incoming header, falling back to a fresh UUID
+    const requestId = getOrCreateCorrelationId(request);
 
     const status =
       exception instanceof HttpException
@@ -44,27 +48,36 @@ export class AllExceptionsFilter implements ExceptionFilter {
         ? exception.name
         : 'InternalServerError';
 
+    attachCorrelationIdToResponse(response, requestId);
+
     const is5xx = status >= 500;
     if (is5xx) {
+      const sanitizedPath = sanitizeRequestUrl(request.url);
       if (exception instanceof Error) {
-        this.logger.error(
-          { err: exception, requestId },
-          `[${requestId}] ${exception.message}`,
-        );
-        if ('code' in exception || 'meta' in exception) {
-          this.logger.error(
-            {
-              requestId,
-              code: (exception as any).code,
-              meta: (exception as any).meta,
-            },
-            `[${requestId}] Additional Error Details`,
-          );
+        const errorMetadata: Record<string, any> = {
+          err: exception,
+          requestId,
+          statusCode: status,
+          path: sanitizedPath,
+          method: request.method,
+        };
+        if ('code' in exception) {
+          errorMetadata.code = (exception as any).code;
         }
+        if ('meta' in exception) {
+          errorMetadata.meta = (exception as any).meta;
+        }
+        this.logger.error(errorMetadata, exception.message);
       } else {
         this.logger.error(
-          { exception, requestId },
-          `[${requestId}] Unhandled exception`,
+          {
+            exception,
+            requestId,
+            statusCode: status,
+            path: sanitizedPath,
+            method: request.method,
+          },
+          'Unhandled exception',
         );
       }
     }

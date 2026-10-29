@@ -35,6 +35,7 @@ describe('API Bootstrap', () => {
     mockApp = {
       useLogger: vi.fn(),
       get: vi.fn().mockReturnValue({}),
+      resolve: vi.fn().mockResolvedValue({}),
       enableCors: vi.fn(),
       use: vi.fn(),
       setGlobalPrefix: vi.fn(),

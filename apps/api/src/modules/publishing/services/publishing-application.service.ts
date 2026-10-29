@@ -8,6 +8,7 @@ import {
   HttpException,
   InternalServerErrorException,
 } from '@nestjs/common';
+import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { PrismaClient } from '@agency-os/database';
 import { AuditService } from '../../core/audit.service';
 import { PublishabilityValidator } from '../domain/PublishabilityValidator';
@@ -28,6 +29,8 @@ export class PublishingApplicationService {
     private readonly prisma: PrismaClient,
     private readonly audit: AuditService,
     private readonly validator: PublishabilityValidator,
+    @InjectPinoLogger(PublishingApplicationService.name)
+    private readonly logger: PinoLogger,
   ) {}
 
   private getRepo(workspaceId: string) {
@@ -247,7 +250,10 @@ export class PublishingApplicationService {
     postId: string,
     dto: AddPublicationTargetDto,
   ) {
-    console.error('SERVICE ADD TARGET:', { workspaceId, postId, dto });
+    this.logger.debug(
+      { workspaceId, postId, action: 'target.add_requested' },
+      'Adding publication target',
+    );
     const post = await this.getPostById(workspaceId, postId);
 
     const account = await this.prisma.socialAccount.findFirst({
@@ -393,9 +399,14 @@ export class PublishingApplicationService {
 
     const validation = await this.validateTarget(workspaceId, variantId);
     if (!validation.valid) {
-      console.error(
-        'Validation failed:',
-        JSON.stringify(validation.issues, null, 2),
+      this.logger.warn(
+        {
+          workspaceId,
+          variantId,
+          issues: validation.issues,
+          action: 'publication.validation_failed',
+        },
+        'Validation failed for publication target',
       );
       throw new UnprocessableEntityException({
         message: 'PUBLISHABILITY_FAILED',

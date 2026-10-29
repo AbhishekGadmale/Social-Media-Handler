@@ -1,15 +1,16 @@
-import { Injectable, OnModuleInit, Logger } from '@nestjs/common';
+import { Injectable, OnModuleInit } from '@nestjs/common';
+import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { PrismaClient, SocialAccountStatus } from '@agency-os/database';
 
 @Injectable()
 export class SyncService implements OnModuleInit {
-  private readonly logger = new Logger(SyncService.name);
-
   constructor(
     @InjectQueue('sync') private readonly syncQueue: Queue,
     private readonly prisma: PrismaClient,
+    @InjectPinoLogger(SyncService.name)
+    private readonly logger: PinoLogger,
   ) {}
 
   async onModuleInit() {
@@ -21,7 +22,10 @@ export class SyncService implements OnModuleInit {
         name: 'schedule:sync-all',
       },
     );
-    this.logger.log('Registered repeatable job schedule:sync-all');
+    this.logger.info(
+      { action: 'sync.scheduler_registered' },
+      'Registered repeatable job schedule:sync-all',
+    );
   }
 
   async enqueueSyncAll() {
@@ -49,6 +53,9 @@ export class SyncService implements OnModuleInit {
       );
     }
 
-    this.logger.log(`Enqueued ${activeAccounts.length} account sync jobs`);
+    this.logger.info(
+      { count: activeAccounts.length, action: 'sync.accounts_enqueued' },
+      'Enqueued account sync jobs',
+    );
   }
 }

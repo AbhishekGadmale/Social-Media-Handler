@@ -1,4 +1,5 @@
-import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
+import { Inject, Injectable, Optional } from '@nestjs/common';
+import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { PrismaClient, SocialAccountStatus } from '@agency-os/database';
 import { decrypt, encrypt } from '@agency-os/database/src/crypto/encryption';
 import {
@@ -21,12 +22,13 @@ export class AuthRequiredError extends Error {
 
 @Injectable()
 export class TokenService {
-  private readonly logger = new Logger(TokenService.name);
   public static readonly REFRESH_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes
   private static readonly LOCK_TTL_MS = 10000; // 10 seconds
 
   constructor(
     private readonly prisma: PrismaClient,
+    @InjectPinoLogger(TokenService.name)
+    private readonly logger: PinoLogger,
     @Optional() @Inject('REDIS_CLIENT') private readonly redis?: Redis,
     @Optional() private readonly providerRegistryInstance?: ProviderRegistry,
   ) {}

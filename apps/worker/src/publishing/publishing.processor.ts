@@ -1,7 +1,8 @@
 /* eslint-disable */
 import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Job } from 'bullmq';
-import { Logger, Inject } from '@nestjs/common';
+import { Inject } from '@nestjs/common';
+import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import {
   PrismaClient,
   PostStatus,
@@ -10,7 +11,10 @@ import {
   generateId,
   PublishingRepository,
 } from '@agency-os/database';
-import { ExecutionMetadataRepository, ExecutionTransitionResultType } from '@agency-os/database';
+import {
+  ExecutionMetadataRepository,
+  ExecutionTransitionResultType,
+} from '@agency-os/database';
 import { ProviderCoordinationError } from '@agency-os/providers';
 
 import { safeParseExecutionMetadata } from '@agency-os/shared';
@@ -20,14 +24,12 @@ import {
   IObjectStorage,
   IMediaContentSource,
 } from '@agency-os/providers';
-import { PublishJobData } from './publishing.types';
+import { PublishJobData, PublishDeleteJobData } from '@agency-os/shared';
 import { ExecutionValidator } from './execution.validator';
 import { TokenService, AuthRequiredError } from './token.service';
 
 @Processor('publish', { concurrency: 5 })
 export class PublishingProcessor extends WorkerHost {
-  private readonly logger = new Logger(PublishingProcessor.name);
-
   constructor(
     private readonly prisma: PrismaClient,
     private readonly providerRegistry: ProviderRegistry,
@@ -35,13 +37,21 @@ export class PublishingProcessor extends WorkerHost {
     private readonly tokenService: TokenService,
     @Inject('IObjectStorage')
     private readonly storage: IObjectStorage & IMediaContentSource,
+    @InjectPinoLogger(PublishingProcessor.name)
+    private readonly logger: PinoLogger,
   ) {
     super();
   }
 
-
-  private async processDelete(job: Job<any>) {
-    const { workspaceId, publicationId } = job.data;
+  private async processDelete(job: Job<PublishDeleteJobData>) {
+    const { workspaceId, publicationId, correlationId, operationId } = job.data;
+    const jobMeta: Record<string, any> = {
+      jobId: job.id,
+      publicationId,
+      workspaceId,
+      ...(correlationId ? { correlationId } : {}),
+      ...(operationId ? { operationId } : {}),
+    };
 
     // 1. Authoritative load
     const variant = await this.prisma.postPlatformVariant.findFirst({
@@ -52,14 +62,21 @@ export class PublishingProcessor extends WorkerHost {
     if (!variant) return; // Deleted already
     if (variant.status === 'DELETED') return; // Idempotent
     if (!variant.externalPostId) {
-      await this.prisma.postPlatformVariant.update({ where: { id: publicationId }, data: { status: 'DELETED' } });
+      await this.prisma.postPlatformVariant.update({
+        where: { id: publicationId },
+        data: { status: 'DELETED' },
+      });
       return;
     }
 
     // 2. Validate provider
     const provider = this.providerRegistry.get(variant.socialAccount.provider);
     if (!provider || !provider.deletePost) {
-      this.logger.error({ msg: 'delete.provider_not_found_or_unsupported', provider: variant.socialAccount.provider });
+      this.logger.error({
+        msg: 'delete.provider_not_found_or_unsupported',
+        provider: variant.socialAccount.provider,
+        ...jobMeta,
+      });
       throw new Error('Provider does not support deletion');
     }
 
@@ -82,12 +99,25 @@ export class PublishingProcessor extends WorkerHost {
 
     // 4. Call provider
     try {
-      const res = (await provider.deletePost(credentials, variant.externalPostId)) as any;
+      const res = (await provider.deletePost(
+        credentials,
+        variant.externalPostId,
+      )) as any;
       if (res.success) {
-        await this.prisma.postPlatformVariant.update({ where: { id: publicationId }, data: { status: 'DELETED' } });
-        await this.emitAudit(workspaceId, publicationId, 'PUBLICATION_DELETED_REMOTELY');
+        await this.prisma.postPlatformVariant.update({
+          where: { id: publicationId },
+          data: { status: 'DELETED' },
+        });
+        await this.emitAudit(
+          workspaceId,
+          publicationId,
+          'PUBLICATION_DELETED_REMOTELY',
+        );
       } else {
-        if (res.failureCategory === 'AUTH_REQUIRED' || res.failureCategory === 'PERMANENT') {
+        if (
+          res.failureCategory === 'AUTH_REQUIRED' ||
+          res.failureCategory === 'PERMANENT'
+        ) {
           if (res.failureCategory === 'AUTH_REQUIRED') {
             await this.prisma.socialAccount.update({
               where: { id: variant.socialAccountId },
@@ -95,8 +125,15 @@ export class PublishingProcessor extends WorkerHost {
             });
           }
           // Leave it in UNKNOWN or return to FAILED delete state? Let's mark it UNKNOWN for manual reconciliation
-          await this.prisma.postPlatformVariant.update({ where: { id: publicationId }, data: { status: 'UNKNOWN' } });
-          await this.emitAudit(workspaceId, publicationId, 'PUBLICATION_DELETE_FAILED');
+          await this.prisma.postPlatformVariant.update({
+            where: { id: publicationId },
+            data: { status: 'UNKNOWN' },
+          });
+          await this.emitAudit(
+            workspaceId,
+            publicationId,
+            'PUBLICATION_DELETE_FAILED',
+          );
         } else {
           throw new Error('Transient failure: ' + res.message); // retry
         }
@@ -106,20 +143,34 @@ export class PublishingProcessor extends WorkerHost {
     }
   }
 
-  async process(job: Job<any>) {
-    console.log('JOB STARTED:', job.data.publicationId);
-    if (job.name === 'publishing.delete') return this.processDelete(job);
+  async process(job: Job<PublishJobData>) {
+    if (job.name === 'publishing.delete') return this.processDelete(job as unknown as Job<PublishDeleteJobData>);
 
-    const { workspaceId, publicationId, dispatchVersion, operationId } = job.data;
-    const repo = new PublishingRepository(this.prisma, workspaceId);
-
-    this.logger.debug({
-      msg: 'publication.job.started',
+    const {
       workspaceId,
       publicationId,
       dispatchVersion,
+      operationId,
+      correlationId,
+    } = job.data;
+    const repo = new PublishingRepository(this.prisma, workspaceId);
+
+    const jobMeta: Record<string, any> = {
       jobId: job.id,
-    });
+      publicationId,
+      workspaceId,
+      dispatchVersion,
+      ...(operationId ? { operationId } : {}),
+      ...(correlationId ? { correlationId } : {}),
+    };
+
+    this.logger.debug(
+      {
+        action: 'publication.job.started',
+        ...jobMeta,
+      },
+      'Publication job started',
+    );
 
     // 1. Authoritative load
     const variant = await this.prisma.postPlatformVariant.findFirst({
@@ -138,11 +189,19 @@ export class PublishingProcessor extends WorkerHost {
     });
 
     // 2. Stale job verification
-    if (!variant || (variant.status !== PostStatus.QUEUED && variant.status !== PostStatus.PUBLISHING) || variant.dispatchVersion !== dispatchVersion) {
+    if (
+      !variant ||
+      (variant.status !== PostStatus.QUEUED &&
+        variant.status !== PostStatus.PUBLISHING) ||
+      variant.dispatchVersion !== dispatchVersion
+    ) {
       this.logger.warn({
-        msg: 'publication.job.stale', publicationId, workspaceId,
+        msg: 'publication.job.stale',
         reason: 'Mismatch or not QUEUED/PUBLISHING',
-        expectedVersion: dispatchVersion, actualVersion: variant?.dispatchVersion, actualStatus: variant?.status,
+        expectedVersion: dispatchVersion,
+        actualVersion: variant?.dispatchVersion,
+        actualStatus: variant?.status,
+        ...jobMeta,
       });
       return; // Safe NO-OP
     }
@@ -150,13 +209,21 @@ export class PublishingProcessor extends WorkerHost {
     // 3. Execution-time Revalidation
     const validation = this.validator.validate(variant as any);
     if (!validation.valid) {
-      await this.prisma.postPlatformVariant.update({ where: { id: publicationId }, data: { status: PostStatus.FAILED } });
+      await this.prisma.postPlatformVariant.update({
+        where: { id: publicationId },
+        data: { status: PostStatus.FAILED },
+      });
       await this.prisma.publicationAttempt.create({
         data: {
-          id: generateId(), variantId: publicationId, attemptNumber: await this.getNextAttemptNumber(publicationId),
-          status: 'FAILED', failureCategory: validation.failureCategory || 'VALIDATION', failureCode: validation.failureCode,
-          startedAt: new Date(), completedAt: new Date(),
-        }
+          id: generateId(),
+          variantId: publicationId,
+          attemptNumber: await this.getNextAttemptNumber(publicationId),
+          status: 'FAILED',
+          failureCategory: validation.failureCategory || 'VALIDATION',
+          failureCode: validation.failureCode,
+          startedAt: new Date(),
+          completedAt: new Date(),
+        },
       });
       return;
     }
@@ -165,21 +232,40 @@ export class PublishingProcessor extends WorkerHost {
     let isContinuation = false;
     let currentOperationId: string | null = null;
     let expectedDispatchVersion = variant.dispatchVersion;
-    const executionRepo = new ExecutionMetadataRepository(this.prisma, workspaceId);
+    const executionRepo = new ExecutionMetadataRepository(
+      this.prisma,
+      workspaceId,
+    );
 
     if (variant.status === PostStatus.QUEUED) {
       const claimed = await this.prisma.postPlatformVariant.updateMany({
-        where: { id: publicationId, workspaceId, status: 'QUEUED', dispatchVersion },
+        where: {
+          id: publicationId,
+          workspaceId,
+          status: 'QUEUED',
+          dispatchVersion,
+        },
         data: { status: 'PUBLISHING', publishedAt: null },
       });
       if (claimed.count === 0) {
-        this.logger.warn({ msg: 'publication.job.claim_failed', publicationId, reason: 'Claim lost race' });
+        this.logger.warn({
+          msg: 'publication.job.claim_failed',
+          reason: 'Claim lost race',
+          ...jobMeta,
+        });
         return;
       }
 
-      const startRes = await executionRepo.startOperation(publicationId, variant.socialAccount.provider as any);
-          if (startRes.type !== ExecutionTransitionResultType.SUCCESS) {
-        this.logger.warn({ msg: 'publication.job.start_failed', publicationId, reason: startRes.reason });
+      const startRes = await executionRepo.startOperation(
+        publicationId,
+        variant.socialAccount.provider as any,
+      );
+      if (startRes.type !== ExecutionTransitionResultType.SUCCESS) {
+        this.logger.warn({
+          msg: 'publication.job.start_failed',
+          reason: startRes.reason,
+          ...jobMeta,
+        });
         return;
       }
 
@@ -190,18 +276,33 @@ export class PublishingProcessor extends WorkerHost {
       isContinuation = true;
       const parsed = safeParseExecutionMetadata(variant.executionMetadata);
       if (!parsed.success) {
-        this.logger.error({ msg: 'publication.invalid_metadata', publicationId });
+        this.logger.error({
+          msg: 'publication.invalid_metadata',
+          ...jobMeta,
+        });
         return;
       }
       currentOperationId = parsed.data.operationId;
       if (operationId && currentOperationId !== operationId) {
-        this.logger.warn({ msg: 'publication.job.stale_operation', publicationId, expected: currentOperationId, actual: operationId });
+        this.logger.warn({
+          msg: 'publication.job.stale_operation',
+          expected: currentOperationId,
+          actual: operationId,
+          ...jobMeta,
+        });
         return;
       }
       const phase = parsed.data.phase;
 
-      if (phase === 'COMPLETED' || phase === 'FAILED' || phase === 'AMBIGUOUS') {
-        this.logger.warn({ msg: 'publication.already_terminal', publicationId });
+      if (
+        phase === 'COMPLETED' ||
+        phase === 'FAILED' ||
+        phase === 'AMBIGUOUS'
+      ) {
+        this.logger.warn({
+          msg: 'publication.already_terminal',
+          ...jobMeta,
+        });
         return;
       }
     }
@@ -215,9 +316,13 @@ export class PublishingProcessor extends WorkerHost {
     if (!attempt) {
       attempt = await this.prisma.publicationAttempt.create({
         data: {
-          id: generateId(), variantId: publicationId, attemptNumber: await this.getNextAttemptNumber(publicationId),
-          status: 'PUBLISHING', startedAt: new Date(), executionHeartbeatAt: new Date(),
-        }
+          id: generateId(),
+          variantId: publicationId,
+          attemptNumber: await this.getNextAttemptNumber(publicationId),
+          status: 'PUBLISHING',
+          startedAt: new Date(),
+          executionHeartbeatAt: new Date(),
+        },
       });
     } else {
       attempt = await this.prisma.publicationAttempt.update({
@@ -231,21 +336,37 @@ export class PublishingProcessor extends WorkerHost {
       const parsed2 = safeParseExecutionMetadata(variant.executionMetadata);
       if (parsed2.success && parsed2.data.phase === 'PUBLISH_REQUESTED') {
         const transitionRes = await executionRepo.transitionOperation(
-          publicationId, currentOperationId!, 'PUBLISH_REQUESTED', 'AMBIGUOUS', expectedDispatchVersion
+          publicationId,
+          currentOperationId!,
+          'PUBLISH_REQUESTED',
+          'AMBIGUOUS',
+          expectedDispatchVersion,
         );
         if (transitionRes.type === ExecutionTransitionResultType.SUCCESS) {
-          await this.handleUnknown(publicationId, attempt.id, 'AMBIGUOUS_RETRY_PROTECTION');
+          await this.handleUnknown(
+            publicationId,
+            attempt.id,
+            'AMBIGUOUS_RETRY_PROTECTION',
+            undefined,
+            undefined,
+            undefined,
+            jobMeta,
+          );
         } else {
-           this.logger.error({ msg: 'publication.transition_ambiguous_failed', publicationId, reason: transitionRes.reason });
+          this.logger.error({
+            msg: 'publication.transition_ambiguous_failed',
+            reason: transitionRes.reason,
+            ...jobMeta,
+          });
         }
         return;
       }
     }
 
-    this.logger.log({
+    this.logger.info({
       msg: 'publication.claimed',
-      publicationId,
       attemptId: attempt.id,
+      ...jobMeta,
     });
 
     // Emit business audit event
@@ -270,14 +391,19 @@ export class PublishingProcessor extends WorkerHost {
           'AUTH_REQUIRED',
           'CREDENTIALS_UNAVAILABLE',
           error.message,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          jobMeta,
         );
         return;
       }
       this.logger.warn({
         msg: 'publication.credentials_transient_error',
-        publicationId,
         socialAccountId: variant.socialAccountId,
         err: error?.message,
+        ...jobMeta,
       });
       throw error; // Let BullMQ retry
     }
@@ -309,27 +435,50 @@ export class PublishingProcessor extends WorkerHost {
           data: { executionHeartbeatAt: new Date() },
         });
         if (res.count === 0) {
-          this.logger.warn(`Heartbeat update failed for attempt ${attempt.id}`);
+          this.logger.warn(
+            {
+              attemptId: attempt.id,
+              action: 'heartbeat.update_failed',
+              ...jobMeta,
+            },
+            'Heartbeat update failed for attempt',
+          );
         }
-      } catch (err) {
+      } catch (err: any) {
         this.logger.error(
-          `Error during heartbeat for attempt ${attempt.id}: ${err.message}`,
+          {
+            attemptId: attempt.id,
+            err,
+            action: 'heartbeat.error',
+            ...jobMeta,
+          },
+          'Error during heartbeat for attempt',
         );
       }
     }, PUBLISH_HEARTBEAT_INTERVAL_MS);
 
     let result;
-    let currentSourcePhase: "FAILED" | "INITIATED" | "CONTAINER_CREATED" | "PROCESSING_REMOTE" | "PUBLISH_REQUESTED" | "COMPLETED" | "AMBIGUOUS" = isContinuation ? 'PROCESSING_REMOTE' : 'INITIATED';
+    let currentSourcePhase:
+      | 'FAILED'
+      | 'INITIATED'
+      | 'CONTAINER_CREATED'
+      | 'PROCESSING_REMOTE'
+      | 'PUBLISH_REQUESTED'
+      | 'COMPLETED'
+      | 'AMBIGUOUS' = isContinuation ? 'PROCESSING_REMOTE' : 'INITIATED';
     try {
-      this.logger.log({
+      this.logger.info({
         msg: 'publication.provider_publish_start',
-        publicationId,
         provider: variant.socialAccount.provider,
+        ...jobMeta,
       });
 
       const publishContext = {
         onRemotePrepared: async (remoteIdentity: any) => {
-          const currentVariant = await this.prisma.postPlatformVariant.findUniqueOrThrow({ where: { id: publicationId }});
+          const currentVariant =
+            await this.prisma.postPlatformVariant.findUniqueOrThrow({
+              where: { id: publicationId },
+            });
           const phase = (currentVariant.executionMetadata as any).phase;
           const tRes = await executionRepo.transitionOperation(
             publicationId,
@@ -337,30 +486,40 @@ export class PublishingProcessor extends WorkerHost {
             phase,
             'CONTAINER_CREATED',
             expectedDispatchVersion,
-            { containerId: remoteIdentity.containerId, preparationState: remoteIdentity.providerState }
+            {
+              containerId: remoteIdentity.containerId,
+              preparationState: remoteIdentity.providerState,
+            },
           );
           if (tRes.type !== ExecutionTransitionResultType.SUCCESS) {
-            throw new ProviderCoordinationError(`Failed to persist preparation state: ${(tRes as any).reason}`);
+            throw new ProviderCoordinationError(
+              `Failed to persist preparation state: ${(tRes as any).reason}`,
+            );
           }
           expectedDispatchVersion = (tRes as any).variant.dispatchVersion;
           currentSourcePhase = 'CONTAINER_CREATED';
         },
         beforeFinalMutation: async () => {
-          const currentVariant = await this.prisma.postPlatformVariant.findUniqueOrThrow({ where: { id: publicationId }});
+          const currentVariant =
+            await this.prisma.postPlatformVariant.findUniqueOrThrow({
+              where: { id: publicationId },
+            });
           const phase = (currentVariant.executionMetadata as any).phase;
           const tRes = await executionRepo.transitionOperation(
             publicationId,
             currentOperationId!,
             phase,
             'PUBLISH_REQUESTED',
-            expectedDispatchVersion
+            expectedDispatchVersion,
           );
           if (tRes.type !== ExecutionTransitionResultType.SUCCESS) {
-            throw new ProviderCoordinationError(`Failed to persist final checkpoint: ${(tRes as any).reason}`);
+            throw new ProviderCoordinationError(
+              `Failed to persist final checkpoint: ${(tRes as any).reason}`,
+            );
           }
           expectedDispatchVersion = (tRes as any).variant.dispatchVersion;
           currentSourcePhase = 'PUBLISH_REQUESTED';
-        }
+        },
       };
 
       // PROCESSING_REMOTE continuation: poll status instead of re-publishing
@@ -370,7 +529,10 @@ export class PublishingProcessor extends WorkerHost {
           const remoteResourceId = (parsed.data as any).remoteResourceId;
           const providerState = (parsed.data as any).preparationState;
           if (typeof adapter.checkStatus !== 'function') {
-            this.logger.error({ msg: 'publication.unsupported_status_check', publicationId });
+            this.logger.error({
+              msg: 'publication.unsupported_status_check',
+              ...jobMeta,
+            });
             result = {
               success: false,
               failureCategory: 'PERMANENT',
@@ -378,7 +540,11 @@ export class PublishingProcessor extends WorkerHost {
               message: 'Provider does not support remote status checks.',
             };
           } else {
-            const statusRes = await adapter.checkStatus(credentials, remoteResourceId, { providerState });
+            const statusRes = await adapter.checkStatus(
+              credentials,
+              remoteResourceId,
+              { providerState },
+            );
             if (statusRes.status === 'PUBLISHED') {
               if (typeof adapter.finalizePublish === 'function') {
                 // Container published out-of-band or final ID lost.
@@ -387,7 +553,8 @@ export class PublishingProcessor extends WorkerHost {
                   success: false,
                   failureCategory: 'UNKNOWN_RESULT',
                   failureCode: 'AMBIGUOUS_PUBLISHED_CONTAINER',
-                  message: 'Container reported PUBLISHED, but final media ID is unknown.'
+                  message:
+                    'Container reported PUBLISHED, but final media ID is unknown.',
                 };
               } else {
                 // Provider does not use finalizePublish (e.g. YouTube).
@@ -396,66 +563,119 @@ export class PublishingProcessor extends WorkerHost {
               }
             } else if (statusRes.status === 'READY') {
               if (typeof adapter.finalizePublish !== 'function') {
-                throw new Error('Provider returned READY but finalizePublish is not implemented');
+                throw new Error(
+                  'Provider returned READY but finalizePublish is not implemented',
+                );
               }
 
               // 1. Provider is responsible for calling ctx.beforeFinalMutation() inside finalizePublish
-              result = await adapter.finalizePublish(credentials, providerInput, remoteResourceId, { ...publishContext, providerState });
+              result = await adapter.finalizePublish(
+                credentials,
+                providerInput,
+                remoteResourceId,
+                { ...publishContext, providerState },
+              );
             } else if (statusRes.status === 'PREPARATION_READY') {
               if (typeof adapter.continuePreparation !== 'function') {
-                  this.logger.error({ msg: 'publication.missing_continue_preparation', publicationId });
+                this.logger.error({
+                  msg: 'publication.missing_continue_preparation',
+                  ...jobMeta,
+                });
+                result = {
+                  success: false,
+                  failureCategory: 'PERMANENT',
+                  failureCode: 'MISSING_CAPABILITY',
+                  message:
+                    'Provider returned PREPARATION_READY but continuePreparation is not implemented',
+                };
+              } else {
+                const currentVariant =
+                  await this.prisma.postPlatformVariant.findUniqueOrThrow({
+                    where: { id: publicationId },
+                  });
+                const p = safeParseExecutionMetadata(
+                  currentVariant.executionMetadata,
+                );
+                const providerState = p.success
+                  ? (p.data as any).preparationState
+                  : undefined;
+                const prepRes = await adapter.continuePreparation(
+                  credentials,
+                  providerInput,
+                  { ...publishContext, providerState },
+                );
+                if (prepRes.status === 'FAILED') {
                   result = {
                     success: false,
-                    failureCategory: 'PERMANENT',
-                    failureCode: 'MISSING_CAPABILITY',
-                    message: 'Provider returned PREPARATION_READY but continuePreparation is not implemented',
+                    failureCategory: prepRes.failureCategory || 'PERMANENT',
+                    failureCode:
+                      prepRes.failureCode || 'PROVIDER_PREPARATION_FAILED',
+                    message: prepRes.message || 'Preparation failed',
+                    retryAfterSeconds: prepRes.retryAfterSeconds,
                   };
                 } else {
-                  const currentVariant = await this.prisma.postPlatformVariant.findUniqueOrThrow({ where: { id: publicationId }});
-                  const p = safeParseExecutionMetadata(currentVariant.executionMetadata);
-                  const providerState = p.success ? (p.data as any).preparationState : undefined;
-                  const prepRes = await adapter.continuePreparation(credentials, providerInput, { ...publishContext, providerState });
-                  if (prepRes.status === 'FAILED') {
-                    result = {
-                      success: false,
-                      failureCategory: prepRes.failureCategory || 'PERMANENT',
-                      failureCode: prepRes.failureCode || 'PROVIDER_PREPARATION_FAILED',
-                      message: prepRes.message || 'Preparation failed',
-                      retryAfterSeconds: prepRes.retryAfterSeconds,
-                    };
-                  } else {
-                    result = { success: true, processingState: 'PROCESSING', externalPostId: remoteResourceId, providerState: prepRes.providerState, delayMs: prepRes.delayMs };
-                  }
+                  result = {
+                    success: true,
+                    processingState: 'PROCESSING',
+                    externalPostId: remoteResourceId,
+                    providerState: prepRes.providerState,
+                    delayMs: prepRes.delayMs,
+                  };
                 }
-              } else if (statusRes.status === 'FAILED') {
+              }
+            } else if (statusRes.status === 'FAILED') {
               result = {
                 success: false,
                 failureCategory: statusRes.failureCategory || 'PERMANENT',
-                failureCode: statusRes.failureCode || 'PROVIDER_PROCESSING_FAILED',
+                failureCode:
+                  statusRes.failureCode || 'PROVIDER_PROCESSING_FAILED',
                 message: statusRes.message,
               };
             } else {
               // PROCESSING or UNKNOWN (network error, timeout, 5xx)
               // Stay in PROCESSING_REMOTE - schedule next poll
-              result = { success: true, processingState: 'PROCESSING', externalPostId: remoteResourceId };
+              result = {
+                success: true,
+                processingState: 'PROCESSING',
+                externalPostId: remoteResourceId,
+              };
             }
           }
         } else {
-          result = await adapter.publish(credentials, providerInput, this.storage, publishContext);
+          result = await adapter.publish(
+            credentials,
+            providerInput,
+            this.storage,
+            publishContext,
+          );
         }
       } else {
-        result = await adapter.publish(credentials, providerInput, this.storage, publishContext);
+        result = await adapter.publish(
+          credentials,
+          providerInput,
+          this.storage,
+          publishContext,
+        );
       }
-
     } catch (error: any) {
       this.logger.error({
         msg: 'publication.provider_error',
-        publicationId,
         error: error.message,
+        ...jobMeta,
       });
 
-      if (error instanceof ProviderCoordinationError || (error.message && error.message.includes('ProviderCoordinationError')) || (error.message && error.message.includes('Dispatch version mismatch')) || (error.message && error.message.includes('Stale'))) {
-        this.logger.warn({ msg: 'publication.aborted_duplicate', publicationId });
+      if (
+        error instanceof ProviderCoordinationError ||
+        (error.message &&
+          error.message.includes('ProviderCoordinationError')) ||
+        (error.message &&
+          error.message.includes('Dispatch version mismatch')) ||
+        (error.message && error.message.includes('Stale'))
+      ) {
+        this.logger.warn({
+          msg: 'publication.aborted_duplicate',
+          ...jobMeta,
+        });
         return;
       }
 
@@ -463,18 +683,22 @@ export class PublishingProcessor extends WorkerHost {
         throw error;
       }
 
-      const isPublishRequested = (currentSourcePhase as string) === 'PUBLISH_REQUESTED';
+      const isPublishRequested =
+        (currentSourcePhase as string) === 'PUBLISH_REQUESTED';
       await this.handleUnknown(
         publicationId,
         attempt.id,
         'UNHANDLED_EXCEPTION',
         undefined,
         isPublishRequested ? executionRepo : undefined,
-        isPublishRequested ? {
-          currentOperationId: currentOperationId!,
-          currentSourcePhase: currentSourcePhase as any,
-          expectedDispatchVersion
-        } : undefined
+        isPublishRequested
+          ? {
+              currentOperationId: currentOperationId!,
+              currentSourcePhase: currentSourcePhase as any,
+              expectedDispatchVersion,
+            }
+          : undefined,
+        jobMeta,
       );
       return;
     } finally {
@@ -486,11 +710,23 @@ export class PublishingProcessor extends WorkerHost {
       if (result.processingState === 'PROCESSING') {
         const delayMs = result.delayMs || 60000;
         const transitionRes = await executionRepo.transitionOperation(
-          publicationId, currentOperationId!, currentSourcePhase, 'PROCESSING_REMOTE', expectedDispatchVersion,
-          { delayMs, remoteResourceId: result.externalPostId, preparationState: result.providerState }
+          publicationId,
+          currentOperationId!,
+          currentSourcePhase,
+          'PROCESSING_REMOTE',
+          expectedDispatchVersion,
+          {
+            delayMs,
+            remoteResourceId: result.externalPostId,
+            preparationState: result.providerState,
+          },
         );
         if (transitionRes.type === ExecutionTransitionResultType.SUCCESS) {
-          this.logger.log({ msg: 'publication.processing_remote', publicationId, delayMs });
+          this.logger.info({
+            msg: 'publication.processing_remote',
+            delayMs,
+            ...jobMeta,
+          });
           return;
         } else {
           // If we couldn't transition to PROCESSING_REMOTE, it might be an illegal transition
@@ -500,36 +736,111 @@ export class PublishingProcessor extends WorkerHost {
           // Wait, INITIATED cannot go directly to PROCESSING_REMOTE. It must go to CONTAINER_CREATED.
           // For generic handling, let's allow INITIATED -> PROCESSING_REMOTE in ALLOWED_TRANSITIONS,
           // or we simulate CONTAINER_CREATED first.
-          this.logger.error({ msg: 'publication.transition_processing_remote_failed', reason: transitionRes.reason });
-          await this.handleUnknown(publicationId, attempt.id, 'TRANSITION_FAILED');
-          return;
-        }
-      } else {
-        try { await this.handleSuccess(publicationId, attempt.id, result, executionRepo, { currentOperationId: currentOperationId!, currentSourcePhase: currentSourcePhase as any, expectedDispatchVersion }); } catch(e: any) { this.logger.error({ msg: 'publication.transition_completed_failed', publicationId, reason: e.message }); await this.handleUnknown(publicationId, attempt.id, 'TRANSITION_FAILED'); }
-      }
-    } else {
-      const isPublishRequested = (currentSourcePhase as string) === 'PUBLISH_REQUESTED';
-      const isUnknownPublish = isPublishRequested && (result.failureCategory === 'UNKNOWN_RESULT' || result.failureCategory === 'TRANSIENT');
-      const isAmbiguousContainer = result.failureCode === 'AMBIGUOUS_PUBLISHED_CONTAINER';
-
-      if (result.failureCategory === 'UNKNOWN_RESULT' || isUnknownPublish || isAmbiguousContainer) {
-          if (!isPublishRequested && !isAmbiguousContainer) {
-            throw new Error('Transport failure during polling: ' + (result.message || 'Unknown error'));
-          }
+          this.logger.error({
+            msg: 'publication.transition_processing_remote_failed',
+            reason: transitionRes.reason,
+            ...jobMeta,
+          });
           await this.handleUnknown(
             publicationId,
             attempt.id,
-            result.failureCode || 'UNKNOWN',
+            'TRANSITION_FAILED',
+            undefined,
+            undefined,
+            undefined,
+            jobMeta,
+          );
+          return;
+        }
+      } else {
+        try {
+          await this.handleSuccess(
+            publicationId,
+            attempt.id,
             result,
             executionRepo,
             {
               currentOperationId: currentOperationId!,
               currentSourcePhase: currentSourcePhase as any,
-              expectedDispatchVersion
-            }
+              expectedDispatchVersion,
+            },
+            jobMeta,
           );
-        } else {
-        try { await this.handleFailure(publicationId, attempt.id, result.failureCategory || 'UNKNOWN', result.failureCode || 'UNKNOWN', result.message || 'Unknown error', result.retryAfterSeconds, result, executionRepo, { currentOperationId: currentOperationId!, currentSourcePhase: currentSourcePhase as any, expectedDispatchVersion }); } catch(e: any) { this.logger.error({ msg: 'publication.transition_failed_failed', publicationId, reason: e.message }); }
+        } catch (e: any) {
+          this.logger.error({
+            msg: 'publication.transition_completed_failed',
+            reason: e.message,
+            ...jobMeta,
+          });
+          await this.handleUnknown(
+            publicationId,
+            attempt.id,
+            'TRANSITION_FAILED',
+            undefined,
+            undefined,
+            undefined,
+            jobMeta,
+          );
+        }
+      }
+    } else {
+      const isPublishRequested =
+        (currentSourcePhase as string) === 'PUBLISH_REQUESTED';
+      const isUnknownPublish =
+        isPublishRequested &&
+        (result.failureCategory === 'UNKNOWN_RESULT' ||
+          result.failureCategory === 'TRANSIENT');
+      const isAmbiguousContainer =
+        result.failureCode === 'AMBIGUOUS_PUBLISHED_CONTAINER';
+
+      if (
+        result.failureCategory === 'UNKNOWN_RESULT' ||
+        isUnknownPublish ||
+        isAmbiguousContainer
+      ) {
+        if (!isPublishRequested && !isAmbiguousContainer) {
+          throw new Error(
+            'Transport failure during polling: ' +
+              (result.message || 'Unknown error'),
+          );
+        }
+        await this.handleUnknown(
+          publicationId,
+          attempt.id,
+          result.failureCode || 'UNKNOWN',
+          result,
+          executionRepo,
+          {
+            currentOperationId: currentOperationId!,
+            currentSourcePhase: currentSourcePhase as any,
+            expectedDispatchVersion,
+          },
+        );
+      } else {
+        try {
+          await this.handleFailure(
+            publicationId,
+            attempt.id,
+            result.failureCategory || 'UNKNOWN',
+            result.failureCode || 'UNKNOWN',
+            result.message || 'Unknown error',
+            result.retryAfterSeconds,
+            result,
+            executionRepo,
+            {
+              currentOperationId: currentOperationId!,
+              currentSourcePhase: currentSourcePhase as any,
+              expectedDispatchVersion,
+            },
+            jobMeta,
+          );
+        } catch (e: any) {
+          this.logger.error({
+            msg: 'publication.transition_failed_failed',
+            reason: e.message,
+            ...jobMeta,
+          });
+        }
       }
     }
   }
@@ -554,7 +865,33 @@ export class PublishingProcessor extends WorkerHost {
     };
   }
 
-  private async handleSuccess(publicationId: string, attemptId: string, result: any, executionRepo?: any, transitionData?: { currentOperationId: string, currentSourcePhase: any, expectedDispatchVersion: number }) { await this.prisma.$transaction(async (tx) => { if (executionRepo && transitionData) { const tr = await executionRepo.transitionOperation(publicationId, transitionData.currentOperationId, transitionData.currentSourcePhase, 'COMPLETED', transitionData.expectedDispatchVersion, { finalRemoteId: result.externalPostId }, tx); if (tr.type !== 'SUCCESS') { throw new Error('Failed to transition to COMPLETED: ' + tr.reason); } }
+  private async handleSuccess(
+    publicationId: string,
+    attemptId: string,
+    result: any,
+    executionRepo?: any,
+    transitionData?: {
+      currentOperationId: string;
+      currentSourcePhase: any;
+      expectedDispatchVersion: number;
+    },
+    jobMeta?: Record<string, any>,
+  ) {
+    await this.prisma.$transaction(async (tx) => {
+      if (executionRepo && transitionData) {
+        const tr = await executionRepo.transitionOperation(
+          publicationId,
+          transitionData.currentOperationId,
+          transitionData.currentSourcePhase,
+          'COMPLETED',
+          transitionData.expectedDispatchVersion,
+          { finalRemoteId: result.externalPostId },
+          tx,
+        );
+        if (tr.type !== 'SUCCESS') {
+          throw new Error('Failed to transition to COMPLETED: ' + tr.reason);
+        }
+      }
       await tx.postPlatformVariant.update({
         where: { id: publicationId },
         data: {
@@ -574,7 +911,7 @@ export class PublishingProcessor extends WorkerHost {
       });
     });
 
-    this.logger.log({ msg: 'publication.succeeded', publicationId });
+    this.logger.info({ msg: 'publication.succeeded', ...jobMeta });
     const variant = await this.prisma.postPlatformVariant.findUnique({
       where: { id: publicationId },
     });
@@ -586,7 +923,37 @@ export class PublishingProcessor extends WorkerHost {
       );
   }
 
-  private async handleFailure(publicationId: string, attemptId: string, category: any, code: string, message: string, retryAfter?: number, rawResult?: any, executionRepo?: any, transitionData?: { currentOperationId: string, currentSourcePhase: any, expectedDispatchVersion: number }) { await this.prisma.$transaction(async (tx) => { if (executionRepo && transitionData) { const tr = await executionRepo.transitionOperation(publicationId, transitionData.currentOperationId, transitionData.currentSourcePhase, 'FAILED', transitionData.expectedDispatchVersion, undefined, tx); if (tr.type !== 'SUCCESS') { throw new Error('Failed to transition to FAILED: ' + tr.reason); } }
+  private async handleFailure(
+    publicationId: string,
+    attemptId: string,
+    category: any,
+    code: string,
+    message: string,
+    retryAfter?: number,
+    rawResult?: any,
+    executionRepo?: any,
+    transitionData?: {
+      currentOperationId: string;
+      currentSourcePhase: any;
+      expectedDispatchVersion: number;
+    },
+    jobMeta?: Record<string, any>,
+  ) {
+    await this.prisma.$transaction(async (tx) => {
+      if (executionRepo && transitionData) {
+        const tr = await executionRepo.transitionOperation(
+          publicationId,
+          transitionData.currentOperationId,
+          transitionData.currentSourcePhase,
+          'FAILED',
+          transitionData.expectedDispatchVersion,
+          undefined,
+          tx,
+        );
+        if (tr.type !== 'SUCCESS') {
+          throw new Error('Failed to transition to FAILED: ' + tr.reason);
+        }
+      }
       await tx.postPlatformVariant.update({
         where: { id: publicationId },
         data: {
@@ -609,9 +976,9 @@ export class PublishingProcessor extends WorkerHost {
 
     this.logger.warn({
       msg: 'publication.failed',
-      publicationId,
       category,
       code,
+      ...(jobMeta || { publicationId }),
     });
     const variant = await this.prisma.postPlatformVariant.findUnique({
       where: { id: publicationId },
@@ -637,7 +1004,12 @@ export class PublishingProcessor extends WorkerHost {
     code: string,
     rawResult?: any,
     executionRepo?: any,
-    ambiguousTransitionData?: { currentOperationId: string, currentSourcePhase: any, expectedDispatchVersion: number }
+    ambiguousTransitionData?: {
+      currentOperationId: string;
+      currentSourcePhase: any;
+      expectedDispatchVersion: number;
+    },
+    jobMeta?: Record<string, any>,
   ) {
     await this.prisma.$transaction(async (tx) => {
       if (executionRepo && ambiguousTransitionData) {
@@ -648,7 +1020,7 @@ export class PublishingProcessor extends WorkerHost {
           'AMBIGUOUS',
           ambiguousTransitionData.expectedDispatchVersion,
           undefined,
-          tx
+          tx,
         );
         if (tr.type !== 'SUCCESS') {
           throw new Error('Failed to transition to AMBIGUOUS: ' + tr.reason);
@@ -674,7 +1046,7 @@ export class PublishingProcessor extends WorkerHost {
       });
     });
 
-    this.logger.warn({ msg: 'publication.unknown', publicationId, code });
+    this.logger.warn({ msg: 'publication.unknown', code, ...(jobMeta || { publicationId }) });
     const variant = await this.prisma.postPlatformVariant.findUnique({
       where: { id: publicationId },
     });

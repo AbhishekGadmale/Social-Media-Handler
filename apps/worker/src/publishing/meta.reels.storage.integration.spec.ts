@@ -10,6 +10,7 @@ import {
 import { Job } from 'bullmq';
 import { ExecutionValidator } from './execution.validator';
 import { TokenService } from './token.service';
+import { getLoggerToken } from 'nestjs-pino';
 
 describe('Meta Reels Worker Integration', () => {
 
@@ -75,6 +76,17 @@ describe('Meta Reels Worker Integration', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         PublishingProcessor,
+        {
+          provide: getLoggerToken(PublishingProcessor.name),
+          useValue: {
+            info: jest.fn(),
+            error: jest.fn(),
+            warn: jest.fn(),
+            debug: jest.fn(),
+            setContext: jest.fn(),
+          },
+        },
+
         { provide: PrismaClient, useValue: mockPrisma },
         {
           provide: ProviderRegistry,

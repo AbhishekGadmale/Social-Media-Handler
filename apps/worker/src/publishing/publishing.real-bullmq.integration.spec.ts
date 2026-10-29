@@ -10,6 +10,8 @@ import { ProviderRegistry } from '@agency-os/providers';
 import { ExecutionMetadataRepository } from '@agency-os/database';
 import { PublishingDispatcher } from './publishing.dispatcher';
 import { generateId } from '@agency-os/database';
+import { LoggerModule } from 'nestjs-pino';
+import { loggerConfig } from '../logger.config';
 
 describe('REAL REDIS/BULLMQ: Publishing Architecture Continuation', () => {
   const _createdVariants: string[] = [];
@@ -44,6 +46,7 @@ describe('REAL REDIS/BULLMQ: Publishing Architecture Continuation', () => {
   beforeAll(async () => {
     module = await Test.createTestingModule({
       imports: [
+        LoggerModule.forRoot(loggerConfig),
         BullModule.forRoot({
           connection: { host: 'localhost', port: 6379 },
         }),

@@ -1,13 +1,15 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { PublishingModule } from './publishing.module';
 import { ProviderRegistry } from '@agency-os/providers';
+import { LoggerModule } from 'nestjs-pino';
+import { loggerConfig } from '../logger.config';
 
 describe('PublishingModule', () => {
   let module: TestingModule;
 
   beforeEach(async () => {
     module = await Test.createTestingModule({
-      imports: [PublishingModule],
+      imports: [LoggerModule.forRoot(loggerConfig), PublishingModule],
     }).compile();
   });
 

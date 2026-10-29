@@ -11,6 +11,7 @@ import { PermissionGuard } from '../auth/guards/permission.guard';
 import { SocialProvider } from '@agency-os/database';
 
 import { AuditService } from '../core/audit.service';
+import { getLoggerToken } from 'nestjs-pino';
 
 describe('OAuthController', () => {
   let controller: OAuthController;
@@ -40,6 +41,16 @@ describe('OAuthController', () => {
         {
           provide: AuditService,
           useValue: mockAuditService,
+        },
+        {
+          provide: getLoggerToken(OAuthController.name),
+          useValue: {
+            info: vi.fn(),
+            warn: vi.fn(),
+            error: vi.fn(),
+            debug: vi.fn(),
+            setContext: vi.fn(),
+          },
         },
       ],
     })
@@ -215,6 +226,7 @@ describe('OAuthController', () => {
         'valid-state',
         'auth-code',
         'http://localhost:3001/api/v1/oauth/youtube/callback',
+        'req-1',
       );
       expect(mockRes.redirect).toHaveBeenCalledWith(
         `http://localhost:3000/${workspaceId}/accounts`,
@@ -260,6 +272,7 @@ describe('OAuthController', () => {
         'valid-state',
         'auth-code',
         'https://api.agency-os.com/api/v1/oauth/youtube/callback',
+        'req-1',
       );
     });
 
@@ -284,6 +297,7 @@ describe('OAuthController', () => {
         'valid-state',
         'auth-code',
         'https://api.agency-os.com/api/v1/oauth/youtube/callback',
+        'req-1',
       );
     });
 
@@ -307,6 +321,7 @@ describe('OAuthController', () => {
         'valid-state',
         'auth-code',
         'https://api.agency-os.com/api/v1/oauth/linkedin/callback',
+        'req-1',
       );
 
       await controller.callbackProvider(
@@ -321,6 +336,7 @@ describe('OAuthController', () => {
         'valid-state',
         'auth-code',
         'https://api.agency-os.com/api/v1/oauth/facebook/callback',
+        'req-1',
       );
 
       await controller.callbackProvider(
@@ -335,6 +351,7 @@ describe('OAuthController', () => {
         'valid-state',
         'auth-code',
         'https://api.agency-os.com/api/v1/oauth/meta/callback',
+        'req-1',
       );
     });
 

@@ -3,8 +3,9 @@ import {
   Inject,
   ForbiddenException,
   BadRequestException,
-  Logger,
 } from '@nestjs/common';
+import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
+import { SyncJobData } from '@agency-os/shared';
 import Redis from 'ioredis';
 import {
   SocialAccountRepository,
@@ -23,12 +24,12 @@ import { OAuthCallbackResult, DiscoverySession } from './oauth-discovery.types';
 
 @Injectable()
 export class OAuthService {
-  private readonly logger = new Logger(OAuthService.name);
-
   constructor(
     @Inject('REDIS_CLIENT') private readonly redis: Redis,
     private readonly socialAccountRepo: SocialAccountRepository,
     @InjectQueue('sync') private readonly syncQueue: Queue,
+    @InjectPinoLogger(OAuthService.name)
+    private readonly logger: PinoLogger,
   ) {}
 
   private validateProvider(providerName: string): SocialProvider {
@@ -131,6 +132,7 @@ export class OAuthService {
     workspaceId: string,
     userId: string,
     profileIds: string[],
+    correlationId?: string,
   ): Promise<Array<{ accountId: string; isNew: boolean; provider: string }>> {
     const key = `oauth:discovery:${discoveryId}`;
     const dataStr = await this.redis.get(key);
@@ -231,22 +233,25 @@ export class OAuthService {
       // Enqueue sync jobs AFTER successful transaction
       for (const res of results) {
         try {
-          await this.syncQueue.add(
-            'sync-account',
-            {
-              socialAccountId: res.account.id,
-              workspaceId,
-            },
-            {
-              attempts: 3,
-              backoff: { type: 'exponential', delay: 1000 },
-              jobId: `initial-sync-${res.account.id}-${Date.now()}`,
-            },
-          );
+          const syncPayload: SyncJobData = {
+            socialAccountId: res.account.id,
+            workspaceId,
+            ...(correlationId ? { correlationId } : {}),
+          };
+          await this.syncQueue.add('sync-account', syncPayload, {
+            attempts: 3,
+            backoff: { type: 'exponential', delay: 1000 },
+            jobId: `initial-sync-${res.account.id}-${Date.now()}`,
+          });
         } catch (err) {
           this.logger.error(
-            `Failed to enqueue initial sync for account ${res.account.id}`,
-            err,
+            {
+              err,
+              socialAccountId: res.account.id,
+              workspaceId,
+              ...(correlationId ? { correlationId } : {}),
+            },
+            'Failed to enqueue initial sync for account',
           );
         }
       }
@@ -272,6 +277,7 @@ export class OAuthService {
     state: string,
     code: string,
     redirectUri: string,
+    correlationId?: string,
   ): Promise<OAuthCallbackResult> {
     const provider = providerRegistry.get(providerName.toLowerCase());
     if (!provider) {
@@ -381,24 +387,36 @@ export class OAuthService {
       );
 
     try {
-      await this.syncQueue.add(
-        'sync-account',
+      const syncPayload: SyncJobData = {
+        socialAccountId: account.id,
+        workspaceId,
+        ...(correlationId ? { correlationId } : {}),
+      };
+      await this.syncQueue.add('sync-account', syncPayload, {
+        attempts: 3,
+        backoff: { type: 'exponential', delay: 1000 },
+        jobId: `initial-sync-${account.id}-${Date.now()}`,
+      });
+      this.logger.info(
         {
           socialAccountId: account.id,
           workspaceId,
+          provider: validProviderEnum,
+          ...(correlationId ? { correlationId } : {}),
         },
-        {
-          attempts: 3,
-          backoff: { type: 'exponential', delay: 1000 },
-          jobId: `initial-sync-${account.id}-${Date.now()}`,
-        },
+        'Enqueued initial sync job for account',
       );
-      this.logger.log(`Enqueued initial sync job for account ${account.id}`);
     } catch (err) {
       // Do not fail the OAuth connection if the queue add fails
       this.logger.error(
-        `Failed to enqueue initial sync for account ${account.id}`,
-        err,
+        {
+          err,
+          socialAccountId: account.id,
+          workspaceId,
+          provider: validProviderEnum,
+          ...(correlationId ? { correlationId } : {}),
+        },
+        'Failed to enqueue initial sync for account',
       );
     }
 

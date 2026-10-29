@@ -1,79 +1,145 @@
 import { Params } from 'nestjs-pino';
-import { generateId } from '@agency-os/database';
+import pino from 'pino';
+import {
+  CORRELATION_ID_REGEX,
+  getOrCreateCorrelationId,
+  attachCorrelationIdToResponse,
+} from './correlation-id.utils';
+import { sanitizeRequestUrl } from './url-sanitizer.utils';
+
+export {
+  CORRELATION_ID_REGEX,
+  getOrCreateCorrelationId,
+  attachCorrelationIdToResponse,
+  sanitizeRequestUrl,
+};
+
+export const SENSITIVE_FIELDS = [
+  'password',
+  'accessToken',
+  'access_token',
+  'refreshToken',
+  'refresh_token',
+  'clientSecret',
+  'client_secret',
+  'tokenSecret',
+  'token_secret',
+  'encryptedTokens',
+  'encrypted_tokens',
+  'credentials',
+  'authorization',
+  'Authorization',
+  'cookie',
+  'Cookie',
+  'x-csrf-token',
+  'X-CSRF-Token',
+  'set-cookie',
+  'Set-Cookie',
+  'setCookie',
+  'csrfToken',
+  'csrf_token',
+];
+
+/**
+ * Scoped OAuth code/state redaction paths to avoid obscuring operational error codes
+ * (e.g. { code: 'TRANSITION_FAILED' }) while ensuring authorization codes/state tokens
+ * in query, body, and payload objects are strictly redacted.
+ */
+export const SCOPED_OAUTH_PATHS = [
+  'req.query.code',
+  'req.query.state',
+  'query.code',
+  'query.state',
+  'req.body.code',
+  'req.body.state',
+  'body.code',
+  'body.state',
+  'params.code',
+  'params.state',
+  'data.code',
+  'data.state',
+];
+
+export const API_REDACT_PATHS = [
+  ...SENSITIVE_FIELDS,
+  ...SENSITIVE_FIELDS.map((field) => `*.${field}`),
+  ...SENSITIVE_FIELDS.map((field) => `*.*.${field}`),
+  ...SENSITIVE_FIELDS.map((field) => `*.*.*.${field}`),
+  ...SENSITIVE_FIELDS.map((field) => `*.*.*.*.${field}`),
+  ...SENSITIVE_FIELDS.map((field) => `*.*.*.*.*.${field}`),
+  ...SCOPED_OAUTH_PATHS,
+  'req.headers.authorization',
+  'req.headers.Authorization',
+  'req.headers.cookie',
+  'req.headers.Cookie',
+  'req.headers["x-csrf-token"]',
+  'req.headers["X-CSRF-Token"]',
+  'req.headers["set-cookie"]',
+  'req.headers["Set-Cookie"]',
+  'res.headers["set-cookie"]',
+  'res.headers["Set-Cookie"]',
+  'res.headers.set-cookie',
+  'req.query.session',
+  'req.body.password',
+  'req.body.accessToken',
+  'req.body.access_token',
+  'req.body.refreshToken',
+  'req.body.refresh_token',
+  'req.body.clientSecret',
+  'req.body.client_secret',
+  'req.body.encryptedTokens',
+  'req.body.credentials',
+];
+
+export function getApiLogLevel(): string {
+  if (process.env.LOG_LEVEL) {
+    return process.env.LOG_LEVEL.toLowerCase();
+  }
+  return process.env.NODE_ENV === 'production' ? 'info' : 'debug';
+}
+
+export function validateAndAssignReqId(req: any, res?: any): string {
+  const id = getOrCreateCorrelationId(req);
+  attachCorrelationIdToResponse(res, id);
+  return id;
+}
 
 export const loggerConfig: Params = {
   pinoHttp: {
-    // We can define redaction paths. pino-http automatically logs req and res.
+    level: getApiLogLevel(),
+    timestamp: pino.stdTimeFunctions.isoTime,
+    formatters: {
+      level: (label: string) => ({ level: label }),
+    },
     redact: {
-      paths: [
-        'req.headers.authorization',
-        'req.headers.cookie',
-        'req.headers.x-csrf-token',
-        'res.headers.set-cookie',
-        'req.body.password',
-        'req.query.code', // OAuth authorization codes
-        'req.query.state', // OAuth state values
-        'req.query.session',
-        'req.query.csrfToken',
-        // Additional safe-guards for potential body leaks
-        'req.body.accessToken',
-        'req.body.refreshToken',
-        'req.body.encryptedTokens',
-        'req.body.code',
-        'req.body.state',
-        'req.body.credentials',
-      ],
+      paths: API_REDACT_PATHS,
       censor: '[REDACTED]',
     },
-    genReqId: (req) => {
-      // Reuse existing x-request-id if safe, else generate a new safe ID
-      return req.headers['x-request-id'] || generateId();
-    },
-    customProps: (req, res) => {
-      return {
-        context: 'HTTP',
-      };
-    },
-    // We can explicitly prevent the full URL query string from being logged if it contains secrets.
-    // pino-http logs `req.url` which includes the query string.
-    // To sanitize `req.url`, we can override the serializers.
+    genReqId: (req, res) => validateAndAssignReqId(req, res),
+    customProps: () => ({
+      context: 'HTTP',
+    }),
     serializers: {
       req: (req: any) => {
-        // req is a pino request object
         const urlStr = (req.url as string) || '';
         const headers = { ...req.headers };
-        if (headers['x-csrf-token']) {
-          headers['x-csrf-token'] = '[REDACTED]';
-        }
+        if (headers['x-csrf-token']) headers['x-csrf-token'] = '[REDACTED]';
+        if (headers['X-CSRF-Token']) headers['X-CSRF-Token'] = '[REDACTED]';
+        if (headers['authorization']) headers['authorization'] = '[REDACTED]';
+        if (headers['Authorization']) headers['Authorization'] = '[REDACTED]';
+        if (headers['cookie']) headers['cookie'] = '[REDACTED]';
+        if (headers['Cookie']) headers['Cookie'] = '[REDACTED]';
 
-        const sanitizedReq = {
+        return {
           id: req.id,
           method: req.method,
-          url: urlStr, // default url
-          headers: headers,
+          url: sanitizeRequestUrl(urlStr),
+          headers,
           remoteAddress: req.remoteAddress,
           remotePort: req.remotePort,
         };
-
-        if (urlStr) {
-          try {
-            // Only strip the query string on OAuth callback endpoints where code/state are in the URL.
-            // Alternatively, strip query string entirely or parse and redact.
-            // Node.js URL API requires a base to parse relative URLs.
-            const parsedUrl = new URL(urlStr, 'http://localhost');
-            if (urlStr.includes('/oauth/') && urlStr.includes('/callback')) {
-              parsedUrl.searchParams.delete('code');
-              parsedUrl.searchParams.delete('state');
-              sanitizedReq.url = parsedUrl.pathname + parsedUrl.search;
-            }
-          } catch (e) {
-            // If parsing fails, be safe and just return the path (before the ?)
-            sanitizedReq.url = urlStr.split('?')[0];
-          }
-        }
-        return sanitizedReq;
       },
-      res: (res) => ({
+      res: (res: any) => ({
         statusCode: res.statusCode,
         headers: res.headers,
       }),

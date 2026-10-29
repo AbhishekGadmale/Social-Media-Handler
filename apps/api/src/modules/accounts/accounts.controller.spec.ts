@@ -76,6 +76,7 @@ describe('AccountsController', () => {
       {
         socialAccountId: 'acc-1',
         workspaceId: 'ws-1',
+        correlationId: 'req-1',
       },
       expect.any(Object),
     );

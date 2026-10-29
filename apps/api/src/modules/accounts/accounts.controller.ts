@@ -19,7 +19,9 @@ import { Throttle } from '@nestjs/throttler';
 import { RateLimitPolicies } from '../core/rate-limit.policies';
 
 import { AuditAction } from '@agency-os/database';
+import { SyncJobData } from '@agency-os/shared';
 import { AuditService } from '../core/audit.service';
+import { extractCorrelationId } from '../core/correlation-id.utils';
 import type { Request } from 'express';
 
 @Controller('v1/workspaces/:workspaceId/accounts')
@@ -50,17 +52,18 @@ export class AccountsController {
   ) {
     await this.accountsService.getWorkspaceAccount(workspaceId, accountId);
 
-    const job = await this.syncQueue.add(
-      'sync-account',
-      {
-        socialAccountId: accountId,
-        workspaceId,
-      },
-      {
-        attempts: 3,
-        backoff: { type: 'exponential', delay: 1000 },
-      },
-    );
+    const correlationId = extractCorrelationId(req);
+
+    const payload: SyncJobData = {
+      socialAccountId: accountId,
+      workspaceId,
+      ...(correlationId ? { correlationId } : {}),
+    };
+
+    const job = await this.syncQueue.add('sync-account', payload, {
+      attempts: 3,
+      backoff: { type: 'exponential', delay: 1000 },
+    });
 
     const userId = (req as any).user?.id;
     this.auditService.logActionBestEffort({

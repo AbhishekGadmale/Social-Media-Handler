@@ -9,6 +9,7 @@ import * as _cookieParser from 'cookie-parser';
 const cookieParser = _cookieParser.default || _cookieParser;
 import { PrismaClient, generateId } from '@agency-os/database';
 import { AllExceptionsFilter } from '../src/filters/all-exceptions.filter';
+import { PinoLogger } from 'nestjs-pino';
 import * as argon2 from '@node-rs/argon2';
 import Redis from 'ioredis';
 
@@ -31,7 +32,7 @@ describe('AuthController (e2e)', () => {
     app = moduleFixture.createNestApplication();
     app.setGlobalPrefix('api');
     app.use(cookieParser());
-    app.useGlobalFilters(new AllExceptionsFilter());
+    app.useGlobalFilters(new AllExceptionsFilter(await app.resolve(PinoLogger)));
     await app.init();
 
     prisma = app.get<PrismaClient>(PrismaClient);

@@ -1,5 +1,1 @@
-export interface PublishJobData {
-  workspaceId: string;
-  publicationId: string;
-  dispatchVersion: number;
-}
+export type { PublishJobData, PublishDeleteJobData } from '@agency-os/shared';
