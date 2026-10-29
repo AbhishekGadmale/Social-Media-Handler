@@ -13,25 +13,35 @@ import {
   ProviderApiError,
 } from '@agency-os/providers';
 import { invokeCapability } from '@agency-os/providers';
-import { Logger, OnModuleInit } from '@nestjs/common';
+import { OnModuleInit, Optional } from '@nestjs/common';
+import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 
 import { SyncService } from './sync.service';
 import { TokenService, AuthRequiredError } from '../publishing/token.service';
+import { SyncJobData } from './sync.types';
 
 @Processor('sync')
 export class SyncProcessor extends WorkerHost implements OnModuleInit {
-  private readonly logger = new Logger(SyncProcessor.name);
+  private readonly logger: PinoLogger;
 
   constructor(
     private readonly prisma: PrismaClient,
     private readonly syncService: SyncService,
     private readonly tokenService: TokenService,
+    @Optional()
+    @InjectPinoLogger(SyncProcessor.name)
+    logger?: PinoLogger,
   ) {
     super();
+    this.logger = logger ?? new PinoLogger({});
+    if (!logger) {
+      this.logger.setContext(SyncProcessor.name);
+    }
   }
 
   onModuleInit() {
-    this.logger.log(
+    this.logger.info(
+      { queue: this.worker?.name || 'sync', action: 'worker.started' },
       `Worker successfully started and listening on queue: ${this.worker?.name || 'sync'}`,
     );
   }
@@ -42,13 +52,18 @@ export class SyncProcessor extends WorkerHost implements OnModuleInit {
       return;
     }
 
-    const { socialAccountId, workspaceId } = job.data;
+    const { socialAccountId, workspaceId, correlationId } = job.data || {};
 
-    this.logger.log(
+    const jobMeta = {
+      jobId: job.id,
+      socialAccountId,
+      workspaceId,
+      ...(correlationId ? { correlationId } : {}),
+    };
+
+    this.logger.info(
       {
-        jobId: job.id,
-        socialAccountId,
-        workspaceId,
+        ...jobMeta,
         action: 'sync_job_started',
       },
       'Processing sync job',
@@ -83,10 +98,9 @@ export class SyncProcessor extends WorkerHost implements OnModuleInit {
       }
 
       if (account.status !== SocialAccountStatus.ACTIVE) {
-        this.logger.log(
+        this.logger.info(
           {
-            jobId: job.id,
-            socialAccountId,
+            ...jobMeta,
             action: 'sync_skipped',
             reason: 'not_active',
           },
@@ -103,15 +117,14 @@ export class SyncProcessor extends WorkerHost implements OnModuleInit {
       let credentials;
       try {
         credentials = await this.tokenService.getExecutionCredentials(
-          socialAccountId as string,
-          workspaceId as string | undefined,
+          socialAccountId,
+          workspaceId,
         );
       } catch (error: any) {
         if (error instanceof AuthRequiredError) {
-          this.logger.log(
+          this.logger.info(
             {
-              jobId: job.id,
-              socialAccountId,
+              ...jobMeta,
               action: 'sync_skipped',
               reason: 'expired_token',
             },
@@ -136,8 +149,12 @@ export class SyncProcessor extends WorkerHost implements OnModuleInit {
         name: account.name || '',
       };
 
-      this.logger.log(
-        { jobId: job.id, provider: account.provider, action: 'fetch_metrics' },
+      this.logger.info(
+        {
+          ...jobMeta,
+          provider: account.provider,
+          action: 'fetch_metrics',
+        },
         'token decrypted, calling provider.getAccountMetrics',
       );
       const metrics = await invokeCapability(
@@ -151,8 +168,11 @@ export class SyncProcessor extends WorkerHost implements OnModuleInit {
       const today = new Date();
       today.setUTCHours(0, 0, 0, 0);
 
-      this.logger.log(
-        { jobId: job.id, action: 'upsert_metrics' },
+      this.logger.info(
+        {
+          ...jobMeta,
+          action: 'upsert_metrics',
+        },
         'metrics received, upserting AccountMetricDaily',
       );
       await this.prisma.accountMetricDaily.upsert({
@@ -179,16 +199,19 @@ export class SyncProcessor extends WorkerHost implements OnModuleInit {
         followers: metrics.followersCount,
       });
 
-      this.logger.log(
-        { jobId: job.id, socialAccountId, action: 'sync_completed' },
+      this.logger.info(
+        {
+          ...jobMeta,
+          action: 'sync_completed',
+        },
         'Job completed successfully',
       );
     } catch (error: any) {
       if (error instanceof ProviderCapabilityError) {
         // skipped / no-op
-        this.logger.log(
+        this.logger.info(
           {
-            jobId: job.id,
+            ...jobMeta,
             action: 'sync_skipped',
             reason: 'capability_unsupported',
             error: error.message,
@@ -203,7 +226,11 @@ export class SyncProcessor extends WorkerHost implements OnModuleInit {
       }
 
       this.logger.error(
-        { err: error, jobId: job.id, socialAccountId, action: 'sync_failed' },
+        {
+          ...jobMeta,
+          err: error,
+          action: 'sync_failed',
+        },
         'Error processing job',
       );
 
@@ -219,7 +246,7 @@ export class SyncProcessor extends WorkerHost implements OnModuleInit {
       if (error instanceof ProviderRateLimitError) {
         this.logger.warn(
           {
-            jobId: job.id,
+            ...jobMeta,
             retryAfter: error.retryAfter,
             action: 'rate_limit_delay',
           },
@@ -237,8 +264,11 @@ export class SyncProcessor extends WorkerHost implements OnModuleInit {
 
       if (error instanceof ProviderApiError) {
         if (error.statusCode === 401) {
-          this.logger.log(
-            { jobId: job.id, socialAccountId, action: 'sync_failed_401' },
+          this.logger.info(
+            {
+              ...jobMeta,
+              action: 'sync_failed_401',
+            },
             '401 Unauthorized, marking account as REAUTH_REQUIRED',
           );
           await this.prisma.socialAccount.update({

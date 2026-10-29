@@ -2,16 +2,17 @@ import {
   Injectable,
   OnModuleInit,
   OnModuleDestroy,
-  Logger,
   Inject,
+  Optional,
 } from '@nestjs/common';
+import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { PrismaClient, MediaAssetStatus } from '@agency-os/database';
 import type { IObjectStorage } from '@agency-os/providers';
 import { generateId } from '@agency-os/database';
 
 @Injectable()
 export class MediaRecoveryService implements OnModuleInit, OnModuleDestroy {
-  private readonly logger = new Logger(MediaRecoveryService.name);
+  private readonly logger: PinoLogger;
   private intervalId?: NodeJS.Timeout;
   private readonly SCAN_INTERVAL_MS = 60000;
   private readonly MEDIA_PROCESSING_STALE_MS = 5 * 60 * 1000;
@@ -20,13 +21,22 @@ export class MediaRecoveryService implements OnModuleInit, OnModuleDestroy {
   constructor(
     private readonly prisma: PrismaClient,
     @Inject('IObjectStorage') private readonly storage: IObjectStorage,
-  ) {}
+    @Optional()
+    @InjectPinoLogger(MediaRecoveryService.name)
+    logger?: PinoLogger,
+  ) {
+    this.logger = logger ?? new PinoLogger({});
+    if (!logger) {
+      this.logger.setContext(MediaRecoveryService.name);
+    }
+  }
 
   onModuleInit() {
     this.intervalId = setInterval(() => {
       void this.scan();
     }, this.SCAN_INTERVAL_MS);
-    this.logger.log(
+    this.logger.info(
+      { intervalMs: this.SCAN_INTERVAL_MS, action: 'media_recovery.started' },
       `Media recovery service started with interval ${this.SCAN_INTERVAL_MS}ms`,
     );
   }
@@ -49,7 +59,10 @@ export class MediaRecoveryService implements OnModuleInit, OnModuleDestroy {
     try {
       await this.recoverStaleProcessing();
     } catch (error) {
-      this.logger.error('Error in media recovery scan loop', error);
+      this.logger.error(
+        { err: error, action: 'media_recovery.scan_failed' },
+        'Error in media recovery scan loop',
+      );
     }
   }
 
@@ -67,7 +80,14 @@ export class MediaRecoveryService implements OnModuleInit, OnModuleDestroy {
     });
 
     for (const asset of staleAssets) {
-      this.logger.log(`Recovering stale processing media: ${asset.id}`);
+      this.logger.info(
+        {
+          assetId: asset.id,
+          workspaceId: asset.workspaceId,
+          action: 'media_recovery.recovering',
+        },
+        'Recovering stale processing media',
+      );
 
       const stagingKey = this.generateStagingKey(asset.workspaceId, asset.id);
       const finalKey = this.generateFinalKey(asset.workspaceId, asset.id);
@@ -88,7 +108,14 @@ export class MediaRecoveryService implements OnModuleInit, OnModuleDestroy {
             });
 
             if (claim.count > 0) {
-              this.logger.log(`Recovered ${asset.id} to READY (final exists)`);
+              this.logger.info(
+                {
+                  assetId: asset.id,
+                  workspaceId: asset.workspaceId,
+                  action: 'media_recovery.recovered_ready_final',
+                },
+                'Recovered media asset to READY (final exists)',
+              );
               this.storage.deleteObject(stagingKey).catch(() => {});
             }
           } else {
@@ -102,8 +129,13 @@ export class MediaRecoveryService implements OnModuleInit, OnModuleDestroy {
               data: { status: MediaAssetStatus.FAILED },
             });
             if (claim.count > 0)
-              this.logger.log(
-                `Recovered ${asset.id} to FAILED (size mismatch)`,
+              this.logger.info(
+                {
+                  assetId: asset.id,
+                  workspaceId: asset.workspaceId,
+                  action: 'media_recovery.recovered_failed_size',
+                },
+                'Recovered media asset to FAILED (size mismatch)',
               );
           }
         } else {
@@ -131,8 +163,13 @@ export class MediaRecoveryService implements OnModuleInit, OnModuleDestroy {
                 });
 
                 if (claim.count > 0) {
-                  this.logger.log(
-                    `Recovered ${asset.id} to READY (copied from staging)`,
+                  this.logger.info(
+                    {
+                      assetId: asset.id,
+                      workspaceId: asset.workspaceId,
+                      action: 'media_recovery.recovered_ready_copied',
+                    },
+                    'Recovered media asset to READY (copied from staging)',
                   );
                   this.storage.deleteObject(stagingKey).catch(() => {});
                 }
@@ -147,9 +184,15 @@ export class MediaRecoveryService implements OnModuleInit, OnModuleDestroy {
             await this.failAsset(asset, 'MEDIA_RECOVERY_OBJECT_MISSING');
           }
         }
-      } catch (error) {
+      } catch (error: any) {
         this.logger.error(
-          `Error recovering media ${asset.id}: ${error.message}`,
+          {
+            assetId: asset.id,
+            workspaceId: asset.workspaceId,
+            err: error,
+            action: 'media_recovery.error',
+          },
+          'Error recovering media',
         );
         await this.failAsset(asset, 'MEDIA_RECOVERY_ERROR');
       }
@@ -166,7 +209,15 @@ export class MediaRecoveryService implements OnModuleInit, OnModuleDestroy {
       data: { status: MediaAssetStatus.FAILED },
     });
     if (claim.count > 0) {
-      this.logger.log(`Recovered ${asset.id} to FAILED: ${code}`);
+      this.logger.info(
+        {
+          assetId: asset.id,
+          workspaceId: asset.workspaceId,
+          code,
+          action: 'media_recovery.asset_failed',
+        },
+        'Recovered media asset to FAILED',
+      );
     }
   }
 }

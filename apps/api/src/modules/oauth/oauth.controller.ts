@@ -10,9 +10,10 @@ import {
   ForbiddenException,
   NotFoundException,
   ParseUUIDPipe,
-  Logger,
   Body,
+  Optional,
 } from '@nestjs/common';
+import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { ParseSocialProviderPipe } from './pipes/parse-social-provider.pipe';
 import { OAuthService } from './oauth.service';
 import { AuthGuard } from '../auth/guards/auth.guard';
@@ -34,12 +35,20 @@ import { getPublicApiUrl } from '../../config/public-url';
 
 @Controller()
 export class OAuthController {
-  private readonly logger = new Logger(OAuthController.name);
+  private readonly logger: PinoLogger;
 
   constructor(
     private readonly oauthService: OAuthService,
     private readonly auditService: AuditService,
-  ) {}
+    @Optional()
+    @InjectPinoLogger(OAuthController.name)
+    logger?: PinoLogger,
+  ) {
+    this.logger = logger ?? new PinoLogger({});
+    if (!logger) {
+      this.logger.setContext(OAuthController.name);
+    }
+  }
 
   @Throttle({ default: RateLimitPolicies.expensive })
   @Post('v1/workspaces/:workspaceId/oauth/:provider/connect')
@@ -141,6 +150,7 @@ export class OAuthController {
         state,
         code,
         redirectUri,
+        requestId,
       );
 
       if (result.requiresSelection) {
@@ -167,13 +177,17 @@ export class OAuthController {
       const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
       return res.redirect(`${frontendUrl}/${workspaceId}/accounts`);
     } catch (err: any) {
-      this.logger.error('OAuth connection failed', {
-        event: 'oauth.connection_failed',
-        provider,
-        errorClass: err?.name,
-        errorCode: err?.statusCode || err?.code,
-        errorMessage: err?.message,
-      });
+      this.logger.error(
+        {
+          event: 'oauth.connection_failed',
+          provider,
+          errorClass: err?.name,
+          errorCode: err?.statusCode || err?.code,
+          errorMessage: err?.message,
+          requestId,
+        },
+        'OAuth connection failed',
+      );
       this.auditService.logActionBestEffort({
         action: AuditAction.OAUTH_CONNECTION_FAILED,
         actorId: userId,
@@ -231,6 +245,8 @@ export class OAuthController {
     @Req() req: Request,
   ) {
     const userId = req.user!.id;
+    const requestId =
+      (req as any).id || (req.headers['x-request-id'] as string) || undefined;
     const { profileIds } = dto;
 
     const results = await this.oauthService.processDiscoverySelection(
@@ -238,6 +254,7 @@ export class OAuthController {
       workspaceId,
       userId,
       profileIds,
+      requestId,
     );
 
     for (const res of results) {

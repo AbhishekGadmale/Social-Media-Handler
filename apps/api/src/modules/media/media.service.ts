@@ -5,8 +5,9 @@ import {
   BadRequestException,
   ForbiddenException,
   InternalServerErrorException,
-  Logger,
+  Optional,
 } from '@nestjs/common';
+import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import type { IObjectStorage } from '@agency-os/providers';
 import {
   PrismaClient,
@@ -24,7 +25,7 @@ export interface InitiateUploadDto {
 
 @Injectable()
 export class MediaService {
-  private readonly logger = new Logger(MediaService.name);
+  private readonly logger: PinoLogger;
   private readonly maxUploadBytes: number = parseInt(
     process.env.MEDIA_MAX_UPLOAD_BYTES || '524288000',
     10,
@@ -38,7 +39,15 @@ export class MediaService {
     @Inject('IObjectStorage') private readonly storage: IObjectStorage,
     private readonly prisma: PrismaClient,
     private readonly audit: AuditService,
-  ) {}
+    @Optional()
+    @InjectPinoLogger(MediaService.name)
+    logger?: PinoLogger,
+  ) {
+    this.logger = logger ?? new PinoLogger({});
+    if (!logger) {
+      this.logger.setContext(MediaService.name);
+    }
+  }
 
   private generateStagingKey(workspaceId: string, mediaId: string): string {
     return `workspaces/${workspaceId}/media/uploads/${mediaId}`;
@@ -212,7 +221,8 @@ export class MediaService {
       // 5. Fire and forget staging cleanup
       this.storage.deleteObject(stagingKey).catch((err) => {
         this.logger.warn(
-          `Failed to cleanup staging object ${stagingKey}: ${err.message}`,
+          { stagingKey, err, action: 'media.staging_cleanup_failed' },
+          'Failed to cleanup staging object',
         );
       });
 
@@ -229,10 +239,11 @@ export class MediaService {
       });
 
       return readyAsset;
-    } catch (error) {
+    } catch (error: any) {
       // Revert processing state on failure
       this.logger.error(
-        `Media completion failed for ${mediaId}: ${error.message}`,
+        { mediaId, err: error, action: 'media.completion_failed' },
+        'Media completion failed',
       );
       await this.prisma.mediaAsset.update({
         where: { id: mediaId },

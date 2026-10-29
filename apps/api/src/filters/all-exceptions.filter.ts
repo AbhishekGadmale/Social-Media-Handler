@@ -4,14 +4,26 @@ import {
   ArgumentsHost,
   HttpException,
   HttpStatus,
-  Logger,
+  Optional,
 } from '@nestjs/common';
+import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { Request, Response } from 'express';
 import { generateId } from '@agency-os/database';
 
 @Catch()
 export class AllExceptionsFilter implements ExceptionFilter {
-  private readonly logger = new Logger(AllExceptionsFilter.name);
+  private readonly logger: PinoLogger;
+
+  constructor(
+    @Optional()
+    @InjectPinoLogger(AllExceptionsFilter.name)
+    logger?: PinoLogger,
+  ) {
+    this.logger = logger ?? new PinoLogger({});
+    if (!logger) {
+      this.logger.setContext(AllExceptionsFilter.name);
+    }
+  }
 
   catch(exception: unknown, host: ArgumentsHost) {
     const ctx = host.switchToHttp();
@@ -44,27 +56,37 @@ export class AllExceptionsFilter implements ExceptionFilter {
         ? exception.name
         : 'InternalServerError';
 
+    if (!response.headersSent && typeof response.setHeader === 'function') {
+      response.setHeader('x-request-id', requestId);
+    }
+
     const is5xx = status >= 500;
     if (is5xx) {
       if (exception instanceof Error) {
-        this.logger.error(
-          { err: exception, requestId },
-          `[${requestId}] ${exception.message}`,
-        );
-        if ('code' in exception || 'meta' in exception) {
-          this.logger.error(
-            {
-              requestId,
-              code: (exception as any).code,
-              meta: (exception as any).meta,
-            },
-            `[${requestId}] Additional Error Details`,
-          );
+        const errorMetadata: Record<string, any> = {
+          err: exception,
+          requestId,
+          statusCode: status,
+          path: request.url,
+          method: request.method,
+        };
+        if ('code' in exception) {
+          errorMetadata.code = (exception as any).code;
         }
+        if ('meta' in exception) {
+          errorMetadata.meta = (exception as any).meta;
+        }
+        this.logger.error(errorMetadata, exception.message);
       } else {
         this.logger.error(
-          { exception, requestId },
-          `[${requestId}] Unhandled exception`,
+          {
+            exception,
+            requestId,
+            statusCode: status,
+            path: request.url,
+            method: request.method,
+          },
+          'Unhandled exception',
         );
       }
     }

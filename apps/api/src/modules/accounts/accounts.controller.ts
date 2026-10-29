@@ -50,11 +50,15 @@ export class AccountsController {
   ) {
     await this.accountsService.getWorkspaceAccount(workspaceId, accountId);
 
+    const correlationId =
+      (req as any).id || (req.headers['x-request-id'] as string) || undefined;
+
     const job = await this.syncQueue.add(
       'sync-account',
       {
         socialAccountId: accountId,
         workspaceId,
+        ...(correlationId ? { correlationId } : {}),
       },
       {
         attempts: 3,
