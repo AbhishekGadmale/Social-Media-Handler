@@ -1,7 +1,8 @@
 # Staging Deployment Configuration & Ingress Hardening
+# - Requires Docker Compose v2.20.0 or higher for '!reset' attribute overrides.
 # - All internal service ports (postgres, redis, minio, api, web) are un-published from host interfaces.
 # - Ingress (NGINX) is the sole publicly bound entrypoint on ${STAGING_PORT:-80}.
-# - Zero development fallback secrets: all staging credentials must be explicitly provided.
+# - Zero development fallback secrets: all genuinely required staging credentials must be explicitly provided.
 # - Can be run standalone (-f docker-compose.staging.yml) or as an overlay (-f docker-compose.yml -f docker-compose.staging.yml).
 
 services:
@@ -78,13 +79,11 @@ services:
       NODE_ENV: production
       DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set for staging}@postgres:5432/${POSTGRES_DB:-agency_os}?schema=public
       REDIS_URL: redis://redis:6379
-      SESSION_SECRET: ${SESSION_SECRET:?SESSION_SECRET must be set for staging}
-      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set for staging}
-      COOKIE_SECRET: ${COOKIE_SECRET:?COOKIE_SECRET must be set for staging}
       TOKEN_ENCRYPTION_KEY: ${TOKEN_ENCRYPTION_KEY:?TOKEN_ENCRYPTION_KEY must be set; generate one with openssl rand -hex 32}
       FRONTEND_URL: ${FRONTEND_URL:?FRONTEND_URL must be set for staging}
       API_PUBLIC_URL: ${API_PUBLIC_URL:?API_PUBLIC_URL must be set for staging}
       TRUST_PROXY: "1"
+      ALLOW_INSECURE_HTTP_AUTH: ${ALLOW_INSECURE_HTTP_AUTH:-false}
       YOUTUBE_CLIENT_ID: ${YOUTUBE_CLIENT_ID}
       YOUTUBE_CLIENT_SECRET: ${YOUTUBE_CLIENT_SECRET}
       LINKEDIN_CLIENT_ID: ${LINKEDIN_CLIENT_ID}
@@ -118,9 +117,6 @@ services:
       NODE_ENV: production
       DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set for staging}@postgres:5432/${POSTGRES_DB:-agency_os}?schema=public
       REDIS_URL: redis://redis:6379
-      SESSION_SECRET: ${SESSION_SECRET:?SESSION_SECRET must be set for staging}
-      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set for staging}
-      COOKIE_SECRET: ${COOKIE_SECRET:?COOKIE_SECRET must be set for staging}
       TOKEN_ENCRYPTION_KEY: ${TOKEN_ENCRYPTION_KEY:?TOKEN_ENCRYPTION_KEY must be set; generate one with openssl rand -hex 32}
       YOUTUBE_CLIENT_ID: ${YOUTUBE_CLIENT_ID}
       YOUTUBE_CLIENT_SECRET: ${YOUTUBE_CLIENT_SECRET}

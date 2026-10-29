@@ -29,49 +29,62 @@ The GitHub Actions workflow (`ci.yml`) is correctly configured with PR/push trig
 
 ## Unified Ingress & Staging Deployment Hardening
 - **Unified Ingress (NGINX)**:
-  - Implemented unprivileged non-root NGINX reverse proxy (`docker/nginx/nginx.conf`, `docker/nginx/Dockerfile`) based on `nginxinc/nginx-unprivileged:alpine`.
+  - Implemented unprivileged non-root NGINX reverse proxy (`docker/nginx/nginx.conf`, `docker/nginx/Dockerfile`) based on version-pinned `nginxinc/nginx-unprivileged:1.31.7-alpine` (L1).
   - Routes `/api/*` to `api:3001` preserving exact URI paths and query strings verbatim without prefix stripping.
-  - Routes `/` to `web:3000` with WebSocket connection upgrade mapping (`$http_upgrade`, `$connection_upgrade`).
+  - Routes `/` to `web:3000` with WebSocket connection upgrade mapping (`$http_upgrade`, `$connection_upgrade`) where empty upgrade headers map to empty string `''` (not `'close'`) to preserve persistent HTTP/1.1 upstream keepalive connections (L2).
+  - Access log format logs `$request_method $uri $server_protocol` without query parameters (`$args`) to prevent plain-text logging of sensitive OAuth callback authorization codes and state tokens (H1).
   - Sets `client_max_body_size 512m` aligning with verified `MEDIA_MAX_UPLOAD_BYTES=524288000` (500MB + 12MB multipart header headroom).
-  - Forwards `Host`, `X-Real-IP`, `X-Forwarded-For`, and `X-Forwarded-Proto` headers cleanly.
-  - Exposes dedicated `/healthz` endpoint returning HTTP 200 for ingress probes.
+  - Sets upstream timeouts: `proxy_connect_timeout 60s; proxy_send_timeout 120s; proxy_read_timeout 120s;` (L5).
+  - Maps `$http_x_forwarded_proto` preserving `https` from trusted edge proxies while defaulting to `$scheme` for direct TLS termination (`map $http_x_forwarded_proto $forwarded_proto`) (H2, L8).
+  - Forwards `Host`, `X-Real-IP`, `X-Forwarded-For`, `X-Forwarded-Proto` (via `$forwarded_proto`), and `X-Forwarded-Host` headers cleanly across both `/api/` and `/` proxy blocks (L3).
+  - Exposes dedicated `/healthz` endpoint returning HTTP 200 `healthy\n` (`text/plain`) without upstream dependencies for container health probes and orchestrator liveness checks (L4).
+- **Authentication & Secure Cookie Enforcement (`auth.controller.ts`)**:
+  - Session cookie `secure` attribute is dynamically derived from `req.secure` (`Boolean(req.secure)`).
+  - In production (`NODE_ENV === 'production'`), unencrypted HTTP authentication requests fail fast with `BadRequestException` (`HTTPS is required for authentication in production environments...`), preventing browsers from silently rejecting or leaking insecure cookies over plain HTTP (H2).
+  - An explicit test-only override `ALLOW_INSECURE_HTTP_AUTH=true` is provided for isolated HTTP testing environments.
+  - Session cookie clearing upon logout strictly matches the issuing attributes (`httpOnly: true, secure: isSecureRequest, sameSite: 'lax'`).
 - **Staging Compose Architecture (`docker-compose.staging.yml`)**:
-  - Unbinds `postgres` (`5432`), `redis` (`6379`), `minio` internal ports, `api` (`3001`), and `web` (`3000`) from host network exposure (`ports: !reset []`).
+  - Requires Docker Compose v2.20.0 or higher for Compose specification `ports: !reset []` syntax (L11).
+  - Unbinds `postgres` (`5432`), `redis` (`6379`), `minio` (`9000`), `api` (`3001`), and `web` (`3000`) from host network exposure (`ports: !reset []`).
   - NGINX ingress service is the sole publicly bound entrypoint on `${STAGING_PORT:-80}`.
   - Eliminates all development fallback secrets (`development-secret-1234`, `00000000000000000000000000000000`, `password`).
-  - Enforces required-variable interpolation (`:?`) for `SESSION_SECRET`, `JWT_SECRET`, `COOKIE_SECRET`, `POSTGRES_PASSWORD`, `TOKEN_ENCRYPTION_KEY`, `FRONTEND_URL`, `API_PUBLIC_URL`, and `NEXT_PUBLIC_API_URL`.
-  - Sets `NODE_ENV: production` and `TRUST_PROXY: "1"` across backend services.
+  - Unused secrets (`SESSION_SECRET`, `JWT_SECRET`, `COOKIE_SECRET`) have been removed from compose, documentation, and tests, as the codebase uses Redis session store with UUIDs and unsigned cookies (M1).
+  - Enforces required-variable interpolation (`:?`) for genuinely consumed secrets: `POSTGRES_PASSWORD`, `TOKEN_ENCRYPTION_KEY`, `OBJECT_STORAGE_ACCESS_KEY_ID`, `OBJECT_STORAGE_SECRET_ACCESS_KEY`, `FRONTEND_URL`, `API_PUBLIC_URL`, and `NEXT_PUBLIC_API_URL` (M1, L6).
+  - Sets `NODE_ENV: production`, `TRUST_PROXY: "1"`, and `ALLOW_INSECURE_HTTP_AUTH: ${ALLOW_INSECURE_HTTP_AUTH:-false}` across backend services.
 - **CSRF Resolution**: Single-origin reverse proxy topology ensures `session` and `csrfToken` cookies remain host-only without cross-subdomain leakage, satisfying double-submit CSRF requirements.
 
 ## Remaining Operator Staging Prerequisites
 Before launching an actual live staging environment on a public VPS, the following operator tasks must be completed:
 1. **Domain & DNS**: Configure DNS A/AAAA records pointing the staging hostname (e.g. `staging.agency-os.com`) to the VPS public IP.
 2. **TLS / SSL Termination**:
-   - **Option A (Edge TLS / CDN — Recommended)**: Configure Cloudflare or an AWS ALB in front of the server to terminate HTTPS, forwarding HTTP traffic to port 80 with `X-Forwarded-Proto: https` (API `TRUST_PROXY=1` correctly trusts this header).
+   - **Option A (Edge TLS / CDN — Recommended)**: Terminate HTTPS at Cloudflare or an AWS ALB, forwarding HTTP traffic to port 80 with `X-Forwarded-Proto: https` (API `TRUST_PROXY=1` correctly trusts this header via NGINX `$forwarded_proto` mapping). **Security Requirement**: When using Edge TLS, the host firewall MUST restrict ingress ports (80/8080) strictly to edge proxy CIDRs so direct requests cannot spoof forwarded HTTPS headers.
    - **Option B (On-Host TLS Termination)**: Mount valid TLS certificates (e.g., Let's Encrypt / Certbot `fullchain.pem` and `privkey.pem`) into `/etc/nginx/certs/` and bind port 443 (`${STAGING_SSL_PORT:-443}:8443`).
-3. **Production Secrets**: Generate strong, random secrets in the staging `.env` file (`openssl rand -hex 32` for `TOKEN_ENCRYPTION_KEY`, `SESSION_SECRET`, `JWT_SECRET`, `COOKIE_SECRET`, and a secure `POSTGRES_PASSWORD`).
-4. **Firewall / Network Rules**: Ensure VPS firewall (e.g. `ufw` / AWS Security Group) allows inbound traffic only on ports 80/443 and blocks direct inbound access to 5432, 6379, 3000, and 3001.
+3. **Production Secrets**: Generate strong, random secrets in the staging `.env` file (`openssl rand -hex 32` for `TOKEN_ENCRYPTION_KEY`, secure `POSTGRES_PASSWORD`, and MinIO/S3 object storage credentials).
+4. **Firewall / Network Rules**: Ensure VPS firewall (e.g. `ufw` / AWS Security Group) allows inbound traffic only on ports 80/443 and blocks direct inbound access to 5432, 6379, 9000, 3000, and 3001.
 
 ---
 
 ## Readiness Levels & Verdicts
 
 ### 1. Configuration & Automated Verification: COMPLETE
-- Staging NGINX ingress configuration implemented and validated via `nginx -t`.
+- Staging NGINX ingress configuration implemented and validated via `nginx -t` using pinned `nginxinc/nginx-unprivileged:1.31.7-alpine`.
 - `docker-compose.staging.yml` implemented, isolating host ports and enforcing required staging secrets.
-- 18 automated regression tests in `apps/api/src/config/staging-deployment.spec.ts` passing 100%.
+- 23 automated regression tests in `apps/api/src/config/staging-deployment.spec.ts` passing 100%.
+- 11 unit tests in `apps/api/src/modules/auth/auth.controller.spec.ts` (including 5 H2 TLS/cookie regression tests) passing 100%.
 
 ### 2. CI Docker Smoke Test Verification: COMPLETE
-- CI pipeline validates missing secrets fail-fast behavior.
-- Smoke test exercises the full staging stack through the NGINX ingress port:
-  - `/healthz` returns HTTP 200.
+- CI pipeline validates missing secrets fail-fast behavior with Compose v2.20.0+.
+- Smoke test exercises the full staging stack (Postgres, Redis, MinIO, API, Worker, Web) behind the NGINX ingress port using:
+  `docker compose -f docker-compose.yml -f docker-compose.staging.yml config` and
+  `docker compose -f docker-compose.yml -f docker-compose.staging.yml up -d --build`:
+  - `/healthz` returns HTTP 200 `healthy\n`.
   - `/api/health/ready` returns HTTP 200 with `{ database: { status: "up" } }`.
   - `/` returns HTTP 2xx from Next.js.
-  - Direct host access to 3000 and 3001 is verified closed.
+  - Direct host access to 3000, 3001, and 9000 (MinIO) is verified closed.
 
 ### 3. TLS & Live VPS Deployment: PENDING OPERATOR ACTIONS
-- Edge TLS or certificate mounting must be performed by the operator on the target infrastructure.
-- Deployment automation or manual VPS startup (`docker compose -f docker-compose.staging.yml up -d`) remains an operator responsibility.
+- Edge TLS or certificate mounting must be performed by the operator on the target infrastructure with origin firewall restrictions.
+- Deployment automation or manual VPS startup (`docker compose -f docker-compose.yml -f docker-compose.staging.yml up -d`) remains an operator responsibility.
 
 ### Overall Verdict: READY FOR STAGING DEPLOYMENT
 The application and container architecture are hardened, tested, and ready for staging deployment behind the unified NGINX ingress gateway.

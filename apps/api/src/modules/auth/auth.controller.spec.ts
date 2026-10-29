@@ -237,8 +237,177 @@ describe('AuthController', () => {
         targetId: 'user-auth-1',
         requestId: 'req-auth-123',
       });
-      expect(resMock.clearCookie).toHaveBeenCalledWith('session');
-      expect(resMock.clearCookie).toHaveBeenCalledWith('csrfToken');
+      expect(resMock.clearCookie).toHaveBeenCalledWith(
+        'session',
+        expect.objectContaining({ httpOnly: true, sameSite: 'lax' }),
+      );
+      expect(resMock.clearCookie).toHaveBeenCalledWith(
+        'csrfToken',
+        expect.objectContaining({ httpOnly: false, sameSite: 'lax' }),
+      );
+    });
+  });
+  describe('Secure cookie and TLS enforcement (H2)', () => {
+    const origEnv = process.env.NODE_ENV;
+    const origAllowInsecure = process.env.ALLOW_INSECURE_HTTP_AUTH;
+
+    afterEach(() => {
+      process.env.NODE_ENV = origEnv;
+      if (origAllowInsecure !== undefined) {
+        process.env.ALLOW_INSECURE_HTTP_AUTH = origAllowInsecure;
+      } else {
+        delete process.env.ALLOW_INSECURE_HTTP_AUTH;
+      }
+    });
+
+    it('throws BadRequestException in production when request is unencrypted HTTP and no test override is set', async () => {
+      process.env.NODE_ENV = 'production';
+      delete process.env.ALLOW_INSECURE_HTTP_AUTH;
+
+      authServiceMock.login.mockResolvedValueOnce({
+        sessionId: 'sess-prod-1',
+        user: { id: 'u1', email: 'test@example.com' },
+      });
+
+      const httpReq = { ...reqMock, secure: false };
+
+      await expect(
+        controller.login(
+          { email: 'test@example.com', password: 'password123' },
+          httpReq as Request,
+          resMock as Response,
+        ),
+      ).rejects.toThrow(/HTTPS is required for authentication in production/);
+
+      expect(resMock.cookie).not.toHaveBeenCalled();
+    });
+
+    it('issues cookies with secure: true in production when request is verified HTTPS', async () => {
+      process.env.NODE_ENV = 'production';
+      delete process.env.ALLOW_INSECURE_HTTP_AUTH;
+
+      authServiceMock.login.mockResolvedValueOnce({
+        sessionId: 'sess-prod-https',
+        user: { id: 'u1', email: 'test@example.com' },
+      });
+
+      const httpsReq = { ...reqMock, secure: true };
+
+      await controller.login(
+        { email: 'test@example.com', password: 'password123' },
+        httpsReq as Request,
+        resMock as Response,
+      );
+
+      expect(resMock.cookie).toHaveBeenCalledWith(
+        'session',
+        'sess-prod-https',
+        expect.objectContaining({
+          secure: true,
+          httpOnly: true,
+          sameSite: 'lax',
+        }),
+      );
+      expect(resMock.cookie).toHaveBeenCalledWith(
+        'csrfToken',
+        expect.any(String),
+        expect.objectContaining({
+          secure: true,
+          httpOnly: false,
+          sameSite: 'lax',
+        }),
+      );
+    });
+
+    it('issues cookies with secure: false in production when ALLOW_INSECURE_HTTP_AUTH=true test override is enabled', async () => {
+      process.env.NODE_ENV = 'production';
+      process.env.ALLOW_INSECURE_HTTP_AUTH = 'true';
+
+      authServiceMock.login.mockResolvedValueOnce({
+        sessionId: 'sess-prod-override',
+        user: { id: 'u1', email: 'test@example.com' },
+      });
+
+      const httpReq = { ...reqMock, secure: false };
+
+      await controller.login(
+        { email: 'test@example.com', password: 'password123' },
+        httpReq as Request,
+        resMock as Response,
+      );
+
+      expect(resMock.cookie).toHaveBeenCalledWith(
+        'session',
+        'sess-prod-override',
+        expect.objectContaining({
+          secure: false,
+          httpOnly: true,
+          sameSite: 'lax',
+        }),
+      );
+      expect(resMock.cookie).toHaveBeenCalledWith(
+        'csrfToken',
+        expect.any(String),
+        expect.objectContaining({
+          secure: false,
+          httpOnly: false,
+          sameSite: 'lax',
+        }),
+      );
+    });
+
+    it('issues cookies with secure: false in development/test when request is over HTTP', async () => {
+      process.env.NODE_ENV = 'development';
+
+      authServiceMock.login.mockResolvedValueOnce({
+        sessionId: 'sess-dev-http',
+        user: { id: 'u1', email: 'test@example.com' },
+      });
+
+      const httpReq = { ...reqMock, secure: false };
+
+      await controller.login(
+        { email: 'test@example.com', password: 'password123' },
+        httpReq as Request,
+        resMock as Response,
+      );
+
+      expect(resMock.cookie).toHaveBeenCalledWith(
+        'session',
+        'sess-dev-http',
+        expect.objectContaining({
+          secure: false,
+          httpOnly: true,
+          sameSite: 'lax',
+        }),
+      );
+    });
+
+    it('issues cookies with secure: true in development/test when request is over HTTPS', async () => {
+      process.env.NODE_ENV = 'development';
+
+      authServiceMock.login.mockResolvedValueOnce({
+        sessionId: 'sess-dev-https',
+        user: { id: 'u1', email: 'test@example.com' },
+      });
+
+      const httpsReq = { ...reqMock, secure: true };
+
+      await controller.login(
+        { email: 'test@example.com', password: 'password123' },
+        httpsReq as Request,
+        resMock as Response,
+      );
+
+      expect(resMock.cookie).toHaveBeenCalledWith(
+        'session',
+        'sess-dev-https',
+        expect.objectContaining({
+          secure: true,
+          httpOnly: true,
+          sameSite: 'lax',
+        }),
+      );
     });
   });
 });

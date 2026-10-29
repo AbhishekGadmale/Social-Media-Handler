@@ -369,9 +369,6 @@ jobs:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: test-staging-postgres-password
           POSTGRES_DB: agency_os
-          SESSION_SECRET: test-staging-session-secret-key-1234
-          JWT_SECRET: super-secret-test-jwt-key
-          COOKIE_SECRET: super-secret-test-cookie-key
           TOKEN_ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
           FRONTEND_URL: http://localhost:8080
           API_PUBLIC_URL: http://localhost:8080
@@ -380,8 +377,8 @@ jobs:
           OBJECT_STORAGE_SECRET_ACCESS_KEY: minioadmin
           OBJECT_STORAGE_BUCKET: agency-os-media
         run: |
-          # Start staging database and redis
-          docker compose -f docker-compose.staging.yml up -d postgres redis
+          # Start staging backing services (postgres, redis, minio)
+          docker compose -f docker-compose.staging.yml up -d postgres redis minio
 
           # Wait for PostgreSQL
           echo "Waiting for postgres..."
@@ -396,6 +393,9 @@ jobs:
             docker compose -f docker-compose.staging.yml exec -T redis redis-cli ping && break
             sleep 2
           done
+
+          # Initialize MinIO bucket
+          docker compose -f docker-compose.staging.yml up -d minio-create-bucket
 
           # Run database migrations
           docker compose -f docker-compose.staging.yml up -d migration
@@ -481,7 +481,11 @@ jobs:
             echo "Security violation: Web port 3000 is directly reachable on host!"
             exit 1
           fi
-          echo "Host isolation verified: direct ports 3000 and 3001 are closed."
+          if curl -fsS http://localhost:9000 2>/dev/null; then
+            echo "Security violation: MinIO port 9000 is directly reachable on host!"
+            exit 1
+          fi
+          echo "Host isolation verified: direct ports 3000, 3001, and 9000 are closed."
 
           # Clean up staging compose stack
           docker compose -f docker-compose.staging.yml down -v

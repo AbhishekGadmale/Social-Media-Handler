@@ -16,6 +16,13 @@ describe('Phase 6: Staging/Deployment Hardening & Unified Ingress Configuration'
       expect(fs.existsSync(nginxDockerfilePath)).toBe(true);
     });
 
+    it('pins the unprivileged alpine base image with exact version (L1)', () => {
+      const dockerfile = fs.readFileSync(nginxDockerfilePath, 'utf8');
+      expect(dockerfile).toContain(
+        'FROM nginxinc/nginx-unprivileged:1.31.7-alpine',
+      );
+    });
+
     it('runs as unprivileged non-root with writable temporary paths', () => {
       const conf = fs.readFileSync(nginxConfPath, 'utf8');
 
@@ -23,6 +30,19 @@ describe('Phase 6: Staging/Deployment Hardening & Unified Ingress Configuration'
       expect(conf).toContain('proxy_temp_path /tmp/proxy_temp;');
       expect(conf).toContain('client_body_temp_path /tmp/client_temp;');
       expect(conf).toContain('listen 8080;');
+    });
+
+    it('prevents OAuth credential leakage in access logs by omitting query strings (H1)', () => {
+      const conf = fs.readFileSync(nginxConfPath, 'utf8');
+
+      // Must log method, normalized URI path, and server protocol without query parameters
+      expect(conf).toContain('"$request_method $uri $server_protocol"');
+
+      // Must NOT log raw $request, $query_string, or $args which leak OAuth code/state/token parameters
+      expect(conf).not.toContain('"$request"');
+      expect(conf).not.toContain('$query_string');
+      expect(conf).not.toContain('$args');
+      expect(conf).not.toContain('$request_uri');
     });
 
     it('sets client_max_body_size to 512m matching verified application upload limit', () => {
@@ -43,15 +63,25 @@ describe('Phase 6: Staging/Deployment Hardening & Unified Ingress Configuration'
       expect(conf).toMatch(/keepalive\s+32;/);
     });
 
-    it('configures WebSocket upgrade mapping', () => {
+    it('configures WebSocket upgrade mapping that preserves HTTP/1.1 upstream keepalive (L2)', () => {
       const conf = fs.readFileSync(nginxConfPath, 'utf8');
 
       expect(conf).toContain('map $http_upgrade $connection_upgrade {');
       expect(conf).toContain('default upgrade;');
-      expect(conf).toContain("'' close;");
+      // Must map empty $http_upgrade to empty string '', NOT 'close', preserving keepalive to web_upstream
+      expect(conf).toContain("'' '';");
+      expect(conf).not.toContain("'' close;");
     });
 
-    it('routes /api to api_upstream preserving exact URI and query strings', () => {
+    it('configures trusted forwarded proto mapping for TLS termination (H2, L8)', () => {
+      const conf = fs.readFileSync(nginxConfPath, 'utf8');
+
+      expect(conf).toContain('map $http_x_forwarded_proto $forwarded_proto {');
+      expect(conf).toContain('default $scheme;');
+      expect(conf).toContain('https   https;');
+    });
+
+    it('routes /api to api_upstream preserving exact URI and forwarded headers (L3)', () => {
       const conf = fs.readFileSync(nginxConfPath, 'utf8');
 
       expect(conf).toContain('location /api {');
@@ -62,23 +92,42 @@ describe('Phase 6: Staging/Deployment Hardening & Unified Ingress Configuration'
       expect(conf).toContain(
         'proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;',
       );
-      expect(conf).toContain('proxy_set_header X-Forwarded-Proto $scheme;');
+      expect(conf).toContain(
+        'proxy_set_header X-Forwarded-Proto $forwarded_proto;',
+      );
+      expect(conf).toContain('proxy_set_header X-Forwarded-Host $host;');
       expect(conf).toContain('proxy_set_header Connection "";');
     });
 
-    it('routes root and frontend requests to web_upstream with WebSocket upgrade headers', () => {
+    it('routes root and frontend requests to web_upstream with conditional WebSocket upgrade (L3)', () => {
       const conf = fs.readFileSync(nginxConfPath, 'utf8');
 
       expect(conf).toContain('location / {');
       expect(conf).toContain('proxy_pass http://web_upstream;');
       expect(conf).toContain('proxy_set_header Host $host;');
+      expect(conf).toContain('proxy_set_header X-Real-IP $remote_addr;');
+      expect(conf).toContain(
+        'proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;',
+      );
+      expect(conf).toContain(
+        'proxy_set_header X-Forwarded-Proto $forwarded_proto;',
+      );
+      expect(conf).toContain('proxy_set_header X-Forwarded-Host $host;');
       expect(conf).toContain('proxy_set_header Upgrade $http_upgrade;');
       expect(conf).toContain(
         'proxy_set_header Connection $connection_upgrade;',
       );
     });
 
-    it('exposes /healthz endpoint returning HTTP 200 for ingress health checks', () => {
+    it('documents actual proxy timeouts: 60s connect, 120s send/read (L5)', () => {
+      const conf = fs.readFileSync(nginxConfPath, 'utf8');
+
+      expect(conf).toContain('proxy_connect_timeout 60s;');
+      expect(conf).toContain('proxy_send_timeout 120s;');
+      expect(conf).toContain('proxy_read_timeout 120s;');
+    });
+
+    it('exposes /healthz endpoint returning healthy\\n (L4)', () => {
       const conf = fs.readFileSync(nginxConfPath, 'utf8');
 
       expect(conf).toContain('location = /healthz {');
@@ -108,20 +157,20 @@ describe('Phase 6: Staging/Deployment Hardening & Unified Ingress Configuration'
 
         // Check if image is available locally to avoid network pull latency/timeout during unit tests
         const imgCheck = execSync(
-          'docker image ls -q nginxinc/nginx-unprivileged:alpine',
+          'docker image ls -q nginxinc/nginx-unprivileged:1.31.7-alpine',
           { encoding: 'utf-8', timeout: 3000 },
         ).trim();
 
         if (!imgCheck) {
           console.warn(
-            'nginxinc/nginx-unprivileged:alpine not locally cached; skipped runtime container test in unit test suite',
+            'nginxinc/nginx-unprivileged:1.31.7-alpine not locally cached; skipped runtime container test in unit test suite',
           );
           return;
         }
 
         // Run nginx -t inside container with mock hosts for upstream resolution (redirect stderr to stdout)
         const out = execSync(
-          `docker run --rm --add-host api:127.0.0.1 --add-host web:127.0.0.1 -v "${nginxConfPath}":/etc/nginx/nginx.conf:ro nginxinc/nginx-unprivileged:alpine nginx -t 2>&1`,
+          `docker run --rm --add-host api:127.0.0.1 --add-host web:127.0.0.1 -v "${nginxConfPath}":/etc/nginx/nginx.conf:ro nginxinc/nginx-unprivileged:1.31.7-alpine nginx -t 2>&1`,
           { encoding: 'utf-8', timeout: 15000 },
         );
         expect(out).toContain('syntax is ok');
@@ -146,8 +195,10 @@ describe('Phase 6: Staging/Deployment Hardening & Unified Ingress Configuration'
   });
 
   describe('Staging Docker Compose Configuration (docker-compose.staging.yml)', () => {
-    it('exists and is readable', () => {
+    it('exists and documents minimum Compose version v2.20.0 for !reset (L11)', () => {
       expect(fs.existsSync(stagingComposePath)).toBe(true);
+      const stagingYaml = fs.readFileSync(stagingComposePath, 'utf8');
+      expect(stagingYaml).toMatch(/Docker Compose v2\.20\.0 or higher/i);
     });
 
     it('resets host published ports for postgres, redis, minio, api, and web', () => {
@@ -173,7 +224,16 @@ describe('Phase 6: Staging/Deployment Hardening & Unified Ingress Configuration'
       );
     });
 
-    it('enforces required staging secrets with zero default development fallbacks', () => {
+    it('does NOT require unused secrets SESSION_SECRET, JWT_SECRET, COOKIE_SECRET (M1)', () => {
+      const stagingYaml = fs.readFileSync(stagingComposePath, 'utf8');
+
+      // Confirmed unused by application/worker code; must NOT be required in staging compose
+      expect(stagingYaml).not.toContain('SESSION_SECRET');
+      expect(stagingYaml).not.toContain('JWT_SECRET');
+      expect(stagingYaml).not.toContain('COOKIE_SECRET');
+    });
+
+    it('enforces genuinely required staging secrets with zero default development fallbacks (M1)', () => {
       const stagingYaml = fs.readFileSync(stagingComposePath, 'utf8');
 
       // Must require POSTGRES_PASSWORD without fallback
@@ -181,24 +241,17 @@ describe('Phase 6: Staging/Deployment Hardening & Unified Ingress Configuration'
         '${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set for staging}',
       );
 
-      // Must require SESSION_SECRET without fallback
-      expect(stagingYaml).toContain(
-        '${SESSION_SECRET:?SESSION_SECRET must be set for staging}',
-      );
-
-      // Must require JWT_SECRET without fallback
-      expect(stagingYaml).toContain(
-        '${JWT_SECRET:?JWT_SECRET must be set for staging}',
-      );
-
-      // Must require COOKIE_SECRET without fallback
-      expect(stagingYaml).toContain(
-        '${COOKIE_SECRET:?COOKIE_SECRET must be set for staging}',
-      );
-
       // Must require TOKEN_ENCRYPTION_KEY without fallback
       expect(stagingYaml).toContain(
         '${TOKEN_ENCRYPTION_KEY:?TOKEN_ENCRYPTION_KEY must be set; generate one with openssl rand -hex 32}',
+      );
+
+      // Must require MinIO credentials without fallback
+      expect(stagingYaml).toContain(
+        '${OBJECT_STORAGE_ACCESS_KEY_ID:?OBJECT_STORAGE_ACCESS_KEY_ID must be set for staging}',
+      );
+      expect(stagingYaml).toContain(
+        '${OBJECT_STORAGE_SECRET_ACCESS_KEY:?OBJECT_STORAGE_SECRET_ACCESS_KEY must be set for staging}',
       );
 
       // Must require FRONTEND_URL and API_PUBLIC_URL without fallback
@@ -219,12 +272,15 @@ describe('Phase 6: Staging/Deployment Hardening & Unified Ingress Configuration'
       expect(stagingYaml).not.toContain('00000000000000000000000000000000');
     });
 
-    it('configures production NODE_ENV and TRUST_PROXY for backend services', () => {
+    it('configures production NODE_ENV, TRUST_PROXY, and ALLOW_INSECURE_HTTP_AUTH override (H2)', () => {
       const stagingYaml = fs.readFileSync(stagingComposePath, 'utf8');
 
       // API environment
       expect(stagingYaml).toMatch(/api:[\s\S]*?NODE_ENV:\s*production/);
       expect(stagingYaml).toMatch(/api:[\s\S]*?TRUST_PROXY:\s*"1"/);
+      expect(stagingYaml).toMatch(
+        /api:[\s\S]*?ALLOW_INSECURE_HTTP_AUTH:\s*\$\{ALLOW_INSECURE_HTTP_AUTH:-false\}/,
+      );
 
       // Worker environment
       expect(stagingYaml).toMatch(/worker:[\s\S]*?NODE_ENV:\s*production/);
@@ -233,14 +289,11 @@ describe('Phase 6: Staging/Deployment Hardening & Unified Ingress Configuration'
       expect(stagingYaml).toMatch(/web:[\s\S]*?NODE_ENV:\s*production/);
     });
 
-    it('resolves compose config with only ingress publishing ports when valid environment is provided', () => {
+    it('resolves compose config without unused secrets and only ingress publishing ports (M1)', () => {
       try {
         const testEnv = {
           ...process.env,
           POSTGRES_PASSWORD: 'test-staging-password',
-          SESSION_SECRET: 'test-staging-session-secret',
-          JWT_SECRET: 'test-staging-jwt-secret',
-          COOKIE_SECRET: 'test-staging-cookie-secret',
           TOKEN_ENCRYPTION_KEY:
             '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
           FRONTEND_URL: 'http://localhost:8080',
@@ -283,14 +336,11 @@ describe('Phase 6: Staging/Deployment Hardening & Unified Ingress Configuration'
       }
     });
 
-    it('fails fast when required staging secrets are missing', () => {
+    it('fails fast when genuinely required staging secrets are missing (M1)', () => {
       try {
-        // Clone process.env but explicitly strip all required staging secrets
+        // Clone process.env but explicitly strip genuinely required staging secrets
         const strippedEnv = { ...process.env };
         delete strippedEnv.POSTGRES_PASSWORD;
-        delete strippedEnv.SESSION_SECRET;
-        delete strippedEnv.JWT_SECRET;
-        delete strippedEnv.COOKIE_SECRET;
         delete strippedEnv.TOKEN_ENCRYPTION_KEY;
         delete strippedEnv.FRONTEND_URL;
         delete strippedEnv.API_PUBLIC_URL;

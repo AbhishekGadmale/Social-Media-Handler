@@ -8,6 +8,7 @@ import {
   UseGuards,
   HttpCode,
   HttpStatus,
+  BadRequestException,
 } from '@nestjs/common';
 import { AuthService, InvalidCredentialsException } from './auth.service';
 import type { Response, Request } from 'express';
@@ -82,17 +83,32 @@ export class AuthController {
 
     const csrfToken = crypto.randomBytes(32).toString('hex');
 
+    const isProduction = process.env.NODE_ENV === 'production';
+    const isSecureRequest = Boolean(req.secure);
+    const allowInsecureHttp = process.env.ALLOW_INSECURE_HTTP_AUTH === 'true';
+
+    // In production/staging, authentication cookies require a verified HTTPS connection.
+    // If accessed over unencrypted HTTP, fail safely to prevent transmitting or dropping credentials,
+    // unless the explicit, test-only override ALLOW_INSECURE_HTTP_AUTH=true is set.
+    if (isProduction && !isSecureRequest && !allowInsecureHttp) {
+      throw new BadRequestException(
+        'HTTPS is required for authentication in production environments. Please configure TLS on your reverse proxy or custom domain.',
+      );
+    }
+
+    const secureCookie = isSecureRequest;
+
     // Set cookies
     res.cookie('session', sessionId, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
+      secure: secureCookie,
       sameSite: 'lax',
       maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
     });
 
     res.cookie('csrfToken', csrfToken, {
       httpOnly: false,
-      secure: process.env.NODE_ENV === 'production',
+      secure: secureCookie,
       sameSite: 'lax',
       maxAge: 7 * 24 * 60 * 60 * 1000,
     });
@@ -122,8 +138,17 @@ export class AuthController {
       });
     }
 
-    res.clearCookie('session');
-    res.clearCookie('csrfToken');
+    const isSecureRequest = Boolean(req.secure);
+    res.clearCookie('session', {
+      httpOnly: true,
+      secure: isSecureRequest,
+      sameSite: 'lax',
+    });
+    res.clearCookie('csrfToken', {
+      httpOnly: false,
+      secure: isSecureRequest,
+      sameSite: 'lax',
+    });
     return { message: 'Logged out successfully' };
   }
 
