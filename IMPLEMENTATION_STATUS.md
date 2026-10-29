@@ -1601,7 +1601,7 @@ The final architecture employs a two-tier fencing model:
    - Integrated `nestjs-pino` in the API and established a standalone/worker logger configuration in the Worker.
    - Dynamic log-level control via `LOG_LEVEL` environment variable with production default `info` and development default `debug`.
    - Output emitted as structured JSON in both production and development (newline-delimited structured logs without uninstalled external pretty-printers).
-   - Strict secret redaction paths covering camelCase, snake_case, and nested structures up to 5 levels deep (`access_token`, `accessToken`, `refresh_token`, `refreshToken`, `client_secret`, `clientSecret`, `token_secret`, `password`, `secret`, `*.config.headers.Authorization`, `*.response.data.access_token`).
+   - Strict secret redaction paths covering camelCase, snake_case, and nested structures up to 5 levels deep (`access_token`, `accessToken`, `refresh_token`, `refreshToken`, `client_secret`, `clientSecret`, `token_secret`, `password`, `*.config.headers.Authorization`, `*.response.data.access_token`).
    - Scoped `code` and `state` redactions to query and body shapes (`req.query.code`, `req.query.state`, `body.code`, `body.state`), preserving operational failure codes (e.g. `code: 'TRANSITION_FAILED'`) in application and exception logs.
    - Case-insensitive header casing variants covered (`Authorization`, `authorization`, `Cookie`, `cookie`, `Set-Cookie`, `set-cookie`, `X-CSRF-Token`, `x-csrf-token`).
 2. **Request Correlation & URL Query Parameter Sanitization (`apps/api/src/modules/core/`)**:
@@ -1623,7 +1623,7 @@ The final architecture employs a two-tier fencing model:
 - **API Logger & Exception Filter Unit Tests (`apps/api/src/modules/core/logger.spec.ts`)**:
   - 24 comprehensive unit and integration tests covering URL query parameter sanitization, 5xx Error/non-Error leakage prevention, correlation ID regex validation, casing variants, and operational error code preservation.
 - **Worker Logger Unit Tests (`apps/worker/src/logger.spec.ts`)**:
-  - 9 unit tests covering worker logger instantiation, production JSON format, log levels, secret redaction, and publishing/sync job meta binding.
+  - 11 unit tests covering production/development log levels, structured JSON output with ISO timestamps, sensitive credential redaction, operational error code preservation, snake_case and nested structures up to 5 levels deep, BullMQ job payload redaction, correlationId and operationId propagation across worker execution metadata, delete job correlation, and backward compatibility for legacy un-correlated jobs.
 - **API Test Suite (`pnpm --filter @agency-os/api test`)**:
   - 20 test files passed, 224 tests passed (0 failures).
 - **API E2E Tests (`apps/api/test/accounts.e2e-spec.ts`)**:
