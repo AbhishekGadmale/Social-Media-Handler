@@ -377,8 +377,8 @@ jobs:
           OBJECT_STORAGE_SECRET_ACCESS_KEY: minioadmin
           OBJECT_STORAGE_BUCKET: agency-os-media
         run: |
-          # Start staging backing services (postgres, redis, minio)
-          docker compose -f docker-compose.staging.yml up -d postgres redis minio
+          # Start staging backing services (postgres, redis)
+          docker compose -f docker-compose.staging.yml up -d postgres redis
 
           # Wait for PostgreSQL
           echo "Waiting for postgres..."
@@ -393,9 +393,6 @@ jobs:
             docker compose -f docker-compose.staging.yml exec -T redis redis-cli ping && break
             sleep 2
           done
-
-          # Initialize MinIO bucket
-          docker compose -f docker-compose.staging.yml up -d minio-create-bucket
 
           # Run database migrations
           docker compose -f docker-compose.staging.yml up -d migration

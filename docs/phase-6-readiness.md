@@ -74,7 +74,7 @@ Before launching an actual live staging environment on a public VPS, the followi
 
 ### 2. CI Docker Smoke Test Verification: COMPLETE
 - CI pipeline validates missing secrets fail-fast behavior with Compose v2.20.0+.
-- Smoke test exercises the full staging stack (Postgres, Redis, MinIO, API, Worker, Web) behind the NGINX ingress port using:
+- Smoke test exercises the core ingress and application stack (PostgreSQL, Redis, API, Worker, Web, Ingress; MinIO excluded from CI compose run due to upstream Docker Hub registry pull restrictions) behind the NGINX ingress port using:
   `docker compose -f docker-compose.yml -f docker-compose.staging.yml config` and
   `docker compose -f docker-compose.yml -f docker-compose.staging.yml up -d --build`:
   - `/healthz` returns HTTP 200 `healthy\n`.
