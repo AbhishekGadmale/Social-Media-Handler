@@ -21,27 +21,27 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Install pnpm
         uses: pnpm/action-setup@v3
         with:
           version: ${{ env.PNPM_VERSION }}
-          
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'pnpm'
-          
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
-        
+
       - name: Prisma generate
         run: pnpm --filter @agency-os/database exec prisma generate
-        
+
       - name: Lint
         run: pnpm turbo run lint
-        
+
       - name: Typecheck
         run: pnpm turbo run typecheck
 
@@ -63,7 +63,7 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
-      
+
       redis:
         image: redis:7-alpine
         ports:
@@ -76,29 +76,29 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Install pnpm
         uses: pnpm/action-setup@v3
         with:
           version: ${{ env.PNPM_VERSION }}
-          
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'pnpm'
-          
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
-        
+
       - name: Prisma generate
         run: pnpm --filter @agency-os/database exec prisma generate
-        
+
       - name: Apply Migrations
         env:
           DATABASE_URL: postgresql://postgres:password@localhost:5432/agency_os_test?schema=public
         run: pnpm --filter @agency-os/database exec prisma migrate deploy
-        
+
       - name: Run Tests
         env:
           NODE_ENV: test
@@ -131,7 +131,7 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
-      
+
       redis:
         image: redis:7-alpine
         ports:
@@ -158,29 +158,29 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Install pnpm
         uses: pnpm/action-setup@v3
         with:
           version: ${{ env.PNPM_VERSION }}
-          
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'pnpm'
-          
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
-        
+
       - name: Prisma generate
         run: pnpm --filter @agency-os/database exec prisma generate
-        
+
       - name: Apply Migrations
         env:
           DATABASE_URL: postgresql://postgres:password@localhost:5432/agency_os_test?schema=public
         run: pnpm --filter @agency-os/database exec prisma migrate deploy
-        
+
       - name: Create MinIO test bucket
         env:
           AWS_ACCESS_KEY_ID: minioadmin
@@ -218,24 +218,24 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Install pnpm
         uses: pnpm/action-setup@v3
         with:
           version: ${{ env.PNPM_VERSION }}
-          
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'pnpm'
-          
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
-        
+
       - name: Prisma generate
         run: pnpm --filter @agency-os/database exec prisma generate
-        
+
       - name: Build applications
         env:
           NEXT_PUBLIC_API_URL: http://localhost:3001/api/v1
@@ -249,14 +249,15 @@ jobs:
       TOKEN_ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Build Docker images
         env:
           NEXT_PUBLIC_API_URL: http://localhost:3001/api/v1
           TOKEN_ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
         run: |
           docker compose build api worker web migration
-          
+          docker build -f docker/nginx/Dockerfile -t agency-os-ingress:staging .
+
       - name: Smoke test Compose stack
         env:
           TOKEN_ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
@@ -273,28 +274,28 @@ jobs:
           POSTGRES_DB: agency_os
         run: |
           docker compose up -d postgres redis
-          
+
           # Wait for PostgreSQL
           echo "Waiting for postgres..."
           for i in {1..30}; do
             docker compose exec -T postgres pg_isready -U postgres -d agency_os && break
             sleep 2
           done
-          
+
           # Wait for Redis
           echo "Waiting for redis..."
           for i in {1..30}; do
             docker compose exec -T redis redis-cli ping && break
             sleep 2
           done
-          
+
           docker compose up -d migration
-          
+
           # Wait for migration
           echo "Waiting for migration..."
           docker compose logs -f migration &
           MIGRATION_PID=$!
-          
+
           for i in {1..60}; do
             STATUS=$(docker compose ps migration --format "{{.State}}")
             if [ "$STATUS" = "exited" ]; then
@@ -303,9 +304,9 @@ jobs:
             sleep 2
           done
           kill $MIGRATION_PID || true
-          
+
           docker compose up -d api worker web
-          
+
           # Wait for API health check (asserts HTTP 2xx and verified database readiness)
           echo "Waiting for API health..."
           API_HEALTHY=false
@@ -345,8 +346,143 @@ jobs:
             docker compose logs web
             exit 1
           fi
-          
+
           docker compose logs api
           docker compose logs worker
           docker compose logs web
           docker compose ps
+          docker compose down -v
+
+      - name: Validate Staging Compose required secrets fail-fast
+        run: |
+          echo "Testing missing required secrets fail-fast on staging compose..."
+          if docker compose -f docker-compose.staging.yml config >/dev/null 2>&1; then
+            echo "Expected staging compose config to fail on missing secrets, but it succeeded!"
+            exit 1
+          else
+            echo "Staging compose config failed fast as expected on missing secrets."
+          fi
+
+      - name: Smoke test Staging Compose stack with Ingress
+        env:
+          STAGING_PORT: "8080"
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: test-staging-postgres-password
+          POSTGRES_DB: agency_os
+          TOKEN_ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+          FRONTEND_URL: http://localhost:8080
+          API_PUBLIC_URL: http://localhost:8080
+          NEXT_PUBLIC_API_URL: http://localhost:8080/api/v1
+          OBJECT_STORAGE_ACCESS_KEY_ID: minioadmin
+          OBJECT_STORAGE_SECRET_ACCESS_KEY: minioadmin
+          OBJECT_STORAGE_BUCKET: agency-os-media
+        run: |
+          # Start staging backing services (postgres, redis)
+          docker compose -f docker-compose.staging.yml up -d postgres redis
+
+          # Wait for PostgreSQL
+          echo "Waiting for postgres..."
+          for i in {1..30}; do
+            docker compose -f docker-compose.staging.yml exec -T postgres pg_isready -U postgres -d agency_os && break
+            sleep 2
+          done
+
+          # Wait for Redis
+          echo "Waiting for redis..."
+          for i in {1..30}; do
+            docker compose -f docker-compose.staging.yml exec -T redis redis-cli ping && break
+            sleep 2
+          done
+
+          # Run database migrations
+          docker compose -f docker-compose.staging.yml up -d migration
+
+          echo "Waiting for migration..."
+          docker compose -f docker-compose.staging.yml logs -f migration &
+          MIGRATION_PID=$!
+
+          for i in {1..60}; do
+            STATUS=$(docker compose -f docker-compose.staging.yml ps migration --format "{{.State}}")
+            if [ "$STATUS" = "exited" ]; then
+              break
+            fi
+            sleep 2
+          done
+          kill $MIGRATION_PID || true
+
+          # Start api, worker, web, and ingress
+          docker compose -f docker-compose.staging.yml up -d api worker web ingress
+
+          # Verify Ingress /healthz endpoint
+          echo "Waiting for Ingress health..."
+          INGRESS_HEALTHY=false
+          for i in {1..30}; do
+            curl -fsS http://localhost:8080/healthz 2>/dev/null && {
+              INGRESS_HEALTHY=true
+              echo "Ingress /healthz is ready"
+              break
+            }
+            sleep 2
+          done
+          if [ "$INGRESS_HEALTHY" != "true" ]; then
+            echo "Ingress health check failed!"
+            docker compose -f docker-compose.staging.yml logs ingress
+            exit 1
+          fi
+
+          # Verify API readiness through ingress (/api/health/ready)
+          echo "Waiting for API readiness through ingress..."
+          STAGING_API_HEALTHY=false
+          for i in {1..30}; do
+            RESPONSE=$(curl -fsS http://localhost:8080/api/health/ready 2>/dev/null) && {
+              echo "$RESPONSE" | grep -q '"database":{"status":"up"}' && {
+                STAGING_API_HEALTHY=true
+                echo "API through Ingress is ready: $RESPONSE"
+                break
+              }
+            }
+            sleep 2
+          done
+          if [ "$STAGING_API_HEALTHY" != "true" ]; then
+            echo "API health check through ingress failed or returned non-2xx status!"
+            docker compose -f docker-compose.staging.yml logs api
+            docker compose -f docker-compose.staging.yml logs ingress
+            exit 1
+          fi
+
+          # Verify Web through ingress (/)
+          echo "Waiting for Web through ingress..."
+          STAGING_WEB_HEALTHY=false
+          for i in {1..30}; do
+            curl -fsS http://localhost:8080 >/dev/null 2>&1 && {
+              STAGING_WEB_HEALTHY=true
+              echo "Web through Ingress is ready"
+              break
+            }
+            sleep 2
+          done
+          if [ "$STAGING_WEB_HEALTHY" != "true" ]; then
+            echo "Web readiness through ingress failed!"
+            docker compose -f docker-compose.staging.yml logs web
+            docker compose -f docker-compose.staging.yml logs ingress
+            exit 1
+          fi
+
+          # Verify internal ports are NOT published to host
+          echo "Verifying internal ports are not exposed on host..."
+          if curl -fsS http://localhost:3001 2>/dev/null; then
+            echo "Security violation: API port 3001 is directly reachable on host!"
+            exit 1
+          fi
+          if curl -fsS http://localhost:3000 2>/dev/null; then
+            echo "Security violation: Web port 3000 is directly reachable on host!"
+            exit 1
+          fi
+          if curl -fsS http://localhost:9000 2>/dev/null; then
+            echo "Security violation: MinIO port 9000 is directly reachable on host!"
+            exit 1
+          fi
+          echo "Host isolation verified: direct ports 3000, 3001, and 9000 are closed."
+
+          # Clean up staging compose stack
+          docker compose -f docker-compose.staging.yml down -v
