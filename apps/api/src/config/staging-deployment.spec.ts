@@ -195,10 +195,10 @@ describe('Phase 6: Staging/Deployment Hardening & Unified Ingress Configuration'
   });
 
   describe('Staging Docker Compose Configuration (docker-compose.staging.yml)', () => {
-    it('exists and documents minimum Compose version v2.20.0 for !reset (L11)', () => {
+    it('exists and documents minimum Compose version v2.24.4 for !reset (L11)', () => {
       expect(fs.existsSync(stagingComposePath)).toBe(true);
       const stagingYaml = fs.readFileSync(stagingComposePath, 'utf8');
-      expect(stagingYaml).toMatch(/Docker Compose v2\.20\.0 or higher/i);
+      expect(stagingYaml).toMatch(/Docker Compose v2\.24\.4 or later/i);
     });
 
     it('resets host published ports for postgres, redis, minio, api, and web', () => {

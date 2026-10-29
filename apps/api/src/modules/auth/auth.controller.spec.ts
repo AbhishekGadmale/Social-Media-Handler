@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { Test, TestingModule } from '@nestjs/testing';
+import { BadRequestException } from '@nestjs/common';
 import { AuthController } from './auth.controller';
 import { AuthService, InvalidCredentialsException } from './auth.service';
 import { WorkspaceMemberRepository, AuditAction } from '@agency-os/database';
@@ -260,14 +261,9 @@ describe('AuthController', () => {
       }
     });
 
-    it('throws BadRequestException in production when request is unencrypted HTTP and no test override is set', async () => {
+    it('throws BadRequestException in production when request is unencrypted HTTP before credential verification and side effects (N1)', async () => {
       process.env.NODE_ENV = 'production';
       delete process.env.ALLOW_INSECURE_HTTP_AUTH;
-
-      authServiceMock.login.mockResolvedValueOnce({
-        sessionId: 'sess-prod-1',
-        user: { id: 'u1', email: 'test@example.com' },
-      });
 
       const httpReq = { ...reqMock, secure: false };
 
@@ -277,8 +273,33 @@ describe('AuthController', () => {
           httpReq as Request,
           resMock as Response,
         ),
-      ).rejects.toThrow(/HTTPS is required for authentication in production/);
+      ).rejects.toThrow(BadRequestException);
 
+      // Verify that no credential verification or side effects occurred (N1):
+      // 1. authService.login was NOT called (no credential oracle, no session created)
+      expect(authServiceMock.login).not.toHaveBeenCalled();
+      // 2. No audit event was emitted (neither success nor failure)
+      expect(auditServiceMock.logActionBestEffort).not.toHaveBeenCalled();
+      // 3. No cookies were issued
+      expect(resMock.cookie).not.toHaveBeenCalled();
+    });
+
+    it('rejects with BadRequestException without verifying credentials even if invalid credentials are submitted (oracle prevention)', async () => {
+      process.env.NODE_ENV = 'production';
+      delete process.env.ALLOW_INSECURE_HTTP_AUTH;
+
+      const httpReq = { ...reqMock, secure: false };
+
+      await expect(
+        controller.login(
+          { email: 'nonexistent@example.com', password: 'wrongpassword' },
+          httpReq as Request,
+          resMock as Response,
+        ),
+      ).rejects.toThrow(BadRequestException);
+
+      expect(authServiceMock.login).not.toHaveBeenCalled();
+      expect(auditServiceMock.logActionBestEffort).not.toHaveBeenCalled();
       expect(resMock.cookie).not.toHaveBeenCalled();
     });
 

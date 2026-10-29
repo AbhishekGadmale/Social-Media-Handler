@@ -1,5 +1,5 @@
 # Staging Deployment Configuration & Ingress Hardening
-# - Requires Docker Compose v2.20.0 or higher for '!reset' attribute overrides.
+# - Requires Docker Compose v2.24.4 or later for '!reset' attribute overrides.
 # - All internal service ports (postgres, redis, minio, api, web) are un-published from host interfaces.
 # - Ingress (NGINX) is the sole publicly bound entrypoint on ${STAGING_PORT:-80}.
 # - Zero development fallback secrets: all genuinely required staging credentials must be explicitly provided.

@@ -44,6 +44,20 @@ export class AuthController {
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
   ) {
+    const isProduction = process.env.NODE_ENV === 'production';
+    const isSecureRequest = Boolean(req.secure);
+    const allowInsecureHttp = process.env.ALLOW_INSECURE_HTTP_AUTH === 'true';
+
+    // In production/staging, authentication requires a verified HTTPS connection.
+    // Reject unencrypted HTTP requests before credential verification, session creation,
+    // audit logging, or cookie issuance to prevent credential oracles and side effects,
+    // unless the explicit, test-only override ALLOW_INSECURE_HTTP_AUTH=true is set.
+    if (isProduction && !isSecureRequest && !allowInsecureHttp) {
+      throw new BadRequestException(
+        'HTTPS is required for authentication in production environments. Please configure TLS on your reverse proxy or custom domain.',
+      );
+    }
+
     const { email, password } = body;
     const requestId = (req as any).id;
     let sessionId: string;
@@ -82,20 +96,6 @@ export class AuthController {
     }
 
     const csrfToken = crypto.randomBytes(32).toString('hex');
-
-    const isProduction = process.env.NODE_ENV === 'production';
-    const isSecureRequest = Boolean(req.secure);
-    const allowInsecureHttp = process.env.ALLOW_INSECURE_HTTP_AUTH === 'true';
-
-    // In production/staging, authentication cookies require a verified HTTPS connection.
-    // If accessed over unencrypted HTTP, fail safely to prevent transmitting or dropping credentials,
-    // unless the explicit, test-only override ALLOW_INSECURE_HTTP_AUTH=true is set.
-    if (isProduction && !isSecureRequest && !allowInsecureHttp) {
-      throw new BadRequestException(
-        'HTTPS is required for authentication in production environments. Please configure TLS on your reverse proxy or custom domain.',
-      );
-    }
-
     const secureCookie = isSecureRequest;
 
     // Set cookies

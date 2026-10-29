@@ -40,11 +40,11 @@ The GitHub Actions workflow (`ci.yml`) is correctly configured with PR/push trig
   - Exposes dedicated `/healthz` endpoint returning HTTP 200 `healthy\n` (`text/plain`) without upstream dependencies for container health probes and orchestrator liveness checks (L4).
 - **Authentication & Secure Cookie Enforcement (`auth.controller.ts`)**:
   - Session cookie `secure` attribute is dynamically derived from `req.secure` (`Boolean(req.secure)`).
-  - In production (`NODE_ENV === 'production'`), unencrypted HTTP authentication requests fail fast with `BadRequestException` (`HTTPS is required for authentication in production environments...`), preventing browsers from silently rejecting or leaking insecure cookies over plain HTTP (H2).
+  - In production (`NODE_ENV === 'production'`), unencrypted HTTP authentication requests fail fast with `BadRequestException` (`HTTPS is required for authentication in production environments...`) before credential verification, session creation, audit logging, or cookie issuance, preventing credential oracles and silent cookie drops (N1, H2).
   - An explicit test-only override `ALLOW_INSECURE_HTTP_AUTH=true` is provided for isolated HTTP testing environments.
   - Session cookie clearing upon logout strictly matches the issuing attributes (`httpOnly: true, secure: isSecureRequest, sameSite: 'lax'`).
 - **Staging Compose Architecture (`docker-compose.staging.yml`)**:
-  - Requires Docker Compose v2.20.0 or higher for Compose specification `ports: !reset []` syntax (L11).
+  - Requires Docker Compose v2.24.4 or later for Compose specification `ports: !reset []` syntax (L11).
   - Unbinds `postgres` (`5432`), `redis` (`6379`), `minio` (`9000`), `api` (`3001`), and `web` (`3000`) from host network exposure (`ports: !reset []`).
   - NGINX ingress service is the sole publicly bound entrypoint on `${STAGING_PORT:-80}`.
   - Eliminates all development fallback secrets (`development-secret-1234`, `00000000000000000000000000000000`, `password`).
@@ -70,13 +70,13 @@ Before launching an actual live staging environment on a public VPS, the followi
 - Staging NGINX ingress configuration implemented and validated via `nginx -t` using pinned `nginxinc/nginx-unprivileged:1.31.7-alpine`.
 - `docker-compose.staging.yml` implemented, isolating host ports and enforcing required staging secrets.
 - 23 automated regression tests in `apps/api/src/config/staging-deployment.spec.ts` passing 100%.
-- 11 unit tests in `apps/api/src/modules/auth/auth.controller.spec.ts` (including 5 H2 TLS/cookie regression tests) passing 100%.
+- 12 unit tests in `apps/api/src/modules/auth/auth.controller.spec.ts` (including 6 N1/H2 TLS, cookie, and credential-oracle prevention regression tests) passing 100%.
 
 ### 2. CI Docker Smoke Test Verification: COMPLETE
-- CI pipeline validates missing secrets fail-fast behavior with Compose v2.20.0+.
+- CI pipeline validates missing secrets fail-fast behavior with Compose v2.24.4+.
 - Smoke test exercises the core ingress and application stack (PostgreSQL, Redis, API, Worker, Web, Ingress; MinIO excluded from CI compose run due to upstream Docker Hub registry pull restrictions) behind the NGINX ingress port using:
-  `docker compose -f docker-compose.yml -f docker-compose.staging.yml config` and
-  `docker compose -f docker-compose.yml -f docker-compose.staging.yml up -d --build`:
+  `docker compose -f docker-compose.staging.yml config` and
+  `docker compose -f docker-compose.staging.yml up -d`:
   - `/healthz` returns HTTP 200 `healthy\n`.
   - `/api/health/ready` returns HTTP 200 with `{ database: { status: "up" } }`.
   - `/` returns HTTP 2xx from Next.js.
@@ -84,7 +84,7 @@ Before launching an actual live staging environment on a public VPS, the followi
 
 ### 3. TLS & Live VPS Deployment: PENDING OPERATOR ACTIONS
 - Edge TLS or certificate mounting must be performed by the operator on the target infrastructure with origin firewall restrictions.
-- Deployment automation or manual VPS startup (`docker compose -f docker-compose.yml -f docker-compose.staging.yml up -d`) remains an operator responsibility.
+- Deployment automation or manual VPS startup (`docker compose -f docker-compose.staging.yml up -d`) remains an operator responsibility.
 
 ### Overall Verdict: READY FOR STAGING DEPLOYMENT
 The application and container architecture are hardened, tested, and ready for staging deployment behind the unified NGINX ingress gateway.

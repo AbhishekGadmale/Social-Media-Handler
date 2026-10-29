@@ -33,7 +33,7 @@
   - **Security Hardening (Token Encryption)**: COMPLETE AND VERIFIED. AES-256-GCM encryption is fully implemented in `packages/database/src/crypto/encryption.ts` and used across the API and worker. Shared `validateTokenEncryptionKey()` enforces exactly 64 hexadecimal characters (32 bytes) fail-fast during bootstrap before application initialization. Extensive unit and startup test coverage verified.
   - **Rate Limiting**: PARTIAL. `@nestjs/throttler` is registered in `app.module.ts`, and `ThrottlerGuard` is applied specifically to the `/login` route in `auth.controller.ts`. Global API rate limiting is not yet active.
   - **Audit Logging**: NOT STARTED. No audit modules, services, or middleware exist in `apps/api`.
-  - **Staging/Deployment Hardening**: CONFIGURATION IMPLEMENTED & TESTED. Unified NGINX ingress reverse proxy (`docker/nginx/nginx.conf`, `docker/nginx/Dockerfile`) configured for non-root execution with pinned `nginxinc/nginx-unprivileged:1.31.7-alpine`, routing `/api/*` to `api:3001` and `/` to `web:3000` with WebSocket upgrade mapping and keepalive preservation, query-parameter-stripped access logs preventing plain-text OAuth credential logging, 512MB body limit matching `MEDIA_MAX_UPLOAD_BYTES`, 60s/120s upstream timeouts, forwarded headers (`Host`, `X-Real-IP`, `X-Forwarded-For`, `X-Forwarded-Proto`, `X-Forwarded-Host`), and dedicated `/healthz` probe returning `healthy\n`. Dedicated staging Compose configuration (`docker-compose.staging.yml`, requiring Compose v2.20.0+) unbinds internal ports (Postgres, Redis, MinIO, API, Web) from host exposure, binds only the ingress service on `${STAGING_PORT:-80}`, and enforces genuinely required staging secrets (`POSTGRES_PASSWORD`, `TOKEN_ENCRYPTION_KEY`, `OBJECT_STORAGE_ACCESS_KEY_ID`, `OBJECT_STORAGE_SECRET_ACCESS_KEY`, `FRONTEND_URL`, `API_PUBLIC_URL`, `NEXT_PUBLIC_API_URL`) without unused variables (`SESSION_SECRET`, `JWT_SECRET`, `COOKIE_SECRET`). Production authentication enforces HTTPS cookies and fails fast on plain HTTP (`ALLOW_INSECURE_HTTP_AUTH` override for testing). 23 automated regression tests in `apps/api/src/config/staging-deployment.spec.ts` and 11 unit tests in `apps/api/src/modules/auth/auth.controller.spec.ts` verified; CI staging smoke tests cover the core ingress and application stack while host isolation is verified for all internal ports. *Verification levels*: Configuration implemented (YES), Automated tests passed (YES), Docker ingress smoke test passed (YES), TLS verified on staging domain (PENDING OPERATOR DNS/CERT PROVISIONING), Live VPS deployment verified (PENDING OPERATOR DEPLOYMENT RUN).
+  - **Staging/Deployment Hardening**: CONFIGURATION IMPLEMENTED & TESTED. Unified NGINX ingress reverse proxy (`docker/nginx/nginx.conf`, `docker/nginx/Dockerfile`) configured for non-root execution with pinned `nginxinc/nginx-unprivileged:1.31.7-alpine`, routing `/api/*` to `api:3001` and `/` to `web:3000` with WebSocket upgrade mapping and keepalive preservation, query-parameter-stripped access logs preventing plain-text OAuth credential logging, 512MB body limit matching `MEDIA_MAX_UPLOAD_BYTES`, 60s/120s upstream timeouts, forwarded headers (`Host`, `X-Real-IP`, `X-Forwarded-For`, `X-Forwarded-Proto`, `X-Forwarded-Host`), and dedicated `/healthz` probe returning `healthy\n`. Dedicated staging Compose configuration (`docker-compose.staging.yml`, requiring Compose v2.24.4 or later) unbinds internal ports (Postgres, Redis, MinIO, API, Web) from host exposure, binds only the ingress service on `${STAGING_PORT:-80}`, and enforces genuinely required staging secrets (`POSTGRES_PASSWORD`, `TOKEN_ENCRYPTION_KEY`, `OBJECT_STORAGE_ACCESS_KEY_ID`, `OBJECT_STORAGE_SECRET_ACCESS_KEY`, `FRONTEND_URL`, `API_PUBLIC_URL`, `NEXT_PUBLIC_API_URL`) without unused variables (`SESSION_SECRET`, `JWT_SECRET`, `COOKIE_SECRET`). Production authentication enforces HTTPS and fails fast on plain HTTP before credential verification to prevent credential oracles and side effects (`ALLOW_INSECURE_HTTP_AUTH` override for testing). 23 automated regression tests in `apps/api/src/config/staging-deployment.spec.ts` and 12 unit tests in `apps/api/src/modules/auth/auth.controller.spec.ts` verified; CI staging smoke tests cover the core ingress and application stack while host isolation is verified for all internal ports. *Verification levels*: Configuration implemented (YES), Automated tests passed (YES), Docker ingress smoke test passed (YES), TLS verified on staging domain (PENDING OPERATOR DNS/CERT PROVISIONING), Live VPS deployment verified (PENDING OPERATOR DEPLOYMENT RUN).
   - **Secret Management**: PARTIAL. Environment variable templates documented in `.env.example` (including `TOKEN_ENCRYPTION_KEY`, LinkedIn OAuth credentials [`LINKEDIN_CLIENT_ID`, `LINKEDIN_CLIENT_SECRET`], and `FRONTEND_URL`). `docker-compose.yml` requires an explicitly supplied `TOKEN_ENCRYPTION_KEY` for API and Worker services with zero default secret fallbacks. Test-only key explicitly supplied in CI smoke testing. Production external secret store integration (e.g., Vault / AWS Secrets Manager) remains deferred.
   - **Observability**: COMPLETE AND VERIFIED. Structured Pino logging configured across API and Worker (`logger.config.ts`), with correlation ID validation and propagation across HTTP requests and BullMQ queue jobs (`SyncJobData`, `PublishJobData`, `PublishDeleteJobData`), sensitive credential and header redaction (snake_case and camelCase tokens, secrets, cookies), request URL query parameter sanitization (`url-sanitizer.utils.ts`), required `PinoLogger` dependency injection, and comprehensive unit and integration test suites.
   - **Tenancy Verification**: COMPLETE AND VERIFIED. Cross-workspace checks and `WorkspaceGuard` are enforced (e.g., in `analytics.controller.ts`).
@@ -1656,10 +1656,10 @@ The final architecture employs a two-tier fencing model:
 - **Status**: **IMPLEMENTED & VERIFIED IN AUTOMATED TESTS**
 - **Branch**: `feat/staging-deployment-hardening`
 - **Base SHA**: [`d2c6bc06438b0a0c9e3fa4b540e81fb8e28d4790`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/d2c6bc06438b0a0c9e3fa4b540e81fb8e28d4790) (`d2c6bc0`)
-- **Scope**: Production/staging deployment configuration, non-root NGINX ingress reverse proxy (`nginxinc/nginx-unprivileged:1.31.7-alpine`) routing `/api/*` to NestJS API and `/` to Next.js Web under a unified origin, query-parameter-stripped access logs preventing plain-text OAuth credential logging (H1), production HTTPS cookie enforcement and fail-fast unencrypted HTTP rejection (H2), trusted edge forwarded proto mapping with origin firewall requirements (H2, L8), keepalive upstream connection preservation (L2), `X-Forwarded-Host` forwarding (L3), dedicated `/healthz` probe returning `healthy\n` (L4), 60s/120s proxy timeouts (L5), Docker Compose staging isolation unpublishing internal service ports from host exposure with Compose v2.20.0+ requirement (L11), fail-fast genuinely required staging secrets enforcement without unused variables (M1, L6), accurate smoke test scope documentation (L9), 23 automated regression tests in `staging-deployment.spec.ts`, 11 unit tests in `auth.controller.spec.ts`, and CI staging smoke test extension.
+- **Scope**: Production/staging deployment configuration, non-root NGINX ingress reverse proxy (`nginxinc/nginx-unprivileged:1.31.7-alpine`) routing `/api/*` to NestJS API and `/` to Next.js Web under a unified origin, query-parameter-stripped access logs preventing plain-text OAuth credential logging (H1), production HTTPS cookie enforcement and fail-fast unencrypted HTTP rejection (H2), trusted edge forwarded proto mapping with origin firewall requirements (H2, L8), keepalive upstream connection preservation (L2), `X-Forwarded-Host` forwarding (L3), dedicated `/healthz` probe returning `healthy\n` (L4), 60s/120s proxy timeouts (L5), Docker Compose staging isolation unpublishing internal service ports from host exposure with Compose v2.24.4 or later requirement (L11), fail-fast genuinely required staging secrets enforcement without unused variables (M1, L6), accurate smoke test scope documentation (L9), 23 automated regression tests in `staging-deployment.spec.ts`, 12 unit tests in `auth.controller.spec.ts`, and CI staging smoke test extension.
 - **Verification Levels**:
   - *Configuration implemented*: **YES** (Checked into repo)
-  - *Automated unit & regression tests passed*: **YES** (23/23 tests in `staging-deployment.spec.ts`, 11/11 tests in `auth.controller.spec.ts`)
+  - *Automated unit & regression tests passed*: **YES** (23/23 tests in `staging-deployment.spec.ts`, 12/12 tests in `auth.controller.spec.ts`)
   - *Docker ingress & host isolation smoke test passed*: **YES** (Verified locally & in CI workflow for core stack)
   - *TLS verified on staging domain*: **PENDING OPERATOR DNS/CERT PROVISIONING** (Documented in `docs/phase-6-readiness.md`)
   - *Live VPS deployment verified*: **PENDING OPERATOR DEPLOYMENT RUN** (Documented in `docs/phase-6-readiness.md`)
@@ -1677,11 +1677,11 @@ The final architecture employs a two-tier fencing model:
    - Exposed dedicated `/healthz` endpoint returning HTTP 200 `healthy\n` (`text/plain`) without upstream dependencies for container health probes and orchestrator liveness checks (L4).
 2. **Production HTTPS Authentication & Secure Cookie Enforcement (`apps/api/src/modules/auth/auth.controller.ts`)**:
    - Cookie `secure` flag is strictly derived from `req.secure` (`Boolean(req.secure)`).
-   - In production (`NODE_ENV === 'production'`), requests over unencrypted HTTP fail fast with `BadRequestException` (`HTTPS is required for authentication in production environments...`), preventing browsers from silently rejecting or leaking insecure cookies over plain HTTP (H2).
+   - In production (`NODE_ENV === 'production'`), requests over unencrypted HTTP fail fast with `BadRequestException` (`HTTPS is required for authentication in production environments...`) before credential verification, session creation, audit logging, or cookie issuance, preventing credential oracles and side effects (N1, H2).
    - An explicit test-only override `ALLOW_INSECURE_HTTP_AUTH=true` is provided for isolated HTTP testing environments.
    - Logout `clearCookie` matches `{ httpOnly: true, secure: isSecureRequest, sameSite: 'lax' }`.
 3. **Staging Compose Isolation & Secret Enforcement (`docker-compose.staging.yml`)**:
-   - Requires Docker Compose v2.20.0 or higher for Compose specification `ports: !reset []` syntax (L11).
+   - Requires Docker Compose v2.24.4 or later for Compose specification `ports: !reset []` syntax (L11).
    - Extends the baseline `docker-compose.yml` using `ports: !reset []` syntax to strip host-published port mappings for all internal backing services: Postgres (`5432`), Redis (`6379`), MinIO (`9000`), API (`3001`), and Web (`3000`).
    - Outbound internet access preserved on standard bridge network for OAuth provider exchanges and platform publishing endpoints.
    - Exposed solely the unprivileged ingress reverse proxy on `${STAGING_PORT:-80}:8080`.
@@ -1703,16 +1703,16 @@ The final architecture employs a two-tier fencing model:
      - Unprivileged runtime paths (`/tmp/nginx.pid`, `/tmp/*_temp`).
      - Staging compose host port isolation asserting `ports: !reset []` across internal services.
      - Staging compose fail-fast validation when genuinely required secrets are missing, and verified unused secret omission (M1).
-     - Minimum Docker Compose version documentation check (v2.20.0+) (L11).
+     - Minimum Docker Compose version documentation check (v2.24.4 or later) (L11).
      - API production configuration assertions (`NODE_ENV=production`, `PORT=3001`, `TRUST_PROXY=1`).
-   - Implemented 11 unit tests in `auth.controller.spec.ts` including 5 new regression tests verifying:
-     - Rejection of plain HTTP login in production with `BadRequestException`.
+   - Implemented 12 unit tests in `auth.controller.spec.ts` including 6 regression tests verifying:
+     - Rejection of plain HTTP login in production with `BadRequestException` before credential verification, preventing credential oracles and side effects (N1).
      - Permitting plain HTTP login in production with `ALLOW_INSECURE_HTTP_AUTH=true`.
      - Issuance of `secure: true` cookies on HTTPS requests in production.
      - Handling of HTTP and HTTPS in development/test environments.
 5. **CI Workflow Extension (`.github/workflows/ci.yml`)**:
    - Added `docker build` for ingress image (`docker/nginx/Dockerfile`) to the `docker` job using pinned `nginxinc/nginx-unprivileged:1.31.7-alpine`.
-   - Added negative validation step verifying that `docker compose -f docker-compose.yml -f docker-compose.staging.yml config` fails fast when required secrets are missing.
+   - Added negative validation step verifying that `docker compose -f docker-compose.staging.yml config` fails fast when required secrets are missing (L7).
    - Extended the staging smoke test running the core Compose stack (Postgres, Redis, API, Worker, Web) behind the NGINX ingress:
      - Validates `/healthz` returns HTTP 200 `healthy\n`.
      - Validates `/api/` routing and health check.
@@ -1725,7 +1725,7 @@ The final architecture employs a two-tier fencing model:
 - **Staging Deployment Unit Tests (`apps/api/src/config/staging-deployment.spec.ts`)**:
   - 23 automated tests passing (0 failures).
 - **Auth Controller Unit & Regression Tests (`apps/api/src/modules/auth/auth.controller.spec.ts`)**:
-  - 11 unit tests passing (0 failures).
+  - 12 unit tests passing (0 failures).
 - **API Test Suite (`pnpm --filter @agency-os/api test`)**:
   - 21 test files passed, 247 tests passed (0 failures).
 - **Database Crypto Tests (`pnpm --filter @agency-os/database test src/crypto/encryption.spec.ts`)**:
@@ -1740,7 +1740,7 @@ The final architecture employs a two-tier fencing model:
 1. **Operator Staging Deployment Actions**:
    - Configure DNS A/CNAME record pointing to staging host.
    - Terminate TLS via Cloudflare/ALB (Edge TLS with `TRUST_PROXY=1` and origin firewall restricting ingress port 80/8080 to edge proxy CIDRs) or configure on-host Let's Encrypt / Certbot container.
-   - Run live deployment on target host using `docker compose -f docker-compose.yml -f docker-compose.staging.yml up -d`.
+   - Run live deployment on target host using `docker compose -f docker-compose.staging.yml up -d` (L7).
 2. **Phase 6 Secret Management Follow-Up**:
    - External secret vault integration (HashiCorp Vault / AWS Secrets Manager) for production environments.
 3. **Phase 7 Next Task**:
