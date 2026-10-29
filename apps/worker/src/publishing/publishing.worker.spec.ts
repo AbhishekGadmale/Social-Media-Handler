@@ -22,6 +22,7 @@ import {
 } from '@agency-os/providers';
 import { Queue } from 'bullmq';
 import { assertTestDatabaseUrl } from '@agency-os/database';
+import { getLoggerToken } from 'nestjs-pino';
 
 // --- TEST PUBLISHING PROVIDER ---
 class TestPublishingProvider implements IPublishingProvider {
@@ -118,7 +119,15 @@ describe('Publishing Worker (e2e)', () => {
       add: jest.fn(),
     };
 
-    tokenService = new TokenService(prisma);
+    const mockLogger = {
+      info: jest.fn(),
+      warn: jest.fn(),
+      error: jest.fn(),
+      debug: jest.fn(),
+      setContext: jest.fn(),
+    } as any;
+
+    tokenService = new TokenService(prisma, mockLogger);
     jest
       .spyOn(tokenService, 'getExecutionCredentials')
       .mockImplementation((accountId) => {
@@ -137,6 +146,14 @@ describe('Publishing Worker (e2e)', () => {
         { provide: 'BullQueue_publish', useValue: mockQueue },
         { provide: ProviderRegistry, useValue: providerRegistry },
         { provide: 'IObjectStorage', useValue: { getStream: jest.fn() } },
+        {
+          provide: getLoggerToken(PublishingProcessor.name),
+          useValue: mockLogger,
+        },
+        {
+          provide: getLoggerToken(PublishingDispatcher.name),
+          useValue: mockLogger,
+        },
       ],
     })
       .overrideProvider(ProviderRegistry)

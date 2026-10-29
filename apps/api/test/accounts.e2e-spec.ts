@@ -10,6 +10,7 @@ const cookieParser = _cookieParser.default || _cookieParser;
 import { PrismaClient, generateId } from '@agency-os/database';
 import { loginAndGetSession } from './helpers';
 import { AllExceptionsFilter } from '../src/filters/all-exceptions.filter';
+import { PinoLogger } from 'nestjs-pino';
 import * as argon2 from '@node-rs/argon2';
 import Redis from 'ioredis';
 import { encrypt } from '@agency-os/database/src/crypto/encryption';
@@ -50,7 +51,7 @@ describe('AccountsController (e2e)', () => {
     app = moduleFixture.createNestApplication();
     app.setGlobalPrefix('api');
     app.use(cookieParser());
-    app.useGlobalFilters(new AllExceptionsFilter());
+    app.useGlobalFilters(new AllExceptionsFilter(await app.resolve(PinoLogger)));
     await app.init();
 
     prisma = app.get<PrismaClient>(PrismaClient);
@@ -304,8 +305,14 @@ describe('AccountsController (e2e)', () => {
       {
         socialAccountId: accountWorkspaceEditor,
         workspaceId: testWorkspaceEditor,
+        correlationId: expect.stringMatching(/^[a-zA-Z0-9._-]{1,128}$/),
       },
       expect.any(Object),
+    );
+    expect(res.headers['x-request-id']).toBeDefined();
+    expect(res.headers['x-request-id']).toMatch(/^[a-zA-Z0-9._-]{1,128}$/);
+    expect(addSpy.mock.calls[0][1].correlationId).toBe(
+      res.headers['x-request-id'],
     );
 
     addSpy.mockRestore();

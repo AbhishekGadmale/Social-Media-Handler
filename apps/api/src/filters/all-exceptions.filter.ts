@@ -4,37 +4,29 @@ import {
   ArgumentsHost,
   HttpException,
   HttpStatus,
-  Optional,
 } from '@nestjs/common';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { Request, Response } from 'express';
-import { generateId } from '@agency-os/database';
+import {
+  getOrCreateCorrelationId,
+  attachCorrelationIdToResponse,
+} from '../modules/core/correlation-id.utils';
+import { sanitizeRequestUrl } from '../modules/core/url-sanitizer.utils';
 
 @Catch()
 export class AllExceptionsFilter implements ExceptionFilter {
-  private readonly logger: PinoLogger;
-
   constructor(
-    @Optional()
     @InjectPinoLogger(AllExceptionsFilter.name)
-    logger?: PinoLogger,
-  ) {
-    this.logger = logger ?? new PinoLogger({});
-    if (!logger) {
-      this.logger.setContext(AllExceptionsFilter.name);
-    }
-  }
+    private readonly logger: PinoLogger,
+  ) {}
 
   catch(exception: unknown, host: ArgumentsHost) {
     const ctx = host.switchToHttp();
     const response = ctx.getResponse<Response>();
     const request = ctx.getRequest<Request>();
 
-    // In a real app we might grab a trace ID from OpenTelemetry
-    const requestId =
-      (request as any).id ||
-      (request.headers['x-request-id'] as string) ||
-      generateId();
+    // Extract pre-assigned ID or validate incoming header, falling back to a fresh UUID
+    const requestId = getOrCreateCorrelationId(request);
 
     const status =
       exception instanceof HttpException
@@ -56,18 +48,17 @@ export class AllExceptionsFilter implements ExceptionFilter {
         ? exception.name
         : 'InternalServerError';
 
-    if (!response.headersSent && typeof response.setHeader === 'function') {
-      response.setHeader('x-request-id', requestId);
-    }
+    attachCorrelationIdToResponse(response, requestId);
 
     const is5xx = status >= 500;
     if (is5xx) {
+      const sanitizedPath = sanitizeRequestUrl(request.url);
       if (exception instanceof Error) {
         const errorMetadata: Record<string, any> = {
           err: exception,
           requestId,
           statusCode: status,
-          path: request.url,
+          path: sanitizedPath,
           method: request.method,
         };
         if ('code' in exception) {
@@ -83,7 +74,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
             exception,
             requestId,
             statusCode: status,
-            path: request.url,
+            path: sanitizedPath,
             method: request.method,
           },
           'Unhandled exception',

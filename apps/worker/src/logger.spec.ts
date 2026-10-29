@@ -6,7 +6,10 @@ import {
   SENSITIVE_FIELDS,
 } from './logger.config';
 import { SyncJobData } from './sync/sync.types';
-import { PublishJobData } from './publishing/publishing.types';
+import {
+  PublishJobData,
+  PublishDeleteJobData,
+} from './publishing/publishing.types';
 
 describe('Worker Standalone Pino Logger & Job Correlation', () => {
   const originalEnv = process.env;
@@ -75,7 +78,7 @@ describe('Worker Standalone Pino Logger & Job Correlation', () => {
     });
   });
 
-  describe('Secret Redaction', () => {
+  describe('Secret Redaction & Operational Code Preservation', () => {
     it('redacts all required sensitive fields from logged objects', () => {
       let output = '';
       const stream = {
@@ -98,6 +101,77 @@ describe('Worker Standalone Pino Logger & Job Correlation', () => {
       }
     });
 
+    it('preserves top-level and nested operational error codes (L1 requirement)', () => {
+      let output = '';
+      const stream = {
+        write: (str: string) => {
+          output += str;
+        },
+      };
+
+      const options = buildWorkerPinoOptions({ level: 'info' });
+      const testLogger = pino(options, stream);
+
+      testLogger.warn(
+        {
+          code: 'MISSING_CAPABILITY',
+          error: { code: 'STALE_METADATA' },
+          msg: 'publication.failed',
+        },
+        'Operation failure',
+      );
+
+      const parsed = JSON.parse(output.trim());
+      expect(parsed.code).toBe('MISSING_CAPABILITY');
+      expect(parsed.error.code).toBe('STALE_METADATA');
+    });
+
+    it('redacts snake_case credential variants and nested structures (M3 requirement)', () => {
+      let output = '';
+      const stream = {
+        write: (str: string) => {
+          output += str;
+        },
+      };
+
+      const options = buildWorkerPinoOptions({ level: 'info' });
+      const testLogger = pino(options, stream);
+
+      testLogger.error(
+        {
+          err: {
+            config: {
+              headers: {
+                Authorization: 'Bearer worker_nested_bearer_token',
+                authorization: 'Bearer worker_lower_bearer_token',
+              },
+            },
+            response: {
+              data: {
+                access_token: 'worker_access_token_secret',
+                refresh_token: 'worker_refresh_token_secret',
+                client_secret: 'worker_client_secret_secret',
+              },
+            },
+          },
+        },
+        'Worker error redaction',
+      );
+
+      expect(output).not.toContain('worker_nested_bearer_token');
+      expect(output).not.toContain('worker_lower_bearer_token');
+      expect(output).not.toContain('worker_access_token_secret');
+      expect(output).not.toContain('worker_refresh_token_secret');
+      expect(output).not.toContain('worker_client_secret_secret');
+
+      const parsed = JSON.parse(output.trim());
+      expect(parsed.err.config.headers.Authorization).toBe('[REDACTED]');
+      expect(parsed.err.config.headers.authorization).toBe('[REDACTED]');
+      expect(parsed.err.response.data.access_token).toBe('[REDACTED]');
+      expect(parsed.err.response.data.refresh_token).toBe('[REDACTED]');
+      expect(parsed.err.response.data.client_secret).toBe('[REDACTED]');
+    });
+
     it('redacts nested and BullMQ job data paths', () => {
       let output = '';
       const stream = {
@@ -113,7 +187,9 @@ describe('Worker Standalone Pino Logger & Job Correlation', () => {
         {
           data: {
             accessToken: 'nested-secret-access',
+            access_token: 'nested-snake-access',
             refreshToken: 'nested-secret-refresh',
+            refresh_token: 'nested-snake-refresh',
             credentials: 'secret-credentials',
           },
           job: {
@@ -129,41 +205,18 @@ describe('Worker Standalone Pino Logger & Job Correlation', () => {
 
       const parsed = JSON.parse(output.trim());
       expect(parsed.data.accessToken).toBe('[REDACTED]');
+      expect(parsed.data.access_token).toBe('[REDACTED]');
       expect(parsed.data.refreshToken).toBe('[REDACTED]');
+      expect(parsed.data.refresh_token).toBe('[REDACTED]');
       expect(parsed.data.credentials).toBe('[REDACTED]');
       expect(parsed.job.data.code).toBe('[REDACTED]');
       expect(parsed.job.data.state).toBe('[REDACTED]');
       expect(parsed.encryptedTokens).toBe('[REDACTED]');
     });
-
-    it('redacts sensitive fields on error objects without leaking credentials', () => {
-      let output = '';
-      const stream = {
-        write: (str: string) => {
-          output += str;
-        },
-      };
-
-      const options = buildWorkerPinoOptions({ level: 'info' });
-      const testLogger = pino(options, stream);
-
-      const error: any = new Error('OAuth token expired');
-      error.accessToken = 'raw-access-token';
-      error.refreshToken = 'raw-refresh-token';
-      error.credentials = { password: 'raw-password' };
-
-      testLogger.error({ err: error, jobId: 'sync-failed-1' }, 'Sync failed');
-
-      const parsed = JSON.parse(output.trim());
-      expect(parsed.err.message).toBe('OAuth token expired');
-      expect(parsed.err.accessToken).toBe('[REDACTED]');
-      expect(parsed.err.refreshToken).toBe('[REDACTED]');
-      expect(parsed.err.credentials).toBe('[REDACTED]');
-    });
   });
 
-  describe('Correlation ID & Backward Compatibility', () => {
-    it('correctly handles jobs with a correlationId', () => {
+  describe('Correlation ID & Backward Compatibility (M2 requirement)', () => {
+    it('propagates correlationId and operationId across job metadata in worker logs', () => {
       let output = '';
       const stream = {
         write: (str: string) => {
@@ -174,29 +227,78 @@ describe('Worker Standalone Pino Logger & Job Correlation', () => {
       const options = buildWorkerPinoOptions({ level: 'info' });
       const testLogger = pino(options, stream);
 
-      const syncJob: SyncJobData = {
-        socialAccountId: 'acc-1',
-        workspaceId: 'ws-1',
-        correlationId: 'corr-api-originated-789',
+      const publishJob: PublishJobData = {
+        publicationId: 'pub-abc-123',
+        workspaceId: 'ws-xyz-456',
+        dispatchVersion: 2,
+        correlationId: 'req-corr-uuid-789',
+        operationId: 'op-corr-uuid-101',
       };
 
-      testLogger.info(
-        {
-          jobId: 'job-sync-1',
-          socialAccountId: syncJob.socialAccountId,
-          workspaceId: syncJob.workspaceId,
-          ...(syncJob.correlationId
-            ? { correlationId: syncJob.correlationId }
-            : {}),
-          action: 'sync_job_started',
-        },
-        'Processing sync job',
-      );
+      const jobMeta = {
+        jobId: 'job-publish-1',
+        publicationId: publishJob.publicationId,
+        workspaceId: publishJob.workspaceId,
+        dispatchVersion: publishJob.dispatchVersion,
+        ...(publishJob.operationId
+          ? { operationId: publishJob.operationId }
+          : {}),
+        ...(publishJob.correlationId
+          ? { correlationId: publishJob.correlationId }
+          : {}),
+      };
+
+      testLogger.info({
+        msg: 'publication.claimed',
+        attemptId: 'att-1',
+        ...jobMeta,
+      });
 
       const parsed = JSON.parse(output.trim());
-      expect(parsed.correlationId).toBe('corr-api-originated-789');
-      expect(parsed.socialAccountId).toBe('acc-1');
-      expect(parsed.workspaceId).toBe('ws-1');
+      expect(parsed.msg).toBe('publication.claimed');
+      expect(parsed.jobId).toBe('job-publish-1');
+      expect(parsed.publicationId).toBe('pub-abc-123');
+      expect(parsed.workspaceId).toBe('ws-xyz-456');
+      expect(parsed.correlationId).toBe('req-corr-uuid-789');
+      expect(parsed.operationId).toBe('op-corr-uuid-101');
+    });
+
+    it('correctly handles delete jobs with correlationId', () => {
+      let output = '';
+      const stream = {
+        write: (str: string) => {
+          output += str;
+        },
+      };
+
+      const options = buildWorkerPinoOptions({ level: 'info' });
+      const testLogger = pino(options, stream);
+
+      const deleteJob: PublishDeleteJobData = {
+        publicationId: 'pub-delete-123',
+        workspaceId: 'ws-delete-456',
+        correlationId: 'corr-delete-789',
+      };
+
+      const jobMeta = {
+        jobId: 'job-delete-1',
+        publicationId: deleteJob.publicationId,
+        workspaceId: deleteJob.workspaceId,
+        ...(deleteJob.correlationId
+          ? { correlationId: deleteJob.correlationId }
+          : {}),
+      };
+
+      testLogger.error({
+        msg: 'delete.provider_not_found_or_unsupported',
+        provider: 'UNKNOWN',
+        ...jobMeta,
+      });
+
+      const parsed = JSON.parse(output.trim());
+      expect(parsed.msg).toBe('delete.provider_not_found_or_unsupported');
+      expect(parsed.correlationId).toBe('corr-delete-789');
+      expect(parsed.publicationId).toBe('pub-delete-123');
     });
 
     it('correctly handles backward compatibility for legacy jobs without correlationId', () => {
@@ -219,25 +321,28 @@ describe('Worker Standalone Pino Logger & Job Correlation', () => {
 
       expect(legacyPublishJob.correlationId).toBeUndefined();
 
+      const jobMeta = {
+        jobId: 'job-legacy-publish-1',
+        publicationId: legacyPublishJob.publicationId,
+        workspaceId: legacyPublishJob.workspaceId,
+        dispatchVersion: legacyPublishJob.dispatchVersion,
+        ...(legacyPublishJob.correlationId
+          ? { correlationId: legacyPublishJob.correlationId }
+          : {}),
+      };
+
       testLogger.info(
         {
-          jobId: 'job-legacy-publish-1',
-          publicationId: legacyPublishJob.publicationId,
-          workspaceId: legacyPublishJob.workspaceId,
-          dispatchVersion: legacyPublishJob.dispatchVersion,
-          ...(legacyPublishJob.correlationId
-            ? { correlationId: legacyPublishJob.correlationId }
-            : {}),
-          action: 'publication.job.started',
+          msg: 'publication.succeeded',
+          ...jobMeta,
         },
-        'Publication job started',
+        'Publication succeeded',
       );
 
       const parsed = JSON.parse(output.trim());
       expect(parsed.publicationId).toBe('pub-1');
       expect(parsed.workspaceId).toBe('ws-1');
       expect(parsed.dispatchVersion).toBe(1);
-      // correlationId is cleanly omitted, not undefined or null string
       expect(parsed.correlationId).toBeUndefined();
     });
   });

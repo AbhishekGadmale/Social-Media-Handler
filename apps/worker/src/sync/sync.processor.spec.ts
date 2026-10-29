@@ -17,6 +17,7 @@ import { Job, UnrecoverableError } from 'bullmq';
 import { encrypt } from '@agency-os/database/src/crypto/encryption';
 import { assertTestDatabaseUrl } from '@agency-os/database';
 import { TokenService } from '../publishing/token.service';
+import { getLoggerToken } from 'nestjs-pino';
 
 jest.mock('@agency-os/providers', () => {
   const original = jest.requireActual('@agency-os/providers');
@@ -32,6 +33,14 @@ describe('SyncProcessor', () => {
 
   beforeEach(async () => {
     prisma = new PrismaClient();
+    const mockLogger = {
+      info: jest.fn(),
+      warn: jest.fn(),
+      error: jest.fn(),
+      debug: jest.fn(),
+      setContext: jest.fn(),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         SyncProcessor,
@@ -43,6 +52,14 @@ describe('SyncProcessor', () => {
         {
           provide: SyncService,
           useValue: { enqueueSyncAll: jest.fn() },
+        },
+        {
+          provide: getLoggerToken(SyncProcessor.name),
+          useValue: mockLogger,
+        },
+        {
+          provide: getLoggerToken(TokenService.name),
+          useValue: mockLogger,
         },
       ],
     }).compile();

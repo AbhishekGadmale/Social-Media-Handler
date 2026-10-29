@@ -5,7 +5,6 @@ import {
   BadRequestException,
   ForbiddenException,
   InternalServerErrorException,
-  Optional,
 } from '@nestjs/common';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import type { IObjectStorage } from '@agency-os/providers';
@@ -25,7 +24,6 @@ export interface InitiateUploadDto {
 
 @Injectable()
 export class MediaService {
-  private readonly logger: PinoLogger;
   private readonly maxUploadBytes: number = parseInt(
     process.env.MEDIA_MAX_UPLOAD_BYTES || '524288000',
     10,
@@ -39,15 +37,9 @@ export class MediaService {
     @Inject('IObjectStorage') private readonly storage: IObjectStorage,
     private readonly prisma: PrismaClient,
     private readonly audit: AuditService,
-    @Optional()
     @InjectPinoLogger(MediaService.name)
-    logger?: PinoLogger,
-  ) {
-    this.logger = logger ?? new PinoLogger({});
-    if (!logger) {
-      this.logger.setContext(MediaService.name);
-    }
-  }
+    private readonly logger: PinoLogger,
+  ) {}
 
   private generateStagingKey(workspaceId: string, mediaId: string): string {
     return `workspaces/${workspaceId}/media/uploads/${mediaId}`;

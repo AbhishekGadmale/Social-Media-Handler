@@ -11,7 +11,6 @@ import {
   NotFoundException,
   ParseUUIDPipe,
   Body,
-  Optional,
 } from '@nestjs/common';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { ParseSocialProviderPipe } from './pipes/parse-social-provider.pipe';
@@ -32,23 +31,16 @@ import { RateLimitPolicies } from '../core/rate-limit.policies';
 import { AuditAction } from '@agency-os/database';
 import { AuditService } from '../core/audit.service';
 import { getPublicApiUrl } from '../../config/public-url';
+import { getOrCreateCorrelationId } from '../core/correlation-id.utils';
 
 @Controller()
 export class OAuthController {
-  private readonly logger: PinoLogger;
-
   constructor(
     private readonly oauthService: OAuthService,
     private readonly auditService: AuditService,
-    @Optional()
     @InjectPinoLogger(OAuthController.name)
-    logger?: PinoLogger,
-  ) {
-    this.logger = logger ?? new PinoLogger({});
-    if (!logger) {
-      this.logger.setContext(OAuthController.name);
-    }
-  }
+    private readonly logger: PinoLogger,
+  ) {}
 
   @Throttle({ default: RateLimitPolicies.expensive })
   @Post('v1/workspaces/:workspaceId/oauth/:provider/connect')
@@ -84,7 +76,7 @@ export class OAuthController {
       actorId: userId,
       targetType: 'SocialProvider',
       targetId: provider,
-      requestId: (req as any).id,
+      requestId: getOrCreateCorrelationId(req),
       metadata: { provider },
     });
 
@@ -101,7 +93,7 @@ export class OAuthController {
     @Res() res: Response,
   ) {
     const { code, state, error } = query;
-    const requestId = (req as any).id;
+    const requestId = getOrCreateCorrelationId(req);
     const userId = req.user!.id;
 
     if (error) {
@@ -245,8 +237,7 @@ export class OAuthController {
     @Req() req: Request,
   ) {
     const userId = req.user!.id;
-    const requestId =
-      (req as any).id || (req.headers['x-request-id'] as string) || undefined;
+    const requestId = getOrCreateCorrelationId(req);
     const { profileIds } = dto;
 
     const results = await this.oauthService.processDiscoverySelection(
@@ -266,7 +257,7 @@ export class OAuthController {
         actorId: userId,
         targetType: 'SocialAccount',
         targetId: res.accountId,
-        requestId: (req as any).id || '',
+        requestId,
         metadata: {
           provider: res.provider,
           discoveryId,

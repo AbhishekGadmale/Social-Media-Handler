@@ -5,17 +5,15 @@ import {
   Injectable,
   OnModuleInit,
   OnModuleDestroy,
-  Optional,
 } from '@nestjs/common';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { PrismaClient, PostStatus } from '@agency-os/database';
-import { PublishJobData } from './publishing.types';
+import { PublishJobData, PublishDeleteJobData } from '@agency-os/shared';
 
 @Injectable()
 export class PublishingDispatcher implements OnModuleInit, OnModuleDestroy {
-  private readonly logger: PinoLogger;
   private intervalId?: NodeJS.Timeout;
   private readonly SCAN_INTERVAL_MS = 15000;
   private readonly BATCH_SIZE = 100;
@@ -23,15 +21,9 @@ export class PublishingDispatcher implements OnModuleInit, OnModuleDestroy {
   constructor(
     @InjectQueue('publish') private readonly publishQueue: Queue,
     private readonly prisma: PrismaClient,
-    @Optional()
     @InjectPinoLogger(PublishingDispatcher.name)
-    logger?: PinoLogger,
-  ) {
-    this.logger = logger ?? new PinoLogger({});
-    if (!logger) {
-      this.logger.setContext(PublishingDispatcher.name);
-    }
-  }
+    private readonly logger: PinoLogger,
+  ) {}
 
   onModuleInit() {
     // Start polling loop

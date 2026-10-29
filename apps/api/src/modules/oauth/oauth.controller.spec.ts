@@ -11,6 +11,7 @@ import { PermissionGuard } from '../auth/guards/permission.guard';
 import { SocialProvider } from '@agency-os/database';
 
 import { AuditService } from '../core/audit.service';
+import { getLoggerToken } from 'nestjs-pino';
 
 describe('OAuthController', () => {
   let controller: OAuthController;
@@ -40,6 +41,16 @@ describe('OAuthController', () => {
         {
           provide: AuditService,
           useValue: mockAuditService,
+        },
+        {
+          provide: getLoggerToken(OAuthController.name),
+          useValue: {
+            info: vi.fn(),
+            warn: vi.fn(),
+            error: vi.fn(),
+            debug: vi.fn(),
+            setContext: vi.fn(),
+          },
         },
       ],
     })

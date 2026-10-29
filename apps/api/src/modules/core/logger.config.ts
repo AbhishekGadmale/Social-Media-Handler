@@ -1,45 +1,93 @@
 import { Params } from 'nestjs-pino';
 import pino from 'pino';
-import { generateId } from '@agency-os/database';
+import {
+  CORRELATION_ID_REGEX,
+  getOrCreateCorrelationId,
+  attachCorrelationIdToResponse,
+} from './correlation-id.utils';
+import { sanitizeRequestUrl } from './url-sanitizer.utils';
 
-export const CORRELATION_ID_REGEX = /^[a-zA-Z0-9._-]{1,128}$/;
+export {
+  CORRELATION_ID_REGEX,
+  getOrCreateCorrelationId,
+  attachCorrelationIdToResponse,
+  sanitizeRequestUrl,
+};
 
 export const SENSITIVE_FIELDS = [
   'password',
-  'authorization',
-  'cookie',
-  'set-cookie',
-  'setCookie',
-  'x-csrf-token',
-  'csrfToken',
-  'code',
-  'state',
   'accessToken',
+  'access_token',
   'refreshToken',
+  'refresh_token',
+  'clientSecret',
+  'client_secret',
+  'tokenSecret',
+  'token_secret',
   'encryptedTokens',
+  'encrypted_tokens',
   'credentials',
+  'authorization',
+  'Authorization',
+  'cookie',
+  'Cookie',
+  'x-csrf-token',
+  'X-CSRF-Token',
+  'set-cookie',
+  'Set-Cookie',
+  'setCookie',
+  'csrfToken',
+  'csrf_token',
+];
+
+/**
+ * Scoped OAuth code/state redaction paths to avoid obscuring operational error codes
+ * (e.g. { code: 'TRANSITION_FAILED' }) while ensuring authorization codes/state tokens
+ * in query, body, and payload objects are strictly redacted.
+ */
+export const SCOPED_OAUTH_PATHS = [
+  'req.query.code',
+  'req.query.state',
+  'query.code',
+  'query.state',
+  'req.body.code',
+  'req.body.state',
+  'body.code',
+  'body.state',
+  'params.code',
+  'params.state',
+  'data.code',
+  'data.state',
 ];
 
 export const API_REDACT_PATHS = [
   ...SENSITIVE_FIELDS,
   ...SENSITIVE_FIELDS.map((field) => `*.${field}`),
   ...SENSITIVE_FIELDS.map((field) => `*.*.${field}`),
+  ...SENSITIVE_FIELDS.map((field) => `*.*.*.${field}`),
+  ...SENSITIVE_FIELDS.map((field) => `*.*.*.*.${field}`),
+  ...SENSITIVE_FIELDS.map((field) => `*.*.*.*.*.${field}`),
+  ...SCOPED_OAUTH_PATHS,
   'req.headers.authorization',
+  'req.headers.Authorization',
   'req.headers.cookie',
+  'req.headers.Cookie',
   'req.headers["x-csrf-token"]',
+  'req.headers["X-CSRF-Token"]',
   'req.headers["set-cookie"]',
+  'req.headers["Set-Cookie"]',
   'res.headers["set-cookie"]',
+  'res.headers["Set-Cookie"]',
   'res.headers.set-cookie',
-  'req.query.code',
-  'req.query.state',
   'req.query.session',
-  'req.query.csrfToken',
   'req.body.password',
   'req.body.accessToken',
+  'req.body.access_token',
   'req.body.refreshToken',
+  'req.body.refresh_token',
+  'req.body.clientSecret',
+  'req.body.client_secret',
   'req.body.encryptedTokens',
-  'req.body.code',
-  'req.body.state',
   'req.body.credentials',
 ];
 
@@ -51,44 +99,9 @@ export function getApiLogLevel(): string {
 }
 
 export function validateAndAssignReqId(req: any, res?: any): string {
-  const raw = req.headers ? req.headers['x-request-id'] : undefined;
-  const incoming = Array.isArray(raw) ? raw[0] : raw;
-  const id =
-    typeof incoming === 'string' && CORRELATION_ID_REGEX.test(incoming)
-      ? incoming
-      : generateId();
-
-  if (res && typeof res.setHeader === 'function') {
-    res.setHeader('x-request-id', id);
-  }
-
+  const id = getOrCreateCorrelationId(req);
+  attachCorrelationIdToResponse(res, id);
   return id;
-}
-
-export function sanitizeRequestUrl(urlStr: string): string {
-  if (!urlStr) return '';
-  try {
-    const parsedUrl = new URL(urlStr, 'http://localhost');
-    const sensitiveQueryParams = [
-      'code',
-      'state',
-      'session',
-      'csrfToken',
-      'token',
-      'accessToken',
-      'refreshToken',
-    ];
-    let modified = false;
-    for (const param of sensitiveQueryParams) {
-      if (parsedUrl.searchParams.has(param)) {
-        parsedUrl.searchParams.set(param, '[REDACTED]');
-        modified = true;
-      }
-    }
-    return modified ? parsedUrl.pathname + parsedUrl.search : urlStr;
-  } catch {
-    return urlStr.split('?')[0];
-  }
 }
 
 export const loggerConfig: Params = {
@@ -110,15 +123,12 @@ export const loggerConfig: Params = {
       req: (req: any) => {
         const urlStr = (req.url as string) || '';
         const headers = { ...req.headers };
-        if (headers['x-csrf-token']) {
-          headers['x-csrf-token'] = '[REDACTED]';
-        }
-        if (headers['authorization']) {
-          headers['authorization'] = '[REDACTED]';
-        }
-        if (headers['cookie']) {
-          headers['cookie'] = '[REDACTED]';
-        }
+        if (headers['x-csrf-token']) headers['x-csrf-token'] = '[REDACTED]';
+        if (headers['X-CSRF-Token']) headers['X-CSRF-Token'] = '[REDACTED]';
+        if (headers['authorization']) headers['authorization'] = '[REDACTED]';
+        if (headers['Authorization']) headers['Authorization'] = '[REDACTED]';
+        if (headers['cookie']) headers['cookie'] = '[REDACTED]';
+        if (headers['Cookie']) headers['Cookie'] = '[REDACTED]';
 
         return {
           id: req.id,

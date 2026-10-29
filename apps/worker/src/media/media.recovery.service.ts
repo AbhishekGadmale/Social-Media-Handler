@@ -3,7 +3,6 @@ import {
   OnModuleInit,
   OnModuleDestroy,
   Inject,
-  Optional,
 } from '@nestjs/common';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { PrismaClient, MediaAssetStatus } from '@agency-os/database';
@@ -12,7 +11,6 @@ import { generateId } from '@agency-os/database';
 
 @Injectable()
 export class MediaRecoveryService implements OnModuleInit, OnModuleDestroy {
-  private readonly logger: PinoLogger;
   private intervalId?: NodeJS.Timeout;
   private readonly SCAN_INTERVAL_MS = 60000;
   private readonly MEDIA_PROCESSING_STALE_MS = 5 * 60 * 1000;
@@ -21,15 +19,9 @@ export class MediaRecoveryService implements OnModuleInit, OnModuleDestroy {
   constructor(
     private readonly prisma: PrismaClient,
     @Inject('IObjectStorage') private readonly storage: IObjectStorage,
-    @Optional()
     @InjectPinoLogger(MediaRecoveryService.name)
-    logger?: PinoLogger,
-  ) {
-    this.logger = logger ?? new PinoLogger({});
-    if (!logger) {
-      this.logger.setContext(MediaRecoveryService.name);
-    }
-  }
+    private readonly logger: PinoLogger,
+  ) {}
 
   onModuleInit() {
     this.intervalId = setInterval(() => {

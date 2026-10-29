@@ -1,4 +1,4 @@
-import { Injectable, OnModuleInit, Optional } from '@nestjs/common';
+import { Injectable, OnModuleInit } from '@nestjs/common';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
@@ -6,20 +6,12 @@ import { PrismaClient, SocialAccountStatus } from '@agency-os/database';
 
 @Injectable()
 export class SyncService implements OnModuleInit {
-  private readonly logger: PinoLogger;
-
   constructor(
     @InjectQueue('sync') private readonly syncQueue: Queue,
     private readonly prisma: PrismaClient,
-    @Optional()
     @InjectPinoLogger(SyncService.name)
-    logger?: PinoLogger,
-  ) {
-    this.logger = logger ?? new PinoLogger({});
-    if (!logger) {
-      this.logger.setContext(SyncService.name);
-    }
-  }
+    private readonly logger: PinoLogger,
+  ) {}
 
   async onModuleInit() {
     // Register the repeatable job

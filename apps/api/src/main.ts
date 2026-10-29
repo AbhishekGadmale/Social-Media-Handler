@@ -7,7 +7,7 @@ import { AllExceptionsFilter } from './filters/all-exceptions.filter';
 import { ValidationPipe } from '@nestjs/common';
 import helmet from 'helmet';
 
-import { Logger } from 'nestjs-pino';
+import { Logger, PinoLogger } from 'nestjs-pino';
 import { configureTrustProxy } from './config/trust-proxy';
 import { getPublicApiUrl } from './config/public-url';
 import { validateTokenEncryptionKey } from '@agency-os/database';
@@ -52,7 +52,7 @@ export async function bootstrap() {
 
   app.setGlobalPrefix('api');
   app.use(cookieParser());
-  app.useGlobalFilters(new AllExceptionsFilter());
+  app.useGlobalFilters(new AllExceptionsFilter(await app.resolve(PinoLogger)));
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,

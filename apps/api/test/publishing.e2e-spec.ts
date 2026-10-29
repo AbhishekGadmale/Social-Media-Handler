@@ -1,5 +1,6 @@
 /* eslint-disable */
 import { AllExceptionsFilter } from '../src/filters/all-exceptions.filter';
+import { PinoLogger } from 'nestjs-pino';
 import { HttpAdapterHost } from '@nestjs/core';
 import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication, ValidationPipe } from '@nestjs/common';
@@ -64,7 +65,7 @@ describe('Publishing API (e2e)', () => {
 
     app = moduleFixture.createNestApplication();
     const { httpAdapter } = app.get(HttpAdapterHost);
-    app.useGlobalFilters(new AllExceptionsFilter());
+    app.useGlobalFilters(new AllExceptionsFilter(await app.resolve(PinoLogger)));
     app.setGlobalPrefix('api');
     app.use(cookieParser());
     app.useGlobalPipes(

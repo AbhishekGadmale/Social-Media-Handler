@@ -9,6 +9,7 @@ import {
 } from '@agency-os/database';
 import nock from 'nock';
 import { vi } from 'vitest';
+import { getLoggerToken } from 'nestjs-pino';
 
 describe('OAuthService', () => {
   let service: OAuthService;
@@ -65,6 +66,16 @@ describe('OAuthService', () => {
         {
           provide: 'BullQueue_sync',
           useValue: mockSyncQueue,
+        },
+        {
+          provide: getLoggerToken(OAuthService.name),
+          useValue: {
+            info: vi.fn(),
+            warn: vi.fn(),
+            error: vi.fn(),
+            debug: vi.fn(),
+            setContext: vi.fn(),
+          },
         },
       ],
     }).compile();

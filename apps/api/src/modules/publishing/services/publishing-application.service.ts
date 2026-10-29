@@ -7,7 +7,6 @@ import {
   ForbiddenException,
   HttpException,
   InternalServerErrorException,
-  Optional,
 } from '@nestjs/common';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { PrismaClient } from '@agency-os/database';
@@ -26,21 +25,13 @@ import {
 
 @Injectable()
 export class PublishingApplicationService {
-  private readonly logger: PinoLogger;
-
   constructor(
     private readonly prisma: PrismaClient,
     private readonly audit: AuditService,
     private readonly validator: PublishabilityValidator,
-    @Optional()
     @InjectPinoLogger(PublishingApplicationService.name)
-    logger?: PinoLogger,
-  ) {
-    this.logger = logger ?? new PinoLogger({});
-    if (!logger) {
-      this.logger.setContext(PublishingApplicationService.name);
-    }
-  }
+    private readonly logger: PinoLogger,
+  ) {}
 
   private getRepo(workspaceId: string) {
     return new PublishingRepository(this.prisma, workspaceId);

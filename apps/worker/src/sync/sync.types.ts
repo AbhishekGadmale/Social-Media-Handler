@@ -1,5 +1,1 @@
-export interface SyncJobData {
-  socialAccountId: string;
-  workspaceId: string;
-  correlationId?: string;
-}
+export type { SyncJobData } from '@agency-os/shared';

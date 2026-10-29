@@ -13,30 +13,23 @@ import {
   ProviderApiError,
 } from '@agency-os/providers';
 import { invokeCapability } from '@agency-os/providers';
-import { OnModuleInit, Optional } from '@nestjs/common';
+import { OnModuleInit } from '@nestjs/common';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 
 import { SyncService } from './sync.service';
 import { TokenService, AuthRequiredError } from '../publishing/token.service';
-import { SyncJobData } from './sync.types';
+import { SyncJobData } from '@agency-os/shared';
 
 @Processor('sync')
 export class SyncProcessor extends WorkerHost implements OnModuleInit {
-  private readonly logger: PinoLogger;
-
   constructor(
     private readonly prisma: PrismaClient,
     private readonly syncService: SyncService,
     private readonly tokenService: TokenService,
-    @Optional()
     @InjectPinoLogger(SyncProcessor.name)
-    logger?: PinoLogger,
+    private readonly logger: PinoLogger,
   ) {
     super();
-    this.logger = logger ?? new PinoLogger({});
-    if (!logger) {
-      this.logger.setContext(SyncProcessor.name);
-    }
   }
 
   onModuleInit() {
@@ -46,7 +39,7 @@ export class SyncProcessor extends WorkerHost implements OnModuleInit {
     );
   }
 
-  async process(job: Job<any>) {
+  async process(job: Job<SyncJobData>) {
     if (job.name === 'schedule:sync-all') {
       await this.syncService.enqueueSyncAll();
       return;

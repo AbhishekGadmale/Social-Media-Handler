@@ -3,9 +3,9 @@ import {
   Inject,
   ForbiddenException,
   BadRequestException,
-  Optional,
 } from '@nestjs/common';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
+import { SyncJobData } from '@agency-os/shared';
 import Redis from 'ioredis';
 import {
   SocialAccountRepository,
@@ -24,21 +24,13 @@ import { OAuthCallbackResult, DiscoverySession } from './oauth-discovery.types';
 
 @Injectable()
 export class OAuthService {
-  private readonly logger: PinoLogger;
-
   constructor(
     @Inject('REDIS_CLIENT') private readonly redis: Redis,
     private readonly socialAccountRepo: SocialAccountRepository,
     @InjectQueue('sync') private readonly syncQueue: Queue,
-    @Optional()
     @InjectPinoLogger(OAuthService.name)
-    logger?: PinoLogger,
-  ) {
-    this.logger = logger ?? new PinoLogger({});
-    if (!logger) {
-      this.logger.setContext(OAuthService.name);
-    }
-  }
+    private readonly logger: PinoLogger,
+  ) {}
 
   private validateProvider(providerName: string): SocialProvider {
     const normalized = providerName.toUpperCase();
@@ -241,19 +233,16 @@ export class OAuthService {
       // Enqueue sync jobs AFTER successful transaction
       for (const res of results) {
         try {
-          await this.syncQueue.add(
-            'sync-account',
-            {
-              socialAccountId: res.account.id,
-              workspaceId,
-              ...(correlationId ? { correlationId } : {}),
-            },
-            {
-              attempts: 3,
-              backoff: { type: 'exponential', delay: 1000 },
-              jobId: `initial-sync-${res.account.id}-${Date.now()}`,
-            },
-          );
+          const syncPayload: SyncJobData = {
+            socialAccountId: res.account.id,
+            workspaceId,
+            ...(correlationId ? { correlationId } : {}),
+          };
+          await this.syncQueue.add('sync-account', syncPayload, {
+            attempts: 3,
+            backoff: { type: 'exponential', delay: 1000 },
+            jobId: `initial-sync-${res.account.id}-${Date.now()}`,
+          });
         } catch (err) {
           this.logger.error(
             {
@@ -398,19 +387,16 @@ export class OAuthService {
       );
 
     try {
-      await this.syncQueue.add(
-        'sync-account',
-        {
-          socialAccountId: account.id,
-          workspaceId,
-          ...(correlationId ? { correlationId } : {}),
-        },
-        {
-          attempts: 3,
-          backoff: { type: 'exponential', delay: 1000 },
-          jobId: `initial-sync-${account.id}-${Date.now()}`,
-        },
-      );
+      const syncPayload: SyncJobData = {
+        socialAccountId: account.id,
+        workspaceId,
+        ...(correlationId ? { correlationId } : {}),
+      };
+      await this.syncQueue.add('sync-account', syncPayload, {
+        attempts: 3,
+        backoff: { type: 'exponential', delay: 1000 },
+        jobId: `initial-sync-${account.id}-${Date.now()}`,
+      });
       this.logger.info(
         {
           socialAccountId: account.id,
