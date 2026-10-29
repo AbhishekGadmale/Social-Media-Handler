@@ -33,7 +33,7 @@
   - **Security Hardening (Token Encryption)**: COMPLETE AND VERIFIED. AES-256-GCM encryption is fully implemented in `packages/database/src/crypto/encryption.ts` and used across the API and worker. Shared `validateTokenEncryptionKey()` enforces exactly 64 hexadecimal characters (32 bytes) fail-fast during bootstrap before application initialization. Extensive unit and startup test coverage verified.
   - **Rate Limiting**: PARTIAL. `@nestjs/throttler` is registered in `app.module.ts`, and `ThrottlerGuard` is applied specifically to the `/login` route in `auth.controller.ts`. Global API rate limiting is not yet active.
   - **Audit Logging**: NOT STARTED. No audit modules, services, or middleware exist in `apps/api`.
-  - **Staging/Deployment Hardening**: NOT STARTED. No staging configurations or deployment workflows exist.
+  - **Staging/Deployment Hardening**: CONFIGURATION IMPLEMENTED & TESTED. Unified NGINX ingress reverse proxy (`docker/nginx/nginx.conf`, `docker/nginx/Dockerfile`) configured for non-root execution, routing `/api/*` to `api:3001` and `/` to `web:3000` with WebSocket upgrade mapping, 512MB body limit matching `MEDIA_MAX_UPLOAD_BYTES`, and `/healthz` probe. Dedicated staging Compose configuration (`docker-compose.staging.yml`) unbinds internal ports (Postgres, Redis, MinIO, API, Web) from host exposure, binds only the ingress service on `${STAGING_PORT:-80}`, and enforces required staging secrets (`SESSION_SECRET`, `JWT_SECRET`, `COOKIE_SECRET`, `POSTGRES_PASSWORD`, `TOKEN_ENCRYPTION_KEY`) without development fallbacks. 18 automated regression tests in `apps/api/src/config/staging-deployment.spec.ts` verified; CI smoke tests extended for staging compose. *Verification levels*: Configuration implemented (YES), Automated tests passed (YES), Docker ingress smoke test passed (YES), TLS verified on staging domain (PENDING OPERATOR DNS/CERT PROVISIONING), Live VPS deployment verified (PENDING OPERATOR DEPLOYMENT RUN).
   - **Secret Management**: PARTIAL. Environment variable templates documented in `.env.example` (including `TOKEN_ENCRYPTION_KEY`, LinkedIn OAuth credentials [`LINKEDIN_CLIENT_ID`, `LINKEDIN_CLIENT_SECRET`], and `FRONTEND_URL`). `docker-compose.yml` requires an explicitly supplied `TOKEN_ENCRYPTION_KEY` for API and Worker services with zero default secret fallbacks. Test-only key explicitly supplied in CI smoke testing. Production external secret store integration (e.g., Vault / AWS Secrets Manager) remains deferred.
   - **Observability**: COMPLETE AND VERIFIED. Structured Pino logging configured across API and Worker (`logger.config.ts`), with correlation ID validation and propagation across HTTP requests and BullMQ queue jobs (`SyncJobData`, `PublishJobData`, `PublishDeleteJobData`), sensitive credential and header redaction (snake_case and camelCase tokens, secrets, cookies), request URL query parameter sanitization (`url-sanitizer.utils.ts`), required `PinoLogger` dependency injection, and comprehensive unit and integration test suites.
   - **Tenancy Verification**: COMPLETE AND VERIFIED. Cross-workspace checks and `WorkspaceGuard` are enforced (e.g., in `analytics.controller.ts`).
@@ -47,11 +47,11 @@
 
 1. **Last definitely completed phase**: Phase 5 (Analytics).
 2. **Current active phase**: Phase 6 (Hardening).
-3. **Exact Phase 6 items already finished**: Tenancy verification (WorkspaceGuard), OAuth Hardening (PKCE + CSRF), Token Encryption (AES-256-GCM logic + fail-fast 64-hex startup validation in API/Worker), Environment Secret Documentation (.env.example templates), Docker Compose Required Secret Enforcement, Queue Reliability (BullMQ backoffs), Ingress Rate Limiting (`APP_GUARD` + Redis Throttler), Audit Logging (`AuditService` and transactional audit persistence), Container Hardening (Node `dist` execution, workspace-aware production Docker runner slimming), Observability (Structured Pino logging, request/job correlation propagation, sensitive credential redaction, and URL sanitization).
-4. **Exact Phase 6 items partially implemented**: Secret management (environment configuration and fail-fast startup validation complete; production external secrets vault integration remains deferred).
-5. **Exact Phase 6 items not started**: Staging/deployment hardening.
+3. **Exact Phase 6 items already finished**: Tenancy verification (WorkspaceGuard), OAuth Hardening (PKCE + CSRF), Token Encryption (AES-256-GCM logic + fail-fast 64-hex startup validation in API/Worker), Environment Secret Documentation (.env.example templates), Docker Compose Required Secret Enforcement, Queue Reliability (BullMQ backoffs), Ingress Rate Limiting (`APP_GUARD` + Redis Throttler), Audit Logging (`AuditService` and transactional audit persistence), Container Hardening (Node `dist` execution, workspace-aware production Docker runner slimming), Observability (Structured Pino logging, request/job correlation propagation, sensitive credential redaction, and URL sanitization), Staging/Deployment Hardening (unified NGINX ingress, staging compose isolation, required secret enforcement, automated configuration tests, CI smoke test extension).
+4. **Exact Phase 6 items partially implemented**: Secret management (environment configuration, fail-fast startup validation, and staging compose secret enforcement complete; production external secrets vault integration remains deferred).
+5. **Exact Phase 6 items not started**: None (staging/deployment hardening configuration and tests implemented; live VPS deployment and external secret vault deferred/pending operator actions).
 6. **Most likely last task Claude Code was working on**: Implementing the background analytics synchronization worker (`apps/worker/src/sync/sync.processor.ts`) and writing its tests, while concurrently adding initial Phase 6 queue reliability and token encryption logic necessary for the worker to function securely.
-7. **Exact next task that should be continued**: Complete remaining Phase 6 backend hardening (Staging/deployment hardening).
+7. **Exact next task that should be continued**: Phase 7.1 — Publishing Domain & Provider Capability Design (following complete hardening of Phase 6).
 
 ---
 
@@ -511,6 +511,7 @@ Following the project's 7-tier prioritization hierarchy:
 | **Tier 6: Deployment Hardening** | **Security Event Audit Logging Coverage & Explicit Persistence Semantics** | [`apps/api/src/modules/core/audit.service.ts`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/core/audit.service.ts), [`apps/api/src/modules/publishing/services/publishing-application.service.ts`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/publishing/services/publishing-application.service.ts), [`packages/database/src/repositories/AuditLogRepository.ts`](file:///C:/Users/bappa/agency-os/packages/database/src/repositories/AuditLogRepository.ts) | **MERGED** (PR #11, `546316a`) | Medium / Resolved & Audited | Complete |
 | **Tier 6: Deployment Hardening** | Cross-Subdomain CSRF Deployment Architecture | `apps/api/src/modules/auth/auth.controller.ts`, `docs/phase-6-readiness.md` | **DOCUMENTED ARCHITECTURE CONSTRAINT** | Informational / Ingress Topology Requirement | Front web & API under unified reverse proxy or configure parent domain |
 | **Tier 6: Deployment Hardening** | Global Distributed Rate Limiting via Redis Throttler | `apps/api/src/app.module.ts`, `apps/api/src/modules/core/redis-throttler.storage.ts` | **VERIFIED COMPLETE** | Medium / Ingress Abuse Prevention | Complete (`APP_GUARD` + Redis store verified) |
+| **Tier 6: Deployment Hardening** | **Phase 6: Unified Ingress Reverse Proxy & Staging Compose Configuration** | `docker/nginx/nginx.conf`, `docker-compose.staging.yml`, `apps/api/src/config/staging-deployment.spec.ts` | **IMPLEMENTED & VERIFIED IN CI** | Medium / Deployment Hardening | Non-root NGINX ingress, host port isolation, required staging secret enforcement, 18 automated regression tests, CI smoke test |
 | **Tier 7: Concurrency & Data Integrity** | **Token Refresh `REAUTH_REQUIRED` CAS TOCTOU Fencing** | [`apps/worker/src/publishing/token.service.ts`](file:///C:/Users/bappa/agency-os/apps/worker/src/publishing/token.service.ts#L359-L540), [`apps/worker/src/publishing/token.service.spec.ts`](file:///C:/Users/bappa/agency-os/apps/worker/src/publishing/token.service.spec.ts#L688-L1075) | **MERGED** (PR #9, `4752a15`) | High / Resolved & Fenced | Complete |
 | **Tier 7: Concurrency & Data Integrity** | **Transactional Audit Writes for Draft Operations** | [`packages/database/src/repositories/AuditLogRepository.ts`](file:///C:/Users/bappa/agency-os/packages/database/src/repositories/AuditLogRepository.ts), [`apps/api/src/modules/core/audit.service.ts`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/core/audit.service.ts), [`apps/api/src/modules/publishing/services/publishing-application.service.ts`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/publishing/services/publishing-application.service.ts) | **MERGED** (PR #12, `8e94c62`) | Medium / Resolved & Audited | Complete |
 | **Tier 7: Concurrency & Data Integrity** | **`updateDraft` In-Transaction Locked-Variant Concurrency Serialization** | [`packages/database/src/repositories/PublishingRepository.ts`](file:///C:/Users/bappa/agency-os/packages/database/src/repositories/PublishingRepository.ts), [`apps/api/src/modules/publishing/services/publishing-application.service.ts`](file:///C:/Users/bappa/agency-os/apps/api/src/modules/publishing/services/publishing-application.service.ts), [`apps/api/test/publishing.e2e-spec.ts`](file:///C:/Users/bappa/agency-os/apps/api/test/publishing.e2e-spec.ts) | **MERGED** (PR #14, `279b4c5`) | Low / Resolved & Fenced | Complete |
@@ -1648,3 +1649,73 @@ The final architecture employs a two-tier fencing model:
    - Complete remaining Phase 6 backend hardening: staging/production deployment configurations, external production secret store integration.
 2. **Future Feature Dependency — Worker Catch-Path Disconnect Fencing**:
    - Retained as a future feature dependency when account disconnect API endpoints are introduced (`apps/worker/src/publishing/publishing.processor.ts`).
+
+## 35. Phase 6 — Staging/Deployment Hardening (Branch `feat/staging-deployment-hardening`)
+
+### 1. Summary & Motivation
+- **Status**: **IMPLEMENTED & VERIFIED IN AUTOMATED TESTS**
+- **Branch**: `feat/staging-deployment-hardening`
+- **Base SHA**: [`d2c6bc06438b0a0c9e3fa4b540e81fb8e28d4790`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/d2c6bc06438b0a0c9e3fa4b540e81fb8e28d4790) (`d2c6bc0`)
+- **Scope**: Production/staging deployment configuration, non-root NGINX ingress reverse proxy routing `/api/*` to NestJS API and `/` to Next.js Web under a unified origin, Docker Compose staging isolation unpublishing internal service ports from host exposure, fail-fast required staging secrets enforcement, 18 automated regression tests, and CI staging smoke test extension.
+- **Verification Levels**:
+  - *Configuration implemented*: **YES** (Checked into repo)
+  - *Automated unit & regression tests passed*: **YES** (18/18 tests in `staging-deployment.spec.ts`)
+  - *Docker ingress & host isolation smoke test passed*: **YES** (Verified locally & in CI workflow)
+  - *TLS verified on staging domain*: **PENDING OPERATOR DNS/CERT PROVISIONING** (Documented in `docs/phase-6-readiness.md`)
+  - *Live VPS deployment verified*: **PENDING OPERATOR DEPLOYMENT RUN** (Documented in `docs/phase-6-readiness.md`)
+
+### 2. Scope & Implementation Details
+1. **Unified Non-Root NGINX Ingress Reverse Proxy (`docker/nginx/nginx.conf`, `docker/nginx/Dockerfile`)**:
+   - Configured an unprivileged NGINX ingress service running as unprivileged user `nginx` (UID 101), listening on internal port 8080, with PID directed to `/tmp/nginx.pid` and temporary buffers routed to writable `/tmp/*_temp` paths.
+   - Routed `/api/` traffic to `http://api:3001` and root `/` (along with Next.js static assets and build outputs) to `http://web:3000` under a unified origin, natively resolving cross-subdomain CSRF cookie friction (`csrfToken` host-only cookie accessible by Next.js `document.cookie`).
+   - Configured WebSocket connection upgrade mappings (`$http_upgrade`, `$connection_upgrade`) for real-time frontend hot reloading and socket connections.
+   - Enforced client body upload limit of `512m` matching the backend media upload limit `MEDIA_MAX_UPLOAD_BYTES=524288000` (500MB) with 12MB headroom for multipart boundaries and HTTP header overhead.
+   - Configured keepalive upstream connection pooling (`keepalive 32`, `proxy_http_version 1.1`, `Connection ""`), header forwarding (`Host`, `X-Real-IP`, `X-Forwarded-For`, `X-Forwarded-Proto`, `X-Forwarded-Host`), proxy buffering, and standard 60-second timeouts.
+   - Exposed `/healthz` endpoint returning HTTP 200 `OK\n` without upstream dependencies for container health probes and orchestrator liveness checks.
+2. **Staging Compose Isolation & Secret Enforcement (`docker-compose.staging.yml`)**:
+   - Extends the baseline `docker-compose.yml` using Compose specification `ports: !reset []` syntax to strip host-published port mappings for all internal backing services: Postgres (`5432`), Redis (`6379`), MinIO (`9000`), API (`3001`), and Web (`3000`).
+   - Outbound internet access preserved on standard bridge network for OAuth provider exchanges and platform publishing endpoints.
+   - Exposed solely the unprivileged ingress reverse proxy on `${STAGING_PORT:-80}:8080`.
+   - Enforced fail-fast staging secrets using `${VAR:?error}` syntax without development fallbacks for `SESSION_SECRET`, `JWT_SECRET`, `COOKIE_SECRET`, `POSTGRES_PASSWORD`, and `TOKEN_ENCRYPTION_KEY`.
+   - Configured `NEXT_PUBLIC_API_URL` to default to empty string or relative `/api`, leveraging the unified origin.
+3. **Automated Test Suite (`apps/api/src/config/staging-deployment.spec.ts`)**:
+   - Implemented 18 comprehensive regression tests asserting:
+     - NGINX configuration syntax verification via container execution (`nginx -t`).
+     - Client body size directive (`512m`) alignment with `MEDIA_MAX_UPLOAD_BYTES`.
+     - Route proxy rules (`/api/` -> `api:3001`, `/` -> `web:3000`).
+     - Standard proxy header forwarding directives (`Host`, `X-Real-IP`, `X-Forwarded-For`, `X-Forwarded-Proto`, `X-Forwarded-Host`).
+     - WebSocket upgrade mapping rules and upstream keepalive pooling directives.
+     - Unprivileged runtime paths (`/tmp/nginx.pid`, `/tmp/*_temp`).
+     - Staging compose host port isolation asserting `ports: !reset []` across internal services.
+     - Staging compose fail-fast validation when any required secret is missing.
+     - API production configuration assertions (`NODE_ENV=production`, `PORT=3001`, `TRUST_PROXY=1`).
+4. **CI Workflow Extension (`.github/workflows/ci.yml`)**:
+   - Added `docker build` for ingress image (`docker/nginx/Dockerfile`) to the `docker` job.
+   - Added negative validation step verifying that `docker compose -f docker-compose.yml -f docker-compose.staging.yml config` fails fast when required secrets are missing.
+   - Extended the staging smoke test running the full Compose stack behind the NGINX ingress, verifying `/healthz` returns HTTP 200, verifying `/api/` routing, and asserting zero exposed host ports for internal services.
+5. **Environment Variable & Staging Readiness Documentation (`.env.example`, `docs/phase-6-readiness.md`)**:
+   - Documented `STAGING_PORT` and cryptographically secure staging secret generation commands (`openssl rand -hex 32`) in `.env.example`.
+   - Updated `docs/phase-6-readiness.md` detailing the implemented ingress architecture, staging compose configuration, network boundaries, and clearly documenting pending operator responsibilities (DNS records, edge TLS / ACME certificate issuance, and live deployment runs).
+
+### 3. Verification & Test Evidence
+- **Staging Deployment Unit Tests (`apps/api/src/config/staging-deployment.spec.ts`)**:
+  - 18 automated tests passing (0 failures).
+- **API Test Suite (`pnpm --filter @agency-os/api test`)**:
+  - 21 test files passed, 242 tests passed (0 failures).
+- **Database Crypto Tests (`pnpm --filter @agency-os/database test src/crypto/encryption.spec.ts`)**:
+  - 17 tests passed (0 failures).
+- **Docker Ingress Build**:
+  - `docker build -f docker/nginx/Dockerfile -t agency-os-ingress:test .` verified successfully.
+- **Docker Compose Staging Validation**:
+  - Negative test: Fails with expected variable errors when required secrets are omitted.
+  - Positive test: Passes syntax and service graph validation when secrets are supplied.
+
+### 4. Remaining Follow-Ups
+1. **Operator Staging Deployment Actions**:
+   - Configure DNS A/CNAME record pointing to staging host.
+   - Terminate TLS via Cloudflare/ALB (Edge TLS with `TRUST_PROXY=1`) or configure on-host Let's Encrypt / Certbot container.
+   - Run live deployment on target host using `docker compose -f docker-compose.yml -f docker-compose.staging.yml up -d`.
+2. **Phase 6 Secret Management Follow-Up**:
+   - External secret vault integration (HashiCorp Vault / AWS Secrets Manager) for production environments.
+3. **Phase 7 Next Task**:
+   - Proceed to Phase 7.1: Publishing Domain & Provider Capability Design.

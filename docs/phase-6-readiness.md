@@ -1,10 +1,7 @@
 # Phase 6 Final Readiness & Release Gate
 
-## Skills Actually Loaded
-None explicitly, relied on standard tooling and repository inspection conventions.
-
 ## Repository State
-- **Git Status**: Clean, up to date with `origin/main` after clearing minor temporary validation files (`cookie.txt`, `test-browser.js`).
+- **Git Status**: Clean, up to date with `origin/main`.
 - **Secret Safety**: No `.env`, cookies, OAuth tokens, secrets, or temporary debug dumps are committed. `.gitignore` and `.dockerignore` properly filter out `.env` configurations.
 
 ## Local Quality Gate
@@ -12,92 +9,69 @@ A full local verification of the current implementation executes strictly succes
 - **Lint**: 100% PASS (`pnpm turbo run lint`)
 - **Typecheck**: 100% PASS (`pnpm turbo run typecheck`)
 - **Builds**: 100% PASS for API, Worker, and Web.
-- **Tests**: 100% PASS. 101 tests passing flawlessly.
+- **Tests**: 100% PASS across API, Worker, Database, and Web test suites.
 
 ## CI Architecture Audit
-The GitHub Actions workflow (`ci.yml`) is correctly configured with PR/push triggers, concurrency controls, least-privilege permissions, appropriate Node/pnpm caching, frozen installs, database service containers (Postgres & Redis) with health checks, and a full testing plus smoke test cycle. No production credentials are baked in and no registry pushes occur. 
+The GitHub Actions workflow (`ci.yml`) is correctly configured with PR/push triggers, concurrency controls, least-privilege permissions, appropriate Node/pnpm caching, frozen installs, database service containers (Postgres & Redis) with health checks, a full unit/integration testing cycle, and automated Docker Compose smoke testing.
 
-## GitHub Remote CI
-**REQUIRES USER ACTION**
-Due to standard local environment security limitations, remote authentication was not verified automatically.
-To verify, you must intentionally push the branch to GitHub to trigger the pipeline and monitor the Actions tab:
-```bash
-git push origin main
-```
+## Docker Runtime & Container Hardening
+- **Web App**: Operates using `next start` (a full standard build) triggered by `pnpm --filter @agency-os/web start`.
+- **API & Worker**: Production containers run compiled JavaScript directly from `dist/` via standard `node`, with internal workspace packages compiled to `dist/` with `.d.ts` types and modern exports (resolved in PR #17 and PR #31).
+- **Image Slimming**: Workspace-aware production reinstallation (`pnpm install --prod --frozen-lockfile`) prunes devDependencies while safely preserving generated Prisma runtime client artifacts (resolved in PR #31).
 
-## Docker Runtime & Web Packaging Truth
-- **Web App**: Operates using `next start` (a full standard build) triggered by `pnpm --filter @agency-os/web start`. Standalone Next.js execution is strictly NOT utilized due to `@swc/helpers` workspace hoisting complexities.
-- **API & Worker**: Utilize Node with `tsx` executing from the standard pnpm monorepo structure.
-
-## Browser Acceptance
-Verified programmatically and via isolated environment assertions:
-- **PASS**: Login Endpoint and Session setup.
-- **PASS**: Dashboard & Accounts Endpoints (Proper authorization required).
-- **PASS**: Analytics & Account Analytics retrieval.
-- **PASS**: Logout securely revokes sessions (401 on protected requests post-logout).
-- **PASS**: OAuth Connection Generation (Successfully initiates state and connects safely).
-- **PASS**: Session persistence across requests via safe cookie handling.
-
-## Security Acceptance
+## Security & Observability Acceptance
 - **Helmet**: Active and injecting secure headers.
-- **CORS**: Correctly bound to `http://localhost:3000`.
-- **CSRF & Redaction**: Active. Logging securely redacts `x-csrf-token`, `Cookie`, `Set-Cookie`, and authentication payloads automatically via Pino configuration. Verified `[REDACTED]` behavior safely without crashing containers.
-- **Rate Limiting**: Redis throttler is completely functional. Configured intelligently to permit parallel testing (limit 1000 in `NODE_ENV=test`) while retaining strict boundaries in dev/prod (limit 5 for Auth, 10 for expensive, 100 for baseline).
+- **CORS**: Correctly bound to `FRONTEND_URL` (defaults to `http://localhost:3000`).
+- **CSRF & Redaction**: Active. Logging securely redacts credentials, OAuth tokens, headers (`Authorization`, `Cookie`, `Set-Cookie`, `x-csrf-token`), BullMQ job payload secrets, and query parameters (`url-sanitizer.utils.ts`) automatically via Pino configuration without crashing containers (resolved in PR #37).
+- **Rate Limiting**: Redis throttler is completely functional. Configured intelligently via `APP_GUARD` to permit parallel testing (limit 1000 in `NODE_ENV=test`) while retaining strict boundaries in dev/prod (limit 5 for Auth, 10 for expensive, 100 for baseline).
 - **Audit Logging**: Persisting semantically mapped behaviors intelligently across actions.
+- **Fail-Fast Secret Validation**: `validateTokenEncryptionKey()` enforces exactly 64 hexadecimal characters (32 bytes) fail-fast during bootstrap before application initialization (resolved in PR #35).
 
-## Prisma / Migration Acceptance
-- **PASS**: Container migration runs securely via `prisma migrate deploy` preventing destructive development syncs in a live state.
-- **PASS**: API and Worker hold off execution until the migration container signals `service_completed_successfully`.
+## Unified Ingress & Staging Deployment Hardening
+- **Unified Ingress (NGINX)**:
+  - Implemented unprivileged non-root NGINX reverse proxy (`docker/nginx/nginx.conf`, `docker/nginx/Dockerfile`) based on `nginxinc/nginx-unprivileged:alpine`.
+  - Routes `/api/*` to `api:3001` preserving exact URI paths and query strings verbatim without prefix stripping.
+  - Routes `/` to `web:3000` with WebSocket connection upgrade mapping (`$http_upgrade`, `$connection_upgrade`).
+  - Sets `client_max_body_size 512m` aligning with verified `MEDIA_MAX_UPLOAD_BYTES=524288000` (500MB + 12MB multipart header headroom).
+  - Forwards `Host`, `X-Real-IP`, `X-Forwarded-For`, and `X-Forwarded-Proto` headers cleanly.
+  - Exposes dedicated `/healthz` endpoint returning HTTP 200 for ingress probes.
+- **Staging Compose Architecture (`docker-compose.staging.yml`)**:
+  - Unbinds `postgres` (`5432`), `redis` (`6379`), `minio` internal ports, `api` (`3001`), and `web` (`3000`) from host network exposure (`ports: !reset []`).
+  - NGINX ingress service is the sole publicly bound entrypoint on `${STAGING_PORT:-80}`.
+  - Eliminates all development fallback secrets (`development-secret-1234`, `00000000000000000000000000000000`, `password`).
+  - Enforces required-variable interpolation (`:?`) for `SESSION_SECRET`, `JWT_SECRET`, `COOKIE_SECRET`, `POSTGRES_PASSWORD`, `TOKEN_ENCRYPTION_KEY`, `FRONTEND_URL`, `API_PUBLIC_URL`, and `NEXT_PUBLIC_API_URL`.
+  - Sets `NODE_ENV: production` and `TRUST_PROXY: "1"` across backend services.
+- **CSRF Resolution**: Single-origin reverse proxy topology ensures `session` and `csrfToken` cookies remain host-only without cross-subdomain leakage, satisfying double-submit CSRF requirements.
 
-## Recovery / Health Acceptance
-- **PASS**: `GET /api/health/ready` accurately evaluates Postgres and Redis dependencies, returning HTTP 200.
-- **PASS**: `docker compose restart api worker` demonstrates seamless recovery. Both API and Worker re-establish BullMQ and Prisma sockets flawlessly and return to healthy state immediately.
-
-## Technical Debt
-
-### 1. `tsx` Production Runtime
-- **Debt Level**: HIGH (Execution speed/architecture)
-- **Problem**: API and Worker containers run through `tsx` because internal workspace packages (`@agency-os/database`, `@agency-os/config`, etc.) lack compiled `dist` outputs and expose raw TypeScript files instead.
-- **Classifications**: 
-  - **Phase 7 Blocker**: NO
-  - **Staging Blocker**: MAYBE (Safe, but slower performance).
-  - **Production Blocker**: YES (Significant overhead and sub-optimal compilation footprint).
-
-### 2. Image Sizes
-- **Sizes**: Web (~349MB), API (~220MB), Worker (~216MB), Postgres (~116MB), Redis (~16MB). 
-- **Debt Level**: LOW
-- **Classifications**: Optimization only. Does not block staging, production, or Phase 7.
-
-## Staging Prerequisites
-Before launching an actual staging environment, the following must be addressed:
-1. Valid Domain configuration.
-2. Setup SSL / TLS certificates (e.g. Let's Encrypt / Cloudflare).
-3. Secure Reverse Proxy / Ingress configuration (e.g. NGINX, Traefik, or Caddy) so containers are not exposed publicly on ports 3000/3001.
-4. Establish staging-specific secret configurations (real provider API limits/keys, true secret signing keys).
-
-## Production Prerequisites
-In addition to Staging:
-1. Dedicated managed PostgreSQL (e.g. RDS, Supabase) and Redis infrastructure.
-2. Resolve the `tsx` Node runtime compilation debt via standard transpilation strategies.
-3. Establish robust database backup strategies and log persistence architectures (e.g. DataDog, ELK).
-4. CI Remote container registry pushes and deployment automation.
+## Remaining Operator Staging Prerequisites
+Before launching an actual live staging environment on a public VPS, the following operator tasks must be completed:
+1. **Domain & DNS**: Configure DNS A/AAAA records pointing the staging hostname (e.g. `staging.agency-os.com`) to the VPS public IP.
+2. **TLS / SSL Termination**:
+   - **Option A (Edge TLS / CDN — Recommended)**: Configure Cloudflare or an AWS ALB in front of the server to terminate HTTPS, forwarding HTTP traffic to port 80 with `X-Forwarded-Proto: https` (API `TRUST_PROXY=1` correctly trusts this header).
+   - **Option B (On-Host TLS Termination)**: Mount valid TLS certificates (e.g., Let's Encrypt / Certbot `fullchain.pem` and `privkey.pem`) into `/etc/nginx/certs/` and bind port 443 (`${STAGING_SSL_PORT:-443}:8443`).
+3. **Production Secrets**: Generate strong, random secrets in the staging `.env` file (`openssl rand -hex 32` for `TOKEN_ENCRYPTION_KEY`, `SESSION_SECRET`, `JWT_SECRET`, `COOKIE_SECRET`, and a secure `POSTGRES_PASSWORD`).
+4. **Firewall / Network Rules**: Ensure VPS firewall (e.g. `ufw` / AWS Security Group) allows inbound traffic only on ports 80/443 and blocks direct inbound access to 5432, 6379, 3000, and 3001.
 
 ---
 
-## Verdicts
+## Readiness Levels & Verdicts
 
-### Verdict A — Phase 6 Engineering
-**COMPLETE_WITH_DEBT**
-The engineering requirements for validation, auth-security, caching, structured logging, persistent audits, CI scaffolding, and Docker orchestrations are robust, successfully implemented, and cleanly executing. The usage of `tsx` in containerization stands as the sole documented debt.
+### 1. Configuration & Automated Verification: COMPLETE
+- Staging NGINX ingress configuration implemented and validated via `nginx -t`.
+- `docker-compose.staging.yml` implemented, isolating host ports and enforcing required staging secrets.
+- 18 automated regression tests in `apps/api/src/config/staging-deployment.spec.ts` passing 100%.
 
-### Verdict B — Begin Phase 7
-**YES**
-Phase 7 is focused on feature development for social publishing. The current local and containerized stacks are highly secure, remarkably stable, well-typed, fully tested, and resilient. The existing technical debt (`tsx`) does not prevent developers from constructing business logic.
+### 2. CI Docker Smoke Test Verification: COMPLETE
+- CI pipeline validates missing secrets fail-fast behavior.
+- Smoke test exercises the full staging stack through the NGINX ingress port:
+  - `/healthz` returns HTTP 200.
+  - `/api/health/ready` returns HTTP 200 with `{ database: { status: "up" } }`.
+  - `/` returns HTTP 2xx from Next.js.
+  - Direct host access to 3000 and 3001 is verified closed.
 
-### Verdict C — Deployment Readiness
-**NOT_DEPLOYMENT_READY**
-While technically "startable" on a VPS using Docker Compose, doing so securely requires Reverse Proxies (ingress), proper SSL/TLS encryption, isolation of Redis and Postgres boundaries, and resolution of the `tsx` runtime for optimal scale.
+### 3. TLS & Live VPS Deployment: PENDING OPERATOR ACTIONS
+- Edge TLS or certificate mounting must be performed by the operator on the target infrastructure.
+- Deployment automation or manual VPS startup (`docker compose -f docker-compose.staging.yml up -d`) remains an operator responsibility.
 
-## Recommended Next Task
-Since Verdict B evaluates to YES, the logical next step is:
-`Phase 7.1 — Publishing Domain & Provider Capability Design`
+### Overall Verdict: READY FOR STAGING DEPLOYMENT
+The application and container architecture are hardened, tested, and ready for staging deployment behind the unified NGINX ingress gateway.
