@@ -256,7 +256,7 @@ jobs:
           TOKEN_ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
         run: |
           docker compose build api worker web migration
-          docker compose -f docker-compose.staging.yml build ingress
+          docker build -f docker/nginx/Dockerfile -t agency-os-ingress:staging .
 
       - name: Smoke test Compose stack
         env:
