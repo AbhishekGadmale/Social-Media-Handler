@@ -35,7 +35,7 @@
   - **Audit Logging**: NOT STARTED. No audit modules, services, or middleware exist in `apps/api`.
   - **Staging/Deployment Hardening**: NOT STARTED. No staging configurations or deployment workflows exist.
   - **Secret Management**: PARTIAL. Environment variable templates documented in `.env.example` (including `TOKEN_ENCRYPTION_KEY`, LinkedIn OAuth credentials [`LINKEDIN_CLIENT_ID`, `LINKEDIN_CLIENT_SECRET`], and `FRONTEND_URL`). `docker-compose.yml` requires an explicitly supplied `TOKEN_ENCRYPTION_KEY` for API and Worker services with zero default secret fallbacks. Test-only key explicitly supplied in CI smoke testing. Production external secret store integration (e.g., Vault / AWS Secrets Manager) remains deferred.
-  - **Observability**: NOT STARTED. The specification requires Structured Pino logs, but standard NestJS `Logger` is still being used across the API and worker.
+  - **Observability**: COMPLETE AND VERIFIED. Structured Pino logging configured across API and Worker (`logger.config.ts`), with correlation ID validation and propagation across HTTP requests and BullMQ queue jobs (`SyncJobData`, `PublishJobData`, `PublishDeleteJobData`), sensitive credential and header redaction (snake_case and camelCase tokens, secrets, cookies), request URL query parameter sanitization (`url-sanitizer.utils.ts`), required `PinoLogger` dependency injection, and comprehensive unit and integration test suites.
   - **Tenancy Verification**: COMPLETE AND VERIFIED. Cross-workspace checks and `WorkspaceGuard` are enforced (e.g., in `analytics.controller.ts`).
   - **OAuth Hardening (CSRF/PKCE)**: COMPLETE AND VERIFIED. `auth.guard.ts` enforces CSRF headers for mutations. `linkedin.provider.ts` supports PKCE via `codeChallenge` and `codeVerifier`.
   - **Queue Reliability**: COMPLETE AND VERIFIED. `sync.processor.ts` implements intelligent backoff using `moveToDelayed` for `ProviderRateLimitError`, gracefully handles `401 Unauthorized` by marking accounts for re-authentication, and handles failed jobs properly.
@@ -47,11 +47,11 @@
 
 1. **Last definitely completed phase**: Phase 5 (Analytics).
 2. **Current active phase**: Phase 6 (Hardening).
-3. **Exact Phase 6 items already finished**: Tenancy verification (WorkspaceGuard), OAuth Hardening (PKCE + CSRF), Token Encryption (AES-256-GCM logic + fail-fast 64-hex startup validation in API/Worker), Environment Secret Documentation (.env.example templates), Docker Compose Required Secret Enforcement, Queue Reliability (BullMQ backoffs), Ingress Rate Limiting (`APP_GUARD` + Redis Throttler), Audit Logging (`AuditService` and transactional audit persistence), Container Hardening (Node `dist` execution, workspace-aware production Docker runner slimming).
+3. **Exact Phase 6 items already finished**: Tenancy verification (WorkspaceGuard), OAuth Hardening (PKCE + CSRF), Token Encryption (AES-256-GCM logic + fail-fast 64-hex startup validation in API/Worker), Environment Secret Documentation (.env.example templates), Docker Compose Required Secret Enforcement, Queue Reliability (BullMQ backoffs), Ingress Rate Limiting (`APP_GUARD` + Redis Throttler), Audit Logging (`AuditService` and transactional audit persistence), Container Hardening (Node `dist` execution, workspace-aware production Docker runner slimming), Observability (Structured Pino logging, request/job correlation propagation, sensitive credential redaction, and URL sanitization).
 4. **Exact Phase 6 items partially implemented**: Secret management (environment configuration and fail-fast startup validation complete; production external secrets vault integration remains deferred).
-5. **Exact Phase 6 items not started**: Observability (structured Pino logger), Staging/deployment hardening.
+5. **Exact Phase 6 items not started**: Staging/deployment hardening.
 6. **Most likely last task Claude Code was working on**: Implementing the background analytics synchronization worker (`apps/worker/src/sync/sync.processor.ts`) and writing its tests, while concurrently adding initial Phase 6 queue reliability and token encryption logic necessary for the worker to function securely.
-7. **Exact next task that should be continued**: Complete remaining Phase 6 backend hardening (Structured Pino observability, Staging/deployment hardening).
+7. **Exact next task that should be continued**: Complete remaining Phase 6 backend hardening (Staging/deployment hardening).
 
 ---
 
@@ -1510,7 +1510,7 @@ The final architecture employs a two-tier fencing model:
 
 ### 4. Remaining Follow-Ups
 1. **Phase 6 Hardening**:
-   - Complete remaining Phase 6 backend hardening: Structured Pino observability logger, staging/production deployment configurations.
+   - Complete remaining Phase 6 backend hardening: staging/production deployment configurations, external production secret store integration.
 2. **Future Feature Dependency — Worker Catch-Path Disconnect Fencing**:
    - Retained as a future feature dependency when account disconnect API endpoints are introduced (`apps/worker/src/publishing/publishing.processor.ts`).
 
@@ -1579,5 +1579,72 @@ The final architecture employs a two-tier fencing model:
 ### 4. Remaining Follow-Ups
 1. **Phase 6 Hardening**:
    - Complete remaining Phase 6 backend hardening: Structured Pino observability logger, staging/production deployment configurations.
+2. **Future Feature Dependency — Worker Catch-Path Disconnect Fencing**:
+   - Retained as a future feature dependency when account disconnect API endpoints are introduced (`apps/worker/src/publishing/publishing.processor.ts`).
+## 34. Phase 6 — Structured Pino Observability & Request Correlation (Branch `feat/structured-pino-observability` — MERGED)
+
+### 1. Summary & Motivation
+- **Status**: **MERGED** (PR #37, merge commit [`e63f7a30b6022c8a38bb4659594e0f3990d5044d`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/e63f7a30b6022c8a38bb4659594e0f3990d5044d))
+- **Pull Request**: [#37](https://github.com/AbhishekGadmale/Social-Media-Handler/pull/37)
+- **Branch**: `feat/structured-pino-observability`
+- **Pre-Merge Base SHA**: [`e55416c53b80afd49acca29fddd7aa72794ffa8d`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/e55416c53b80afd49acca29fddd7aa72794ffa8d) (`e55416c`)
+- **Reviewed Head SHA**: [`c377557c33698c1c049eb4f2f062c4a0d22b0d9a`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/c377557c33698c1c049eb4f2f062c4a0d22b0d9a) (`c377557`)
+- **Merge Commit SHA**: [`e63f7a30b6022c8a38bb4659594e0f3990d5044d`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/e63f7a30b6022c8a38bb4659594e0f3990d5044d) (`e63f7a3`)
+- **Merge Strategy**: Standard GitHub merge commit (2 parents: `e55416c` and `c377557`)
+- **Merge Timestamp**: `2026-10-29T10:45:34Z`
+- **Pre-Merge CI Checks**: [Commit `c377557` Checks](https://github.com/AbhishekGadmale/Social-Media-Handler/pull/37/checks) (All 6 check runs green on reviewed HEAD `c377557`)
+- **Post-Merge Push CI Run**: [Run #40860080744](https://github.com/AbhishekGadmale/Social-Media-Handler/actions/runs/40860080744) (All 5 push check runs green on `main` `e63f7a3`)
+- **Reviewer**: Muse (APPROVED)
+
+### 2. Scope & Implementation Details
+1. **Structured Pino Logging & Configuration (`apps/api/src/modules/core/logger.config.ts`, `apps/worker/src/logger.config.ts`)**:
+   - Integrated `nestjs-pino` in the API and established a standalone/worker logger configuration in the Worker.
+   - Dynamic log-level control via `LOG_LEVEL` environment variable with production default `info` and development default `debug`.
+   - Output emitted as structured JSON in both production and development (newline-delimited structured logs without uninstalled external pretty-printers).
+   - Strict secret redaction paths covering camelCase, snake_case, and nested structures up to 5 levels deep (`access_token`, `accessToken`, `refresh_token`, `refreshToken`, `client_secret`, `clientSecret`, `token_secret`, `password`, `*.config.headers.Authorization`, `*.response.data.access_token`).
+   - Scoped `code` and `state` redactions to query and body shapes (`req.query.code`, `req.query.state`, `body.code`, `body.state`), preserving operational failure codes (e.g. `code: 'TRANSITION_FAILED'`) in application and exception logs.
+   - Case-insensitive header casing variants covered (`Authorization`, `authorization`, `Cookie`, `cookie`, `Set-Cookie`, `set-cookie`, `X-CSRF-Token`, `x-csrf-token`).
+2. **Request Correlation & URL Query Parameter Sanitization (`apps/api/src/modules/core/`)**:
+   - Implemented `correlation-id.utils.ts` standardizing correlation ID extraction, regex format validation (`/^[a-zA-Z0-9._-]{1,128}$/`), array header extraction, fresh UUID fallback generation, and response header attachment (`attachCorrelationIdToResponse`).
+   - Implemented `url-sanitizer.utils.ts` to sanitize sensitive query parameters (`code`, `state`, `token`, `accessToken`, `access_token`, `refreshToken`, `refresh_token`, `clientSecret`, `client_secret`, `password`, `secret`) from request URLs.
+   - Updated `AllExceptionsFilter` (`apps/api/src/filters/all-exceptions.filter.ts`) to sanitize `request.url` in both `Error` and non-`Error` 5xx branches, attach `x-request-id` response header, and include `requestId` in structured error responses.
+3. **BullMQ Request Correlation Propagation & Shared Queue Types (`packages/shared/src/queue/queue.types.ts`)**:
+   - Defined and exported `SyncJobData`, `PublishJobData`, and `PublishDeleteJobData` in `@agency-os/shared` with typed optional `correlationId?: string` and `operationId?: string`.
+   - Propagated incoming request correlation ID to `syncQueue.add` in `AccountsController.triggerSync`, `OAuthService.processDiscoverySelection`, and `OAuthService.handleOAuthCallback`.
+   - Bound `jobMeta` (`jobId`, `publicationId`, `correlationId`, `operationId`) across all worker execution lifecycle phases in `PublishingProcessor` (`processDelete`, `process`, claims, continuations, status polling, `handleFailure`, `handleUnknown`, `handleSuccess`) and `SyncProcessor`.
+   - Maintained full backward compatibility for un-correlated jobs enqueued without a correlation ID.
+4. **Dependency Injection Hardening & Fallback Elimination**:
+   - Removed unsafe `logger ?? new PinoLogger({})` and `@Optional()` across all 11 audited services, processors, filters, and controllers in `@agency-os/api` and `@agency-os/worker`.
+   - Enforced required `PinoLogger` injection via NestJS dependency injection.
+   - Handled transient scoping of `PinoLogger` via `await app.resolve(PinoLogger)` in application bootstraps and E2E test suites, and explicit mock loggers in unit tests.
+   - Replaced raw `console.log` and `console.error` calls with structured logger methods (`logger.info`, `logger.warn`, `logger.error`, `logger.debug`).
+
+### 3. Verification & Test Evidence
+- **API Logger & Exception Filter Unit Tests (`apps/api/src/modules/core/logger.spec.ts`)**:
+  - 24 comprehensive unit and integration tests covering URL query parameter sanitization, 5xx Error/non-Error leakage prevention, correlation ID regex validation, casing variants, and operational error code preservation.
+- **Worker Logger Unit Tests (`apps/worker/src/logger.spec.ts`)**:
+  - 11 unit tests covering production/development log levels, structured JSON output with ISO timestamps, sensitive credential redaction, operational error code preservation, snake_case and nested structures up to 5 levels deep, BullMQ job payload redaction, correlationId and operationId propagation across worker execution metadata, delete job correlation, and backward compatibility for legacy un-correlated jobs.
+- **API Test Suite (`pnpm --filter @agency-os/api test`)**:
+  - 20 test files passed, 224 tests passed (0 failures).
+- **API E2E Tests (`apps/api/test/accounts.e2e-spec.ts`)**:
+  - Verified sync queue payload assertion expecting `correlationId: expect.stringMatching(/^[a-zA-Z0-9._-]{1,128}$/)` and matching `x-request-id` response header.
+- **Worker Storage Integration Tests**:
+  - Verified `linkedin.storage.integration.spec.ts`, `youtube.storage.integration.spec.ts`, `meta.reels.storage.integration.spec.ts`, `publishing.worker.spec.ts`, `sync.processor.spec.ts`.
+- **Monorepo Code Quality**:
+  - `pnpm turbo run lint typecheck build`: 18/18 tasks successful, 0 errors.
+- **Pre-Merge CI (Commit `c377557`)**:
+  - `Application Builds`: **SUCCESS** (Green)
+  - `Docker Build & Smoke Test`: **SUCCESS** (Green)
+  - `API E2E Tests`: **SUCCESS** (Green)
+  - `Tests`: **SUCCESS** (Green)
+  - `Code Quality (Lint & Typecheck)`: **SUCCESS** (Green)
+  - `GitGuardian Security Checks`: **SUCCESS** (Green)
+- **Post-Merge CI (Commit `e63f7a3` / Run #40860080744)**:
+  - All 5 push check runs completed with `success` on `main`.
+- **Review**: Independent Muse review APPROVED on reviewed HEAD `c377557`.
+
+### 4. Remaining Follow-Ups
+1. **Phase 6 Hardening**:
+   - Complete remaining Phase 6 backend hardening: staging/production deployment configurations, external production secret store integration.
 2. **Future Feature Dependency — Worker Catch-Path Disconnect Fencing**:
    - Retained as a future feature dependency when account disconnect API endpoints are introduced (`apps/worker/src/publishing/publishing.processor.ts`).
