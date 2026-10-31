@@ -375,7 +375,7 @@ jobs:
           NEXT_PUBLIC_API_URL: http://localhost:8080/api/v1
           OBJECT_STORAGE_ACCESS_KEY_ID: minioadmin
           OBJECT_STORAGE_SECRET_ACCESS_KEY: minioadmin
-          OBJECT_STORAGE_PUBLIC_ENDPOINT: http://localhost:8080
+          OBJECT_STORAGE_PUBLIC_ENDPOINT: http://127.0.0.1:9000
           OBJECT_STORAGE_BUCKET: agency-os-media
         run: |
           # Start staging backing services (postgres, redis)
@@ -473,11 +473,25 @@ jobs:
           echo "Verifying published ports on staging containers..."
           PUBLISHED_PORTS=$(docker compose -f docker-compose.staging.yml ps --format '{{.Service}}: {{.Ports}}')
           echo "$PUBLISHED_PORTS"
-          if echo "$PUBLISHED_PORTS" | grep -v 'ingress:' | grep -E '0\.0\.0\.0:|:::'; then
-            echo "Security violation: internal service exposed on host interfaces!"
+
+          # 1. Non-ingress backing services MUST NOT publish any host ports (neither wildcard 0.0.0.0/::: nor loopback 127.0.0.1)
+          if echo "$PUBLISHED_PORTS" | grep -v 'ingress:' | grep -- '->'; then
+            echo "Security violation: internal service has published host port mapping!"
             exit 1
           fi
-          echo "Docker port inspection verified: internal services have zero host published ports."
+
+          # 2. Ingress MUST NOT be published on public wildcard interfaces (0.0.0.0 or :::) when default loopback bind is active
+          if echo "$PUBLISHED_PORTS" | grep -E '0\.0\.0\.0:|:::'; then
+            echo "Security violation: service exposed on public wildcard interfaces!"
+            exit 1
+          fi
+
+          # 3. Ingress MUST be bound to loopback 127.0.0.1:8080
+          if ! echo "$PUBLISHED_PORTS" | grep 'ingress:' | grep -q '127\.0\.0\.1:'; then
+            echo "Security violation: ingress is not bound to loopback 127.0.0.1!"
+            exit 1
+          fi
+          echo "Docker port inspection verified: internal services have zero host published ports, ingress bound to loopback."
 
           # Verify internal ports are NOT published to host
           echo "Verifying internal ports are not exposed on host..."

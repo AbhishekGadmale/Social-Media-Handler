@@ -302,7 +302,7 @@ describe('Phase 6: Staging/Deployment Hardening & Unified Ingress Configuration'
       // API environment
       expect(stagingYaml).toMatch(/api:[\s\S]*?NODE_ENV:\s*production/);
       expect(stagingYaml).toMatch(
-        /api:[\s\S]*?TRUST_PROXY:\s*"\${TRUST_PROXY:-1}"/,
+        /api:[\s\S]*?TRUST_PROXY:\s*"\${TRUST_PROXY:-2}"/,
       );
       expect(stagingYaml).toMatch(
         /api:[\s\S]*?ALLOW_INSECURE_HTTP_AUTH:\s*\$\{ALLOW_INSECURE_HTTP_AUTH:-false\}/,
@@ -352,6 +352,7 @@ describe('Phase 6: Staging/Deployment Hardening & Unified Ingress Configuration'
 
         // Only ingress must appear in published services
         expect(publishedServices).toEqual(['ingress']);
+        expect(resolvedYaml).toMatch(/TRUST_PROXY:\s*"2"/);
       } catch (err: any) {
         if (err.message?.includes('docker: command not found')) {
           console.warn(

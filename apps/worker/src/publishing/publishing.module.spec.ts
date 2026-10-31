@@ -34,4 +34,9 @@ describe('PublishingModule', () => {
     // Verify an unknown provider fails safely
     expect(registry.supportsPublishing('UNKNOWN_TEST')).toBe(false);
   });
+
+  it('resolves IObjectStorage safely without requiring browser-reachable OBJECT_STORAGE_PUBLIC_ENDPOINT', () => {
+    const storage = module.get('IObjectStorage');
+    expect(storage).toBeDefined();
+  });
 });
