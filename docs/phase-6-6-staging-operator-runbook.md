@@ -22,7 +22,12 @@ This runbook provides an authoritative, step-by-step operational procedure for p
 
 ### 1.3 Operator Prerequisites (External to Repository)
 The following resources must be provisioned and accessible before proceeding:
-1. **Target VPS:** Dedicated host with root or sudo access, static IP, and egress connectivity to Cloudflare and GitHub.
+1. **Target VPS & Network Egress:**
+   - Dedicated host with root or sudo access and static IP.
+   - Outbound internet connectivity to Cloudflare Edge (for `cloudflared` tunnel establishment) and GitHub (for git clone/fetch).
+   - **Docker Hub & Container Registry Egress:** Unrestricted outbound access to Docker Hub (`registry-1.docker.io`, `auth.docker.io`, `production.cloudflare.docker.com`) and GitHub Container Registry. Staging images depend on base images (`postgres:16-alpine`, `redis:7-alpine`, `minio/minio:latest`, `nginxinc/nginx-unprivileged:1.31.7-alpine`, `node:20-alpine`, `alpine:latest`).
+     > [!IMPORTANT]
+     > Successful GitHub or web connectivity does **NOT** prove Docker image pulls will work. Egress firewall rules, transparent proxies, MTU mismatches, or Docker Hub rate limits can block image pulls. Verify registry egress before proceeding by executing `docker pull alpine:latest` on the host.
 2. **Cloudflare Account & Zone:** Active Cloudflare zone (e.g., `agency-os.com`) with Zero Trust Tunnel capability.
 3. **Cloudflare R2 Bucket:** Provisioned bucket (e.g., `agency-os-staging-media`) with R2 API tokens (Access Key ID and Secret Access Key).
 4. **OAuth Applications (Optional for Auth, Required for Platform Integrations):** Valid LinkedIn and YouTube client IDs and secrets configured with the staging redirect URI (`https://staging.agency-os.com/api/v1/oauth/...`).
@@ -264,13 +269,36 @@ docker compose -f docker-compose.staging.yml --env-file /opt/agency-os/.env.stag
 ### 5.1 Host Firewall Setup (UFW / iptables)
 The staging architecture employs strict origin isolation. Because Cloudflare Tunnel (`cloudflared`) establishes outbound tunnels to Cloudflare, **inbound ports 80, 443, 3000, 3001, 5432, 6379, and 9000 must NOT be opened on the external firewall**.
 
+> [!CAUTION]
+> **SSH LOCKOUT PREVENTION STOP CONDITION:**
+> Do NOT assume every VPS uses default port 22. Enabling UFW with an incorrect SSH port will permanently lock the operator out of the server.
+> You MUST identify and verify the active SSH listening port **before** configuring firewall rules. If the SSH port cannot be definitively determined, **STOP IMMEDIATELY** and do not enable UFW.
+
 ```bash
-# Configure UFW
+# 1. Identify active SSH listening port from sshd configuration or active socket
+SSH_PORT=$(sudo sshd -T 2>/dev/null | grep -i "^port " | awk '{print $2}' || ss -tlnp | grep -E 'sshd|ssh' | awk '{print $4}' | awk -F':' '{print $NF}' | head -n 1)
+SSH_PORT="${SSH_PORT:-22}"
+echo "Detected active SSH port: ${SSH_PORT}"
+
+# STOP CONDITION: Verify port is a valid numeric value
+if ! [[ "$SSH_PORT" =~ ^[0-9]+$ ]]; then
+  echo "FATAL STOP: Unable to verify active SSH port. Do NOT proceed with UFW configuration."
+  exit 1
+fi
+
+# 2. Allow SSH port explicitly BEFORE enabling default-deny policy
+sudo ufw allow "${SSH_PORT}/tcp" comment "SSH administrative access"
+
+# 3. Configure default policies: deny incoming, allow outgoing
 sudo ufw default deny incoming
 sudo ufw default allow outgoing
-sudo ufw allow 22/tcp comment "SSH administration"
-sudo ufw enable
+
+# 4. Enable UFW
+sudo ufw --force enable
 sudo ufw status verbose
+
+# 5. Verification step: Open a SECOND terminal session and test SSH connection
+# BEFORE closing the current session to guarantee access is preserved.
 ```
 
 ### 5.2 Build Images
@@ -383,6 +411,13 @@ curl -i -X POST https://staging.agency-os.com/api/v1/auth/login \
   - Cloudflare Tunnel is not passing `X-Forwarded-Proto: https`, or `TRUST_PROXY` in `/opt/agency-os/.env.staging` does not match the actual number of proxy hops.
   - **STOP IMMEDIATELY.** Do NOT set `ALLOW_INSECURE_HTTP_AUTH=true`. Fix tunnel header forwarding.
 
+> [!NOTE]
+> **Authentication Rate Limiting Notice (5 attempts per 15 minutes per IP):**
+> In production and staging (`NODE_ENV=production`), `POST /api/v1/auth/login` is protected by `RateLimitPolicies.auth` via the global Redis Throttler (`limit: 5`, `ttl: 900000` ms / 15 minutes per client IP).
+> - Each execution of this login probe consumes one of the 5 allowed attempts within the 15-minute sliding window.
+> - If an operator executes this probe more than 5 times within 15 minutes from the same client IP, NestJS will return **`HTTP 429 Too Many Requests`** (`{"statusCode":429,"message":"ThrottlerException: Too Many Requests"}`).
+> - **Operational Guidance:** Do NOT execute repeated automated curl loops or retries against the login endpoint. An HTTP 429 response actually confirms that ingress routing, HTTPS enforcement, and client IP extraction (`TRUST_PROXY=2`) are operating correctly! If throttled, wait for the 15-minute window to expire rather than misdiagnosing HTTP 429 as an ingress, firewall, or TLS failure. Never disable or weaken rate limiting.
+
 ---
 
 ## 7. R2/S3 Configuration, CORS, Presigned URLs, and Browser Upload Tests
@@ -458,13 +493,31 @@ for i in {1..30}; do
   sleep 2
 done
 
-# 4. Run Prisma database migrations
+# 4. Run Prisma database migrations with explicit exit status capture
 echo "Executing database migrations..."
-docker compose -f docker-compose.staging.yml --env-file /opt/agency-os/.env.staging up migration
+docker compose -f docker-compose.staging.yml --env-file /opt/agency-os/.env.staging up --exit-code-from migration migration
+MIGRATION_UP_EXIT=$?
 
-# Verify migration container exited cleanly with status 0
-MIGRATION_STATUS=$(docker compose -f docker-compose.staging.yml --env-file /opt/agency-os/.env.staging ps migration --format "{{.State}}")
-echo "Migration exit state: ${MIGRATION_STATUS}"
+# STOP CONDITION: Check migration command exit status
+if [ "$MIGRATION_UP_EXIT" -ne 0 ]; then
+  echo "FATAL STOP: Database migration command failed with exit code ${MIGRATION_UP_EXIT}!"
+  echo "--- Migration Container Logs ---"
+  docker compose -f docker-compose.staging.yml --env-file /opt/agency-os/.env.staging logs migration
+  echo "ABORTING DEPLOYMENT: Application services (api, worker, web, ingress) will NOT be started."
+  exit 1
+fi
+
+# Double-check container exit code directly via Docker Compose inspection (assert ExitCode == 0, NOT merely State == exited)
+MIGRATION_EXIT_CODE=$(docker compose -f docker-compose.staging.yml --env-file /opt/agency-os/.env.staging ps -a migration --format "{{.ExitCode}}")
+echo "Migration container reported ExitCode: ${MIGRATION_EXIT_CODE}"
+
+if [ "$MIGRATION_EXIT_CODE" != "0" ]; then
+  echo "FATAL STOP: Migration container exited with non-zero exit code: ${MIGRATION_EXIT_CODE}!"
+  docker compose -f docker-compose.staging.yml --env-file /opt/agency-os/.env.staging logs migration
+  echo "ABORTING DEPLOYMENT: Application services (api, worker, web, ingress) will NOT be started."
+  exit 1
+fi
+echo "Database migrations applied successfully with verified exit code 0."
 
 # 5. Start remaining services: api, worker, web, and ingress
 docker compose -f docker-compose.staging.yml --env-file /opt/agency-os/.env.staging up -d api worker web ingress
@@ -550,50 +603,91 @@ Because the PostgreSQL container does not mount the host backup folder `/opt/age
 # 1. Identify target backup dump
 DUMP_FILE="db_YYYYMMDD_HHMMSS.dump" # Replace with actual dump filename
 
-# 2. Create an isolated temporary test database
+# 2. Idempotent rehearsal database initialization
+# The target rehearsal database name MUST be explicitly and exclusively "agency_os_rehearsal_test".
+REHEARSAL_DB="agency_os_rehearsal_test"
+
+# POSITIVE SAFETY ASSERTION: Abort immediately if target is NOT strictly the disposable test database
+if [ "$REHEARSAL_DB" != "agency_os_rehearsal_test" ]; then
+  echo "FATAL SAFETY VIOLATION: Target database must be agency_os_rehearsal_test. Aborting rehearsal."
+  exit 1
+fi
+
+# Reset only the dedicated rehearsal database if left over from an interrupted previous rehearsal
 docker compose -f docker-compose.staging.yml \
   --env-file /opt/agency-os/.env.staging \
   exec -T postgres \
-  psql -U postgres -c "CREATE DATABASE agency_os_rehearsal_test;"
+  psql -U postgres -c "DROP DATABASE IF EXISTS ${REHEARSAL_DB};"
+
+docker compose -f docker-compose.staging.yml \
+  --env-file /opt/agency-os/.env.staging \
+  exec -T postgres \
+  psql -U postgres -c "CREATE DATABASE ${REHEARSAL_DB};"
 
 # 3. Stream backup into the isolated test database via standard input
 cat "/opt/agency-os/backups/${DUMP_FILE}" | \
   docker compose -f docker-compose.staging.yml \
     --env-file /opt/agency-os/.env.staging \
     exec -T postgres \
-    pg_restore -U postgres -d agency_os_rehearsal_test --clean --if-exists
+    pg_restore -U postgres -d "${REHEARSAL_DB}" --clean --if-exists
 
 # 4. Verify table creation and integrity in test database
 docker compose -f docker-compose.staging.yml \
   --env-file /opt/agency-os/.env.staging \
   exec -T postgres \
-  psql -U postgres -d agency_os_rehearsal_test -c "\dt"
+  psql -U postgres -d "${REHEARSAL_DB}" -c "\dt"
+
+TABLE_COUNT=$(docker compose -f docker-compose.staging.yml --env-file /opt/agency-os/.env.staging exec -T postgres psql -U postgres -d "${REHEARSAL_DB}" -t -c "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public';")
+echo "Restored table count in rehearsal database: ${TABLE_COUNT}"
+
+if [ "${TABLE_COUNT// /}" -eq 0 ]; then
+  echo "FATAL: Rehearsal database restored 0 tables!"
+  exit 1
+fi
+echo "PASS: Database restore rehearsal verified with active table schema."
 
 # 5. Cleanup: Drop isolated test database
 docker compose -f docker-compose.staging.yml \
   --env-file /opt/agency-os/.env.staging \
   exec -T postgres \
-  psql -U postgres -c "DROP DATABASE agency_os_rehearsal_test;"
+  psql -U postgres -c "DROP DATABASE ${REHEARSAL_DB};"
 ```
+
+> [!CAUTION]
+> **Live Database Protection Notice:**
+> `DROP DATABASE IF EXISTS` and `--clean --if-exists` are **STRICTLY PROHIBITED** on the live staging database (`${POSTGRES_DB:-agency_os}`). Never automate dropping or cleaning the live database. The positive assertion `[ "$REHEARSAL_DB" = "agency_os_rehearsal_test" ]` guarantees that this reset operation targets only the disposable rehearsal database.
 
 ### 10.2 Isolated Media Volume Restore Rehearsal
 To rehearse volume recovery without overwriting active staging data:
 ```bash
-# 1. Create a temporary rehearsal volume
-docker volume create minio_data_rehearsal_test
-
-# 2. Extract backup tar into temporary rehearsal volume
+# 1. Identify target media archive
 MEDIA_BACKUP_FILE="minio_data_YYYYMMDD_HHMMSS.tar.gz" # Replace with actual file
 
+# 2. Idempotently prepare temporary rehearsal volume
+docker volume rm -f minio_data_rehearsal_test 2>/dev/null || true
+docker volume create minio_data_rehearsal_test
+
+# 3. Extract backup tar into temporary rehearsal volume
 docker run --rm \
   -v minio_data_rehearsal_test:/data \
   -v /opt/agency-os/backups:/backup \
   alpine sh -c "rm -rf /data/* && tar -xzf /backup/${MEDIA_BACKUP_FILE} -C /data"
 
-# 3. Verify file contents in test volume
-docker run --rm -v minio_data_rehearsal_test:/data alpine ls -la /data
+# 4. Verify file contents and retrieve representative media file
+docker run --rm -v minio_data_rehearsal_test:/data alpine sh -c "
+  ls -la /data
+  FILE_COUNT=\$(find /data -type f | wc -l)
+  echo \"Restored files in rehearsal volume: \${FILE_COUNT}\"
+  if [ \"\${FILE_COUNT}\" -eq 0 ]; then
+    echo \"FATAL: Rehearsal volume contains zero files!\"
+    exit 1
+  fi
+  FIRST_FILE=\$(find /data -type f | head -n 1)
+  echo \"Testing retrieval of representative media asset: \${FIRST_FILE}\"
+  test -s \"\${FIRST_FILE}\" && echo \"PASS: Representative media file successfully retrieved and readable.\"
+"
 
-# 4. Cleanup: Remove temporary rehearsal volume
+# 5. Cleanup: Remove temporary rehearsal volume
 docker volume rm minio_data_rehearsal_test
 ```
 
@@ -670,12 +764,13 @@ Every item in this checklist must be verified and marked **PASS** before transit
 | **G10** | TLS | Cloudflare Edge SSL mode is Full/Strict | Cloudflare Dashboard inspection | [ ] |
 | **G11** | Storage | Cloudflare R2 bucket provisioned and CORS policy applied | Cloudflare Dashboard inspection | [ ] |
 | **G12** | Storage | Browser direct upload/retrieval verified in devtools | Section 7.3 end-to-end test | [ ] |
-| **G13** | Database | Prisma migrations completed with exit status 0 | `docker compose ps migration` | [ ] |
+| **G13** | Database | Prisma migrations completed with exit code 0 | `docker compose ps -a migration --format "{{.ExitCode}}"` equals `0` | [ ] |
 | **G14** | Health | `/healthz` returns `healthy` | `curl https://staging.agency-os.com/healthz` | [ ] |
 | **G15** | Health | `/api/health/ready` reports database and redis `up` | `curl https://staging.agency-os.com/api/health/ready` | [ ] |
 | **G16** | Auth | Login probe returns 401 (valid TLS / HTTPS forwarded) | Section 6.3 curl probe | [ ] |
-| **G17** | Disaster Recovery | Pre-deployment database dump created | Section 9.1 backup command | [ ] |
-| **G18** | Disaster Recovery | Stdin-streaming restore rehearsed on isolated test DB | Section 10.1 rehearsal command | [ ] |
+| **G17** | Disaster Recovery | Pre-deployment database dump and media backup created | Section 9.1 & 9.2 backup commands | [ ] |
+| **G18** | Disaster Recovery | Stdin-streaming restore rehearsed on isolated test DB with table verification | Section 10.1 rehearsal command | [ ] |
+| **G19** | Disaster Recovery | Media restore rehearsed into isolated target with representative file retrieval verified | Section 10.2 rehearsal command | [ ] |
 
 ### 12.2 Deployment Evidence Log
 *(To be completed by the staging operator on the VPS host upon deployment execution)*:
@@ -685,7 +780,12 @@ Every item in this checklist must be verified and marked **PASS** before transit
 - **Target Host FQDN/IP:** `____________________`
 - **Git Commit SHA Deployed:** `____________________`
 - **Docker Compose Version Verified:** `____________________`
-- **Backup File Generated:** `____________________`
-- **Restore Rehearsal Completion Timestamp:** `____________________`
+- **Pre-Deployment Database Backup File:** `____________________`
+- **Pre-Deployment Media Backup Archive:** `____________________`
+- **Database Restore Rehearsal (G18) Completion Timestamp:** `____________________`
+- **Media Restore Rehearsal (G19) Completion Timestamp:** `____________________`
 - **Operator Signature:** `____________________`
 - **Final Staging Verdict:** `[  ] GO     [  ] NO-GO`
+
+> [!IMPORTANT]
+> A **GO** decision strictly requires **BOTH** database restoration (G18) and media restoration (G19) to be successfully rehearsed and verified on target infrastructure. Failure or omission of either disaster recovery rehearsal mandates an unconditional **NO-GO**.
