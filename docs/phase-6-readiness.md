@@ -133,10 +133,29 @@ No automated or scheduled backup daemon exists in this repository. Backups must 
   (umask 077 && docker run --rm -v "${MINIO_VOLUME}":/data -v /opt/agency-os/backups:/backup alpine \
     tar -czf /backup/minio_data_$(date +%Y%m%d_%H%M%S).tar.gz -C /data .)
   ```
-- **Database Restore Procedure:**
+- **Database Restore Procedure (Manual Procedure):**
+  > [!WARNING]
+  > Database restoration is a destructive operation: `--clean --if-exists` drops and recreates existing schema objects and tables. Any restore rehearsal must be conducted against an isolated test database, or with active application services stopped.
+
+  Because the PostgreSQL service container does not mount the host backup directory, stream the custom-format archive file directly into `pg_restore` via standard input (`exec -T`). Specify the target dump filename created during backup:
   ```bash
-  docker compose -f docker-compose.staging.yml --env-file /opt/agency-os/.env.staging exec -T postgres \
-    pg_restore -U postgres -d agency_os --clean --if-exists /backup/<dump_file>
+  # Identify target custom-format backup archive to restore
+  DUMP_FILE="db_YYYYMMDD_HHMMSS.dump"
+
+  cat "/opt/agency-os/backups/${DUMP_FILE}" | \
+    docker compose -f docker-compose.staging.yml \
+      --env-file /opt/agency-os/.env.staging \
+      exec -T postgres \
+      pg_restore -U postgres -d agency_os --clean --if-exists
+  ```
+- **Media Volume Restore Procedure (Manual Procedure):**
+  Dynamically determine the target volume and restore from the tar archive:
+  ```bash
+  MINIO_VOLUME=$(docker compose -f docker-compose.staging.yml --env-file /opt/agency-os/.env.staging config --volumes | grep -i minio || docker volume ls --filter name=minio_data -q | head -n 1)
+  MEDIA_BACKUP_FILE="minio_data_YYYYMMDD_HHMMSS.tar.gz"
+
+  docker run --rm -v "${MINIO_VOLUME}":/data -v /opt/agency-os/backups:/backup alpine \
+    sh -c "rm -rf /data/* && tar -xzf /backup/${MEDIA_BACKUP_FILE} -C /data"
   ```
 - **Prisma Migration Rollback Limitation:**
   Prisma Migrate is **forward-only** (`prisma migrate deploy`). There is no native `migrate down` command. Taking a pre-deployment database dump using the command above is **mandatory** before executing migrations; recovery requires restoring the pre-migration dump (`pg_restore`) or deploying an explicit forward-compensating migration.
