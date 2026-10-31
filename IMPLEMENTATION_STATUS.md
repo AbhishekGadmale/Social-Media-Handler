@@ -33,7 +33,7 @@
   - **Security Hardening (Token Encryption)**: COMPLETE AND VERIFIED. AES-256-GCM encryption is fully implemented in `packages/database/src/crypto/encryption.ts` and used across the API and worker. Shared `validateTokenEncryptionKey()` enforces exactly 64 hexadecimal characters (32 bytes) fail-fast during bootstrap before application initialization. Extensive unit and startup test coverage verified.
   - **Rate Limiting**: COMPLETE AND VERIFIED. Global distributed rate limiting is enforced via Redis Throttler registered as global `APP_GUARD` in `apps/api/src/app.module.ts` with tiered policies in `RateLimitPolicies` and custom storage in `apps/api/src/modules/core/redis-throttler.storage.ts`.
   - **Audit Logging**: COMPLETE AND VERIFIED. Audit logging architecture implemented via `AuditService` (`apps/api/src/modules/core/audit.service.ts`) and `AuditLogRepository` (`packages/database/src/repositories/AuditLogRepository.ts`), supporting explicit transactional persistence (`tx.auditLog.create` in publishing mutations) and best-effort persistence (`logActionBestEffort` for auth, OAuth, and media). Enriched failure categorization for failed logins and OAuth callbacks verified across PR #11, PR #12, PR #23, and PR #27.
-  - **Staging/Deployment Hardening**: MERGED & VERIFIED IN CI (PR #39). Unified NGINX ingress reverse proxy (`docker/nginx/nginx.conf`, `docker/nginx/Dockerfile`) configured for non-root execution with pinned `nginxinc/nginx-unprivileged:1.31.7-alpine`, routing `/api/*` to `api:3001` and `/` to `web:3000` with WebSocket upgrade mapping and keepalive preservation, query-parameter-stripped access logs preventing plain-text OAuth credential logging (H1), 512MB body limit matching `MEDIA_MAX_UPLOAD_BYTES`, 60s/120s upstream timeouts (L5), forwarded headers (`Host`, `X-Real-IP`, `X-Forwarded-For`, `X-Forwarded-Proto` via `$forwarded_proto`, `X-Forwarded-Host`), and dedicated `/healthz` probe returning `healthy\n` (L4). Dedicated staging Compose configuration (`docker-compose.staging.yml`, requiring Compose v2.24.4 or later) unbinds internal ports (Postgres, Redis, MinIO, API, Web) from host exposure (`ports: !reset []`), binds only the ingress service on `${STAGING_PORT:-80}`, and enforces genuinely required staging secrets (`POSTGRES_PASSWORD`, `TOKEN_ENCRYPTION_KEY`, `OBJECT_STORAGE_ACCESS_KEY_ID`, `OBJECT_STORAGE_SECRET_ACCESS_KEY`, `FRONTEND_URL`, `API_PUBLIC_URL`, `NEXT_PUBLIC_API_URL`) without unused variables (`SESSION_SECRET`, `JWT_SECRET`, `COOKIE_SECRET`). Production authentication enforces HTTPS and fails fast on plain HTTP before credential verification to prevent credential oracles and side effects (N1, H2, with `ALLOW_INSECURE_HTTP_AUTH` override for testing). 23 automated regression tests in `apps/api/src/config/staging-deployment.spec.ts` and 12 unit tests in `apps/api/src/modules/auth/auth.controller.spec.ts` verified; CI staging smoke tests cover the core ingress and application stack while host isolation is verified for all internal ports. *Verification boundaries*: Implementation merged into `main` and automated tests passed (YES: 23 regression tests, 12 auth tests, 253 API unit tests across 21 test files), Docker ingress and host isolation smoke test passed in CI (YES), 6 required pre-merge checks passed on reviewed HEAD `160bcd7` (YES), 5 post-merge check runs passed on merge commit `dbc8938` (YES); Live operator verification pending: TLS verified on staging domain (PENDING OPERATOR DNS/CERT PROVISIONING), Live VPS deployment verified (PENDING OPERATOR DEPLOYMENT RUN).
+  - **Staging/Deployment Hardening**: MERGED & VERIFIED IN CI (PR #39 & PR #41). Unified NGINX ingress reverse proxy (`docker/nginx/nginx.conf`, `docker/nginx/Dockerfile`) configured for non-root execution with pinned `nginxinc/nginx-unprivileged:1.31.7-alpine`, routing `/api/*` to `api:3001` and `/` to `web:3000` with WebSocket upgrade mapping and keepalive preservation, query-parameter-stripped access logs preventing plain-text OAuth credential logging (H1), 512MB body limit matching `MEDIA_MAX_UPLOAD_BYTES`, 60s/120s upstream timeouts (L5), forwarded headers (`Host`, `X-Real-IP`, `X-Forwarded-For`, `X-Forwarded-Proto` via `$forwarded_proto`, `X-Forwarded-Host`), and dedicated `/healthz` probe returning `healthy\n` (L4). Dedicated staging Compose configuration (`docker-compose.staging.yml`, requiring Compose v2.24.4 or later) unbinds internal ports (Postgres, Redis, MinIO, API, Web) from host exposure (`ports: !reset []`), binds ingress strictly to loopback `${STAGING_BIND_IP:-127.0.0.1}:${STAGING_PORT:-80}:8080` by default for Cloudflare Tunnel origin isolation (zero public host ports exposed), and enforces genuinely required staging secrets (`POSTGRES_PASSWORD`, `TOKEN_ENCRYPTION_KEY`, `OBJECT_STORAGE_ACCESS_KEY_ID`, `OBJECT_STORAGE_SECRET_ACCESS_KEY`, `OBJECT_STORAGE_PUBLIC_ENDPOINT`, `FRONTEND_URL`, `API_PUBLIC_URL`, `NEXT_PUBLIC_API_URL`) without unused variables (`SESSION_SECRET`, `JWT_SECRET`, `COOKIE_SECRET`). Fail-fast public storage validation (`validateStoragePublicEndpoint`) strictly rejects internal Docker hostnames (`minio`) in production and enforces HTTPS. Express proxy trust defaults to `TRUST_PROXY: "${TRUST_PROXY:-2}"` for 2-hop Cloudflare Tunnel routing with comprehensive rate-limiting and anti-spoofing tests. CI port inspection cryptographically verifies non-ingress backing services have zero published host ports. Stdin-streaming disaster recovery procedures documented for custom-format PostgreSQL dumps. *Verification boundaries*: Implementation merged into `main` and automated tests passed (YES: 24 staging regression tests, 16 trust-proxy tests, 12 storage-endpoint tests, 12 auth tests, 2 worker publishing tests, 270 API unit tests across 22 test files), Docker ingress and loopback host isolation smoke test passed in CI (YES), 6 required pre-merge checks passed on reviewed HEAD `2869ad4` (YES), 5 post-merge check runs passed on merge commit `1086418` (YES, Run #41189076688); Live operator verification pending: Cloudflare Tunnel provisioning on host, Cloudflare R2 bucket CORS policy, secure staging secrets provisioning, and live restore drill rehearsal (RELEASE GATE: NO-GO).
   - **Secret Management**: PARTIAL. Environment variable templates documented in `.env.example` (including `TOKEN_ENCRYPTION_KEY`, LinkedIn OAuth credentials [`LINKEDIN_CLIENT_ID`, `LINKEDIN_CLIENT_SECRET`], and `FRONTEND_URL`). `docker-compose.yml` requires an explicitly supplied `TOKEN_ENCRYPTION_KEY` for API and Worker services with zero default secret fallbacks. Test-only key explicitly supplied in CI smoke testing. Production external secret store integration (e.g., Vault / AWS Secrets Manager) remains deferred.
   - **Observability**: COMPLETE AND VERIFIED. Structured Pino logging configured across API and Worker (`logger.config.ts`), with correlation ID validation and propagation across HTTP requests and BullMQ queue jobs (`SyncJobData`, `PublishJobData`, `PublishDeleteJobData`), sensitive credential and header redaction (snake_case and camelCase tokens, secrets, cookies), request URL query parameter sanitization (`url-sanitizer.utils.ts`), required `PinoLogger` dependency injection, and comprehensive unit and integration test suites.
   - **Tenancy Verification**: COMPLETE AND VERIFIED. Cross-workspace checks and `WorkspaceGuard` are enforced (e.g., in `analytics.controller.ts`).
@@ -47,9 +47,9 @@
 
 1. **Last definitely completed phase**: Phase 5 (Analytics).
 2. **Current active phase**: Phase 6 (Hardening).
-3. **Exact Phase 6 items already finished**: Tenancy verification (WorkspaceGuard), OAuth Hardening (PKCE + CSRF), Token Encryption (AES-256-GCM logic + fail-fast 64-hex startup validation in API/Worker), Environment Secret Documentation (.env.example templates), Docker Compose Required Secret Enforcement, Queue Reliability (BullMQ backoffs), Ingress Rate Limiting (`APP_GUARD` + Redis Throttler), Audit Logging (`AuditService` and transactional audit persistence), Container Hardening (Node `dist` execution, workspace-aware production Docker runner slimming), Observability (Structured Pino logging, request/job correlation propagation, sensitive credential redaction, and URL sanitization), Staging/Deployment Hardening (unified NGINX ingress, staging compose isolation, required secret enforcement, automated configuration tests, CI smoke test extension).
+3. **Exact Phase 6 items already finished**: Tenancy verification (WorkspaceGuard), OAuth Hardening (PKCE + CSRF), Token Encryption (AES-256-GCM logic + fail-fast 64-hex startup validation in API/Worker), Environment Secret Documentation (.env.example templates), Docker Compose Required Secret Enforcement, Queue Reliability (BullMQ backoffs), Ingress Rate Limiting (`APP_GUARD` + Redis Throttler), Audit Logging (`AuditService` and transactional audit persistence), Container Hardening (Node `dist` execution, workspace-aware production Docker runner slimming), Observability (Structured Pino logging, request/job correlation propagation, sensitive credential redaction, and URL sanitization), Staging/Deployment Hardening & Safety Corrections (unified NGINX ingress, staging compose loopback isolation for Cloudflare Tunnel, fail-fast browser-reachable object storage validation rejecting `minio` in production, `TRUST_PROXY=2` hop configuration and tests, CI zero-host-port inspection, stdin-streaming disaster recovery procedures).
 4. **Exact Phase 6 items partially implemented**: Secret management (environment configuration, fail-fast startup validation, and staging compose secret enforcement complete; production external secrets vault integration remains deferred).
-5. **Exact Phase 6 items not started**: None (staging/deployment hardening configuration and tests implemented; live VPS deployment and external secret vault deferred/pending operator actions).
+5. **Exact Phase 6 items not started / deferred**: External secret vault integration (HashiCorp Vault / AWS Secrets Manager) deferred for production; live VPS deployment, Cloudflare Tunnel provisioning, and Cloudflare R2 bucket CORS are pending external operator infrastructure actions (Release Gate: NO-GO).
 6. **Most likely last task Claude Code was working on**: Implementing the background analytics synchronization worker (`apps/worker/src/sync/sync.processor.ts`) and writing its tests, while concurrently adding initial Phase 6 queue reliability and token encryption logic necessary for the worker to function securely.
 7. **Exact next task that should be continued**: Phase 7.1 — Publishing Domain & Provider Capability Design (following complete hardening of Phase 6).
 
@@ -1773,3 +1773,84 @@ The final architecture employs a two-tier fencing model:
    - External secret vault integration (HashiCorp Vault / AWS Secrets Manager) for production environments.
 3. **Phase 7 Next Task**:
    - Proceed to Phase 7.1: Publishing Domain & Provider Capability Design.
+
+
+## 36. Phase 6.6 — Staging Deployment Safety Corrections (PR #41 & Follow-up)
+
+### 1. Summary & Motivation
+- **Status**: **MERGED & VERIFIED IN CI (PR #41)**
+- **Pull Request**: [#41](https://github.com/AbhishekGadmale/Social-Media-Handler/pull/41)
+- **Branch**: `fix/staging-deployment-safety-corrections`
+- **Pre-Merge Base SHA**: [`dca45bbc4709f7c64ed5ef62b41ef3f9c93dc227`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/dca45bbc4709f7c64ed5ef62b41ef3f9c93dc227) (`dca45bb`)
+- **Reviewed Head SHA**: [`2869ad4561508fe26324e6e5fee7dfb484d512e0`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/2869ad4561508fe26324e6e5fee7dfb484d512e0) (`2869ad4`)
+- **Merge Commit SHA**: [`1086418aa22d59620038c0d8516494611f75810a`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/1086418aa22d59620038c0d8516494611f75810a) (`1086418`)
+- **Merge Strategy**: Standard GitHub merge commit (2 parents: `dca45bb` and `2869ad4`)
+- **Merge Timestamp**: `2026-10-31T09:32:00Z`
+- **Pre-Merge CI Checks**: [Commit `2869ad4` Checks](https://github.com/AbhishekGadmale/Social-Media-Handler/pull/41/checks) (All 6 check runs green on reviewed HEAD `2869ad4`: GitGuardian Security Checks, Application Builds, Code Quality, API E2E Tests, Tests, Docker Build & Smoke Test)
+- **Post-Merge Push CI Run**: [Run #41189076688](https://github.com/AbhishekGadmale/Social-Media-Handler/actions/runs/41189076688) (All 5 push check runs green on `main` `1086418`: Application Builds, Code Quality, API E2E Tests, Tests, Docker Build & Smoke Test)
+- **Reviewer**: Muse (APPROVED on HEAD `2869ad4` with non-blocking finding M2 tracked for documentation follow-up)
+- **Documentation Follow-Up**: Dedicated follow-up branch `docs/phase-6-6-readiness-and-status-update` addresses finding M2 in `docs/phase-6-readiness.md` (correcting the database restore command to stream custom-format dump files via stdin) and records verified Phase 6.6 status.
+- **Live Deployment Release Gate**: **NO-GO** (Pending operator external infrastructure provisioning: Cloudflare Tunnel, Cloudflare R2 bucket CORS, staging secrets file, and rehearsal of an isolated restore drill).
+
+### 2. Scope & Implementation Details
+1. **Object Storage Public Endpoint Hardening (`apps/api/src/config/storage-endpoint.ts`, `main.ts`, `media.module.ts`, `docker-compose.staging.yml`)**:
+   - Created `parseStoragePublicEndpoint` and `validateStoragePublicEndpoint` enforcing fail-fast startup validation in production (`NODE_ENV=production`).
+   - Strictly rejects the internal Docker hostname `minio` in production, requiring an explicit browser-reachable public endpoint (e.g. Cloudflare R2 or AWS S3).
+   - Enforces HTTPS for production endpoints; permits HTTP exclusively for local loopback hosts (`localhost`, `127.0.0.1`, `[::1]`) for isolated Compose smoke testing.
+   - Strips trailing slashes and rejects embedded credentials, query parameters, and hash fragments.
+   - In `docker-compose.staging.yml`, replaced unsafe default fallback `:-http://minio:9000` with required variable interpolation `${OBJECT_STORAGE_PUBLIC_ENDPOINT:?...}` for both `api` and `worker` services.
+   - Added 12 unit tests in `apps/api/src/config/storage-endpoint.spec.ts` (100% pass).
+2. **Ingress Loopback Binding for Cloudflare Tunnel Origin Isolation (`docker-compose.staging.yml`)**:
+   - Mapped ingress port to `"${STAGING_BIND_IP:-127.0.0.1}:${STAGING_PORT:-80}:8080"`.
+   - Binds NGINX strictly to host loopback (`127.0.0.1`) by default, guaranteeing that ZERO inbound ports are published on `0.0.0.0` or `:::` when using Cloudflare Tunnel (`cloudflared`) on the host.
+   - Updated `staging-deployment.spec.ts` to assert default loopback binding.
+3. **Proxy Trust Configuration & Rate Limiting (`trust-proxy.ts`, `trust-proxy.spec.ts`, `docker-compose.staging.yml`, `.env.example`)**:
+   - Set staging Compose default to `TRUST_PROXY: "${TRUST_PROXY:-2}"` for the 2-hop reverse proxy chain: `Client -> Cloudflare Edge -> cloudflared (127.0.0.1) -> NGINX (172.x) -> NestJS API`.
+   - Added integration tests in `trust-proxy.spec.ts` verifying:
+     - `TRUST_PROXY=2` extracts the true client IP `203.0.113.195` from `[203.0.113.195, 127.0.0.1]`.
+     - `TRUST_PROXY=1` would improperly collapse client IP to `127.0.0.1`, defeating per-client rate limiting.
+     - Anti-spoofing assertion: prepended spoofed headers (`1.1.1.1`) are ignored, correctly resolving the client IP appended by Cloudflare Edge.
+     - Protocol resolution: `X-Forwarded-Proto: https` sets `req.secure = true` and `req.protocol = 'https'`, while `http` sets `req.secure = false`.
+   - Documented that non-tunnel direct reverse proxy deployments (e.g. AWS ALB or direct TLS on NGINX) must explicitly configure `TRUST_PROXY=1` via `--env-file /opt/agency-os/.env.staging` and verify their own client IP resolution.
+4. **Strengthened CI Port Isolation Assertions (`.github/workflows/ci.yml`)**:
+   - Replaced substring regex checks with an assertion verifying non-ingress backing services have no published host port mappings at all (`grep -v 'ingress:' | grep -- '->'`), catching both public and loopback bindings (e.g. `127.0.0.1:5432:5432`).
+   - Asserts ingress is not bound to public wildcard interfaces (`0.0.0.0:` or `:::`) and confirms it is bound to loopback (`127.0.0.1:`).
+5. **Corrected CI Object Storage Endpoint (`.github/workflows/ci.yml`)**:
+   - Corrected `OBJECT_STORAGE_PUBLIC_ENDPOINT` in the staging smoke-test step from `http://localhost:8080` to `http://127.0.0.1:9000` (the actual MinIO/S3 service endpoint in CI).
+6. **Worker Storage Provider Verification (`apps/worker/src/publishing/publishing.module.spec.ts`)**:
+   - Verified that the background worker communicates with object storage strictly backend-to-backend via `OBJECT_STORAGE_ENDPOINT` (e.g. streaming media to platform APIs via `getStream`).
+   - Added unit test in `publishing.module.spec.ts` confirming `PublishingModule` initializes `IObjectStorage` safely without requiring browser-reachable `OBJECT_STORAGE_PUBLIC_ENDPOINT`.
+7. **Disaster Recovery & Finding M2 Stdin Restore Procedure (`docs/phase-6-readiness.md`)**:
+   - Changed backup descriptions from "scheduled" to manual runbook procedures (no scheduler is installed in the repository).
+   - Documented backup directory preparation with restrictive permissions: `mkdir -p -m 700 /opt/agency-os/backups`.
+   - Fixed Muse finding M2: replaced the broken `/backup/<dump_file>` container-path restore command with stdin streaming via standard input:
+     ```bash
+     DUMP_FILE="db_YYYYMMDD_HHMMSS.dump"
+     cat "/opt/agency-os/backups/${DUMP_FILE}" | \
+       docker compose -f docker-compose.staging.yml \
+         --env-file /opt/agency-os/.env.staging \
+         exec -T postgres \
+         pg_restore -U postgres -d agency_os --clean --if-exists
+     ```
+   - Added warning that database restoration is destructive (`--clean --if-exists`), requiring rehearsals to run against isolated test databases.
+   - Updated media volume backup and restore commands to dynamically query the Compose volume name instead of assuming a fixed project prefix.
+   - Added an explicitly labelled cron template marked clearly as an uninstalled example template.
+
+### 3. Verification & Test Evidence
+- **Storage Endpoint Tests (`apps/api/src/config/storage-endpoint.spec.ts`)**: 12/12 PASS
+- **Staging Deployment Tests (`apps/api/src/config/staging-deployment.spec.ts`)**: 24/24 PASS (including containerized `nginx -t`)
+- **Trust Proxy Tests (`apps/api/src/config/trust-proxy.spec.ts`)**: 16/16 PASS
+- **Worker Publishing Module Tests (`apps/worker/src/publishing/publishing.module.spec.ts`)**: 2/2 PASS
+- **Full API Test Suite (`pnpm --filter @agency-os/api test`)**: 22/22 test files, 270/270 PASS
+- **Workspace Lint (`pnpm turbo run lint`)**: 9/9 packages PASS (0 errors, 55 pre-existing warnings)
+- **Workspace Typecheck (`pnpm turbo run typecheck`)**: 10/10 tasks PASS
+- **Workspace Build (`pnpm turbo run build`)**: 7/7 tasks PASS
+- **Pre-Merge CI (Commit `2869ad4`)**: All 6 check runs green: GitGuardian, Application Builds, Code Quality, API E2E Tests, Tests, Docker Build & Smoke Test.
+- **Post-Merge CI (Commit `1086418` / Run #41189076688)**: All 5 push check runs green on `main`: Application Builds, Code Quality, API E2E Tests, Tests, Docker Build & Smoke Test.
+
+### 4. Remaining Release Gates (External Infrastructure — Live Deployment NO-GO)
+Codebase and container configurations are fully hardened and verified in CI. However, live staging deployment is strictly **NO-GO** until the operator completes the following external infrastructure actions:
+1. **Cloudflare Tunnel Provisioning**: Install and configure `cloudflared` on the host, routing staging hostname traffic to `http://127.0.0.1:80`.
+2. **Cloudflare R2 Bucket & CORS**: Provision bucket and apply the documented CORS policy for browser direct presigned uploads.
+3. **Staging Secrets Provisioning**: Populate `/opt/agency-os/.env.staging` with `chmod 600` and ensure all staging Compose invocations pass `--env-file /opt/agency-os/.env.staging`.
+4. **Restore Drill Rehearsal**: Execute an end-to-end backup and isolated test restore rehearsal using the documented stdin streaming procedure.
