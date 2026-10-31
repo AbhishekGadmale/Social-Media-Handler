@@ -1,7 +1,8 @@
 # Staging Deployment Configuration & Ingress Hardening
 # - Requires Docker Compose v2.24.4 or later for '!reset' attribute overrides.
 # - All internal service ports (postgres, redis, minio, api, web) are un-published from host interfaces.
-# - Ingress (NGINX) is the sole publicly bound entrypoint on ${STAGING_PORT:-80}.
+# - Ingress (NGINX) binds by default to loopback (${STAGING_BIND_IP:-127.0.0.1}:${STAGING_PORT:-80}) for Cloudflare Tunnel origin isolation.
+# - Public object storage requires an explicit browser-reachable URL (${OBJECT_STORAGE_PUBLIC_ENDPOINT:?error}) for presigned uploads.
 # - Zero development fallback secrets: all genuinely required staging credentials must be explicitly provided.
 # - Can be run standalone (-f docker-compose.staging.yml) or as an overlay (-f docker-compose.yml -f docker-compose.staging.yml).
 
@@ -82,15 +83,16 @@ services:
       TOKEN_ENCRYPTION_KEY: ${TOKEN_ENCRYPTION_KEY:?TOKEN_ENCRYPTION_KEY must be set; generate one with openssl rand -hex 32}
       FRONTEND_URL: ${FRONTEND_URL:?FRONTEND_URL must be set for staging}
       API_PUBLIC_URL: ${API_PUBLIC_URL:?API_PUBLIC_URL must be set for staging}
-      TRUST_PROXY: "1"
+      TRUST_PROXY: "${TRUST_PROXY:-2}"
       ALLOW_INSECURE_HTTP_AUTH: ${ALLOW_INSECURE_HTTP_AUTH:-false}
       YOUTUBE_CLIENT_ID: ${YOUTUBE_CLIENT_ID}
       YOUTUBE_CLIENT_SECRET: ${YOUTUBE_CLIENT_SECRET}
       LINKEDIN_CLIENT_ID: ${LINKEDIN_CLIENT_ID}
       LINKEDIN_CLIENT_SECRET: ${LINKEDIN_CLIENT_SECRET}
-      OBJECT_STORAGE_ENDPOINT: http://minio:9000
-      OBJECT_STORAGE_PUBLIC_ENDPOINT: ${OBJECT_STORAGE_PUBLIC_ENDPOINT:-http://minio:9000}
-      OBJECT_STORAGE_FORCE_PATH_STYLE: "true"
+      OBJECT_STORAGE_ENDPOINT: ${OBJECT_STORAGE_ENDPOINT:-http://minio:9000}
+      OBJECT_STORAGE_PUBLIC_ENDPOINT: ${OBJECT_STORAGE_PUBLIC_ENDPOINT:?OBJECT_STORAGE_PUBLIC_ENDPOINT must be set to a browser-reachable URL (e.g. Cloudflare R2 or AWS S3 endpoint)}
+      OBJECT_STORAGE_FORCE_PATH_STYLE: "${OBJECT_STORAGE_FORCE_PATH_STYLE:-true}"
+      OBJECT_STORAGE_REGION: ${OBJECT_STORAGE_REGION:-us-east-1}
       OBJECT_STORAGE_ACCESS_KEY_ID: ${OBJECT_STORAGE_ACCESS_KEY_ID:?OBJECT_STORAGE_ACCESS_KEY_ID must be set for staging}
       OBJECT_STORAGE_SECRET_ACCESS_KEY: ${OBJECT_STORAGE_SECRET_ACCESS_KEY:?OBJECT_STORAGE_SECRET_ACCESS_KEY must be set for staging}
       OBJECT_STORAGE_BUCKET: ${OBJECT_STORAGE_BUCKET:-agency-os-media}
@@ -122,9 +124,10 @@ services:
       YOUTUBE_CLIENT_SECRET: ${YOUTUBE_CLIENT_SECRET}
       LINKEDIN_CLIENT_ID: ${LINKEDIN_CLIENT_ID}
       LINKEDIN_CLIENT_SECRET: ${LINKEDIN_CLIENT_SECRET}
-      OBJECT_STORAGE_ENDPOINT: http://minio:9000
-      OBJECT_STORAGE_PUBLIC_ENDPOINT: ${OBJECT_STORAGE_PUBLIC_ENDPOINT:-http://minio:9000}
-      OBJECT_STORAGE_FORCE_PATH_STYLE: "true"
+      OBJECT_STORAGE_ENDPOINT: ${OBJECT_STORAGE_ENDPOINT:-http://minio:9000}
+      OBJECT_STORAGE_PUBLIC_ENDPOINT: ${OBJECT_STORAGE_PUBLIC_ENDPOINT:?OBJECT_STORAGE_PUBLIC_ENDPOINT must be set to a browser-reachable URL (e.g. Cloudflare R2 or AWS S3 endpoint)}
+      OBJECT_STORAGE_FORCE_PATH_STYLE: "${OBJECT_STORAGE_FORCE_PATH_STYLE:-true}"
+      OBJECT_STORAGE_REGION: ${OBJECT_STORAGE_REGION:-us-east-1}
       OBJECT_STORAGE_ACCESS_KEY_ID: ${OBJECT_STORAGE_ACCESS_KEY_ID:?OBJECT_STORAGE_ACCESS_KEY_ID must be set for staging}
       OBJECT_STORAGE_SECRET_ACCESS_KEY: ${OBJECT_STORAGE_SECRET_ACCESS_KEY:?OBJECT_STORAGE_SECRET_ACCESS_KEY must be set for staging}
       OBJECT_STORAGE_BUCKET: ${OBJECT_STORAGE_BUCKET:-agency-os-media}
@@ -161,7 +164,7 @@ services:
       dockerfile: docker/nginx/Dockerfile
     image: agency-os-ingress:staging
     ports:
-      - "${STAGING_PORT:-80}:8080"
+      - "${STAGING_BIND_IP:-127.0.0.1}:${STAGING_PORT:-80}:8080"
     depends_on:
       api:
         condition: service_healthy

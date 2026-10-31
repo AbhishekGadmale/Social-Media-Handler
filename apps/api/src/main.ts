@@ -10,6 +10,7 @@ import helmet from 'helmet';
 import { Logger, PinoLogger } from 'nestjs-pino';
 import { configureTrustProxy } from './config/trust-proxy';
 import { getPublicApiUrl } from './config/public-url';
+import { validateStoragePublicEndpoint } from './config/storage-endpoint';
 import { validateTokenEncryptionKey } from '@agency-os/database';
 
 export async function bootstrap() {
@@ -20,6 +21,9 @@ export async function bootstrap() {
 
   // Fail-fast startup validation for API_PUBLIC_URL in production
   getPublicApiUrl();
+
+  // Fail-fast startup validation for OBJECT_STORAGE_PUBLIC_ENDPOINT in production
+  validateStoragePublicEndpoint();
 
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
     bufferLogs: true,

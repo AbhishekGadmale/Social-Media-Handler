@@ -148,5 +148,56 @@ describe('Trust Proxy Configuration', () => {
       expect(res.status).toBe(200);
       expect(res.body.ip).toBe('1.1.1.1');
     });
+
+    it('Cloudflare Tunnel 2-hop topology (TRUST_PROXY=2) resolves true client IP from [client, 127.0.0.1]', async () => {
+      const app = createTestApp('2', false);
+      // Cloudflare Edge sends real client IP 203.0.113.195. NGINX on host appends loopback 127.0.0.1.
+      const res = await request(app)
+        .get('/test-proxy')
+        .set('X-Forwarded-For', '203.0.113.195, 127.0.0.1')
+        .set('X-Forwarded-Proto', 'https');
+
+      expect(res.status).toBe(200);
+      expect(res.body.ip).toBe('203.0.113.195');
+      expect(res.body.protocol).toBe('https');
+      expect(res.body.secure).toBe(true);
+    });
+
+    it('demonstrates why TRUST_PROXY=1 fails in Cloudflare Tunnel (collapses client IP to loopback 127.0.0.1)', async () => {
+      const app = createTestApp('1', false);
+      // With trust=1, Express only trusts NGINX and picks the rightmost address (127.0.0.1), breaking IP rate limiting
+      const res = await request(app)
+        .get('/test-proxy')
+        .set('X-Forwarded-For', '203.0.113.195, 127.0.0.1')
+        .set('X-Forwarded-Proto', 'https');
+
+      expect(res.status).toBe(200);
+      expect(res.body.ip).toBe('127.0.0.1'); // Explains why TRUST_PROXY=2 is necessary for Tunnel
+    });
+
+    it('TRUST_PROXY=2 rejects spoofed client header when attacker prepends spoofed IP', async () => {
+      const app = createTestApp('2', false);
+      // Attacker sends 1.1.1.1. Edge appends real client 203.0.113.195. NGINX appends 127.0.0.1.
+      const res = await request(app)
+        .get('/test-proxy')
+        .set('X-Forwarded-For', '1.1.1.1, 203.0.113.195, 127.0.0.1')
+        .set('X-Forwarded-Proto', 'https');
+
+      expect(res.status).toBe(200);
+      expect(res.body.ip).toBe('203.0.113.195');
+      expect(res.body.ip).not.toBe('1.1.1.1');
+    });
+
+    it('TRUST_PROXY=2 evaluates req.secure=false when X-Forwarded-Proto is http', async () => {
+      const app = createTestApp('2', false);
+      const res = await request(app)
+        .get('/test-proxy')
+        .set('X-Forwarded-For', '203.0.113.195, 127.0.0.1')
+        .set('X-Forwarded-Proto', 'http');
+
+      expect(res.status).toBe(200);
+      expect(res.body.protocol).toBe('http');
+      expect(res.body.secure).toBe(false);
+    });
   });
 });

@@ -156,10 +156,18 @@ describe('Phase 6: Staging/Deployment Hardening & Unified Ingress Configuration'
         }
 
         // Check if image is available locally to avoid network pull latency/timeout during unit tests
-        const imgCheck = execSync(
-          'docker image ls -q nginxinc/nginx-unprivileged:1.31.7-alpine',
-          { encoding: 'utf-8', timeout: 3000 },
-        ).trim();
+        let imgCheck = '';
+        try {
+          imgCheck = execSync(
+            'docker image ls -q nginxinc/nginx-unprivileged:1.31.7-alpine',
+            { encoding: 'utf-8', timeout: 3000 },
+          ).trim();
+        } catch {
+          console.warn(
+            'Docker image check timed out or failed; skipped runtime container test in unit test suite',
+          );
+          return;
+        }
 
         if (!imgCheck) {
           console.warn(
@@ -181,7 +189,8 @@ describe('Phase 6: Staging/Deployment Hardening & Unified Ingress Configuration'
         if (
           errMsg.includes('docker: command not found') ||
           errMsg.includes('Cannot connect to the Docker daemon') ||
-          errMsg.includes('daemon is not running')
+          errMsg.includes('daemon is not running') ||
+          errMsg.includes('ETIMEDOUT')
         ) {
           console.warn(
             'Docker daemon not accessible; skipped runtime nginx -t container test',
@@ -220,7 +229,14 @@ describe('Phase 6: Staging/Deployment Hardening & Unified Ingress Configuration'
 
       expect(stagingYaml).toContain('ingress:');
       expect(stagingYaml).toMatch(
-        /ingress:[\s\S]*?- "\$\{STAGING_PORT:-80\}:8080"/,
+        /ingress:[\s\S]*?- "\${STAGING_BIND_IP:-127\.0\.0\.1}:\${STAGING_PORT:-80}:8080"/,
+      );
+    });
+
+    it('binds ingress exclusively to loopback 127.0.0.1 by default for Cloudflare Tunnel', () => {
+      const stagingYaml = fs.readFileSync(stagingComposePath, 'utf8');
+      expect(stagingYaml).toContain(
+        '- "${STAGING_BIND_IP:-127.0.0.1}:${STAGING_PORT:-80}:8080"',
       );
     });
 
@@ -254,6 +270,14 @@ describe('Phase 6: Staging/Deployment Hardening & Unified Ingress Configuration'
         '${OBJECT_STORAGE_SECRET_ACCESS_KEY:?OBJECT_STORAGE_SECRET_ACCESS_KEY must be set for staging}',
       );
 
+      // Must require browser-reachable OBJECT_STORAGE_PUBLIC_ENDPOINT without internal fallback (B1)
+      expect(stagingYaml).toContain(
+        '${OBJECT_STORAGE_PUBLIC_ENDPOINT:?OBJECT_STORAGE_PUBLIC_ENDPOINT must be set to a browser-reachable URL (e.g. Cloudflare R2 or AWS S3 endpoint)}',
+      );
+      expect(stagingYaml).not.toContain(
+        'OBJECT_STORAGE_PUBLIC_ENDPOINT:-http://minio:9000',
+      );
+
       // Must require FRONTEND_URL and API_PUBLIC_URL without fallback
       expect(stagingYaml).toContain(
         '${FRONTEND_URL:?FRONTEND_URL must be set for staging}',
@@ -277,7 +301,9 @@ describe('Phase 6: Staging/Deployment Hardening & Unified Ingress Configuration'
 
       // API environment
       expect(stagingYaml).toMatch(/api:[\s\S]*?NODE_ENV:\s*production/);
-      expect(stagingYaml).toMatch(/api:[\s\S]*?TRUST_PROXY:\s*"1"/);
+      expect(stagingYaml).toMatch(
+        /api:[\s\S]*?TRUST_PROXY:\s*"\${TRUST_PROXY:-2}"/,
+      );
       expect(stagingYaml).toMatch(
         /api:[\s\S]*?ALLOW_INSECURE_HTTP_AUTH:\s*\$\{ALLOW_INSECURE_HTTP_AUTH:-false\}/,
       );
@@ -301,6 +327,7 @@ describe('Phase 6: Staging/Deployment Hardening & Unified Ingress Configuration'
           NEXT_PUBLIC_API_URL: 'http://localhost:8080/api/v1',
           OBJECT_STORAGE_ACCESS_KEY_ID: 'test-access-key',
           OBJECT_STORAGE_SECRET_ACCESS_KEY: 'test-secret-key',
+          OBJECT_STORAGE_PUBLIC_ENDPOINT: 'https://pub-r2.agency-os.com',
         };
 
         const resolvedYaml = execSync(
@@ -325,6 +352,7 @@ describe('Phase 6: Staging/Deployment Hardening & Unified Ingress Configuration'
 
         // Only ingress must appear in published services
         expect(publishedServices).toEqual(['ingress']);
+        expect(resolvedYaml).toMatch(/TRUST_PROXY:\s*"2"/);
       } catch (err: any) {
         if (err.message?.includes('docker: command not found')) {
           console.warn(
@@ -347,6 +375,7 @@ describe('Phase 6: Staging/Deployment Hardening & Unified Ingress Configuration'
         delete strippedEnv.NEXT_PUBLIC_API_URL;
         delete strippedEnv.OBJECT_STORAGE_ACCESS_KEY_ID;
         delete strippedEnv.OBJECT_STORAGE_SECRET_ACCESS_KEY;
+        delete strippedEnv.OBJECT_STORAGE_PUBLIC_ENDPOINT;
 
         execSync(`docker compose -f "${stagingComposePath}" config 2>&1`, {
           env: strippedEnv,
