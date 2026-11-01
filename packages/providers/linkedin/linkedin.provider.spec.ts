@@ -19,6 +19,32 @@ describe('LinkedInProvider', () => {
     process.env = originalEnv;
   });
 
+  it('throws on missing or empty env vars', () => {
+    delete process.env.LINKEDIN_CLIENT_ID;
+    delete process.env.LINKEDIN_CLIENT_SECRET;
+    expect(() => new LinkedInProvider()).toThrow(
+      'LINKEDIN_CLIENT_ID and LINKEDIN_CLIENT_SECRET environment variables are required.',
+    );
+
+    process.env.LINKEDIN_CLIENT_ID = '   ';
+    process.env.LINKEDIN_CLIENT_SECRET = 'test-secret';
+    expect(() => new LinkedInProvider()).toThrow(
+      'LINKEDIN_CLIENT_ID and LINKEDIN_CLIENT_SECRET environment variables are required.',
+    );
+
+    process.env.LINKEDIN_CLIENT_ID = 'test-client';
+    process.env.LINKEDIN_CLIENT_SECRET = '';
+    expect(() => new LinkedInProvider()).toThrow(
+      'LINKEDIN_CLIENT_ID and LINKEDIN_CLIENT_SECRET environment variables are required.',
+    );
+  });
+
+  it('initializes successfully with valid env vars', () => {
+    process.env.LINKEDIN_CLIENT_ID = 'valid-id';
+    process.env.LINKEDIN_CLIENT_SECRET = 'valid-secret';
+    expect(() => new LinkedInProvider()).not.toThrow();
+  });
+
   it('should generate authorization URL correctly', () => {
     const url = provider.getAuthorizationUrl({
       workspaceId: 'ws1',

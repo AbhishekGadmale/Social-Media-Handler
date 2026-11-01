@@ -29,8 +29,15 @@ export class LinkedInProvider implements ISocialProvider, IPublishingProvider {
   private userInfoUrl = 'https://api.linkedin.com/v2/userinfo';
 
   constructor() {
-    this.clientId = process.env.LINKEDIN_CLIENT_ID || 'dummy_client_id';
-    this.clientSecret = process.env.LINKEDIN_CLIENT_SECRET || 'dummy_client_secret';
+    const clientId = process.env.LINKEDIN_CLIENT_ID?.trim();
+    const clientSecret = process.env.LINKEDIN_CLIENT_SECRET?.trim();
+    if (!clientId || !clientSecret) {
+      throw new Error(
+        'LINKEDIN_CLIENT_ID and LINKEDIN_CLIENT_SECRET environment variables are required.',
+      );
+    }
+    this.clientId = clientId;
+    this.clientSecret = clientSecret;
   }
 
   private readonly ALLOWED_SCOPES = new Set([

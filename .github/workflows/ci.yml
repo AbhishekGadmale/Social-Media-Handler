@@ -110,6 +110,8 @@ jobs:
           COOKIE_SECRET: super-secret-test-cookie-key
           YOUTUBE_CLIENT_ID: dummy-client-id
           YOUTUBE_CLIENT_SECRET: dummy-client-secret
+          LINKEDIN_CLIENT_ID: dummy-client-id
+          LINKEDIN_CLIENT_SECRET: dummy-client-secret
           TURBO_ENV_MODE: loose
         run: pnpm turbo run test --env-mode=loose
 
@@ -203,6 +205,8 @@ jobs:
           COOKIE_SECRET: super-secret-test-cookie-key
           YOUTUBE_CLIENT_ID: dummy-client-id
           YOUTUBE_CLIENT_SECRET: dummy-client-secret
+          LINKEDIN_CLIENT_ID: dummy-client-id
+          LINKEDIN_CLIENT_SECRET: dummy-client-secret
           OBJECT_STORAGE_ENDPOINT: http://127.0.0.1:9000
           OBJECT_STORAGE_PUBLIC_ENDPOINT: http://127.0.0.1:9000
           OBJECT_STORAGE_REGION: us-east-1
@@ -268,6 +272,8 @@ jobs:
           COOKIE_SECRET: super-secret-test-cookie-key
           YOUTUBE_CLIENT_ID: dummy-client-id
           YOUTUBE_CLIENT_SECRET: dummy-client-secret
+          LINKEDIN_CLIENT_ID: dummy-client-id
+          LINKEDIN_CLIENT_SECRET: dummy-client-secret
           API_PUBLIC_URL: http://localhost:3001
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: password
