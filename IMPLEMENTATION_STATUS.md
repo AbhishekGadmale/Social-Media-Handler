@@ -1921,14 +1921,14 @@ Codebase, Compose configurations, and operator documentation are 100% complete a
   2. Removed silent dummy credential fallbacks (`dummy_client_id` / `dummy_client_secret`) in `LinkedInProvider` constructor, enforcing fail-fast validation when `LINKEDIN_CLIENT_ID` or `LINKEDIN_CLIENT_SECRET` is missing or empty.
   3. Added comprehensive unit tests in `packages/providers/linkedin/linkedin.provider.spec.ts` covering missing, whitespace-only, and empty environment variables, as well as successful instantiation with valid credentials.
   4. Updated test fixtures and CI workflows to supply explicit mock LinkedIn credentials in `packages/providers/core/__tests__/provider-registry.test.ts`, `apps/worker/src/publishing/token.service.spec.ts`, and `.github/workflows/ci.yml`.
-- **Credential Safety Notice**: Untracking `packages/database/cookies.txt` ensures that future modifications to the file are not tracked by Git, but does not rewrite historical repository commits. Any user sessions, authentication tokens, or cookies historically stored in `cookies.txt` must be considered compromised and rotated or invalidated by operators on third-party services.
+- **Credential Safety & Repository History Assessment**: Untracking `packages/database/cookies.txt` ensures the file is ignored going forward, though untracking does not erase historical commits from Git history. Independent review of the historical file by Muse established that `packages/database/cookies.txt` was a 131-byte, four-line Netscape cookie template introduced in a single earlier commit and never subsequently modified; all lines were comments with zero cookie entries. Consequently, no credential rotation or Git history rewrite was warranted based on that inspection. If separate evidence of credential exposure emerges elsewhere, it must be assessed and remediated independently.
 - **Live Deployment Release Gate**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending external infrastructure provisioning and disaster recovery rehearsals).
 
 ### 2. Scope & Implementation Details
 1. **Stop Tracking `packages/database/cookies.txt`**:
    - Removed `packages/database/cookies.txt` from Git index tracking via `git rm --cached`.
    - Verified that the file remains present on disk and is untracked and ignored by Git per `.gitignore:18:cookies.txt`.
-   - Emphasized credential rotation requirements for historically exposed session data.
+   - Confirmed through independent inspection that the historical file contained only template comment lines with zero cookie entries, establishing that no credentials required rotation and no Git history rewrite was warranted for this file.
 2. **Fail-Fast LinkedIn Provider Credentials**:
    - In `packages/providers/linkedin/linkedin.provider.ts`, eliminated silent default fallbacks to `'dummy_client_id'` and `'dummy_client_secret'`.
    - The constructor now validates that `LINKEDIN_CLIENT_ID` and `LINKEDIN_CLIENT_SECRET` are present and non-empty (trimmed), throwing an explicit configuration error if missing, consistent with `packages/providers/youtube/youtube.provider.ts`.
