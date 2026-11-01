@@ -2124,48 +2124,51 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
 5. **Disaster Recovery Rehearsal G18 (Database)**: End-to-end stdin streaming restore rehearsal executed into isolated rehearsal database `agency_os_rehearsal_test` (§10.1).
 6. **Disaster Recovery Rehearsal G19 (Media Storage)**: End-to-end media volume restore rehearsal executed into isolated test target with representative file retrieval verified (§10.2).
 
-## 39. Phase 7.1, PR 1: User-to-Session Indexing and Revocation
+## 39. Phase 7.1, PR 1: User-to-Session Indexing and Revocation (Security Remediation)
 
 ### 1. Summary & Motivation
 
-- **Status**: **READY FOR INDEPENDENT REVIEW (PR OPEN, DO NOT MERGE)**
+- **Status**: **READY FOR INDEPENDENT REVIEW (PR #47 UPDATED, DO NOT MERGE)**
 - **Branch**: `feat/user-session-indexing-revocation`
 - **Target Base**: `main` ([`80582dd77d9adfc5d303338b0ddbb353da7879db`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/80582dd77d9adfc5d303338b0ddbb353da7879db))
 - **Scope Discipline**: Phase 7.1, PR 1 implements only session indexing and revocation semantics in the Redis-backed session manager and auth service. No public registration, organization migrations, member endpoints, billing models, or policy pages are introduced.
 - **Live Deployment Release Gate**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending external infrastructure provisioning and disaster recovery rehearsals G18/G19).
 
-### 2. Scope & Implementation Details
+### 2. Scope & Implementation Details (Findings F1–F7 Remediated)
 
-1. **User-to-Session Indexing (`user_sessions:${userId}`)**:
-   - In `packages/session/src/SessionManager.ts`, added index key pattern `user_sessions:${userId}` backed by Redis Sets.
-   - Updated `createSession(userId)` to execute an atomic Redis pipeline setting `session:${sessionId}` with 7-day TTL, adding the session ID to `user_sessions:${userId}` (`sadd`), and refreshing the index TTL (`expire`).
-   - Updated `validateSession(sessionId)` to slide TTL expiration on both `session:${sessionId}` and `user_sessions:${userId}` to maintain alignment.
-   - Guaranteed that stale index entries cannot grant authentication access: `validateSession` reads the underlying session key first and returns `null` if expired or missing.
-2. **Revocation Semantics (`destroyAllUserSessions`)**:
-   - Implemented `destroyAllUserSessions(userId)` using an atomic Redis Lua script. The script atomically reads all session IDs from `user_sessions:${userId}`, deletes each corresponding `session:${sid}` key, and deletes the `user_sessions:${userId}` set key in a single Redis execution, preventing concurrency race conditions with parallel logins.
-   - Updated ordinary single-session logout (`destroySession(sessionId)`) to retrieve the user ID and remove only that specific session ID from the user index via `srem`.
-   - Implemented `getUserSessionIds(userId, cleanStale = true)` with automatic stale session detection and cleanup via pipeline `exists` checks.
-   - Added pipeline result validator `checkPipelineResults` with TypeScript assertion signature (`asserts results is Array<[Error | null, any]>`) ensuring all Redis pipeline errors bubble up immediately to prevent false success reporting.
-3. **AuthService Integration**:
-   - In `apps/api/src/modules/auth/auth.service.ts`, added `revokeAllUserSessions(userId)` method delegating to `sessionManager.destroyAllUserSessions(userId)`.
-   - No unauthenticated or unauthorized public endpoints were created; the capability is exposed strictly for internal service workflows (such as future password-change or security revocation).
-4. **Package Test Configuration**:
-   - Added `packages/session/vitest.config.ts`, `"test": "vitest run"` script in `packages/session/package.json`, and `"vitest": "^4.1.10"` devDependency.
-   - Synchronized `pnpm-lock.yaml` via `pnpm install` and verified `pnpm install --frozen-lockfile` runs cleanly in 2.6s.
+1. **Atomic Session Lifecycle via Redis Lua Scripts (F1, F2, F3, F4, F6, F7)**:
+   - Replaced all non-atomic Redis pipelines with dedicated Redis Lua scripts executed via `redis.eval()`, establishing true server-side atomicity and linearizability.
+   - **`createSession(userId)` (F2, F7)**: Uses `CREATE_SESSION_SCRIPT` to atomically execute `SET session:${sessionId}`, `SADD user_sessions:${userId} ${sessionId}`, and refresh the index TTL. Eliminates the race window where revoke-all could run between creation and indexing, and prevents partial failures from leaving unindexed keys.
+   - **`validateSession(sessionId)` (F1, F3)**: Uses `VALIDATE_SESSION_SCRIPT` to atomically check key existence, decode session data with `cjson`, update `expiresAt`, refresh `session:${sessionId}` TTL, and refresh `user_sessions:${userId}` TTL. If the session was deleted or revoked, the script returns `nil` and performs zero writes, guaranteeing that concurrent validation can **never resurrect a destroyed or revoked session**.
+   - **`destroySession(sessionId)` (F3)**: Uses `DESTROY_SESSION_SCRIPT` to atomically decode the session, remove the session ID from `user_sessions:${userId}`, and delete `session:${sessionId}` in a single execution step.
+   - **`destroyAllUserSessions(userId)`**: Uses `DESTROY_ALL_USER_SESSIONS_SCRIPT` to atomically read all session IDs from `user_sessions:${userId}`, delete each `session:${sid}` key, and delete the user index set.
+   - **`getUserSessionIds(userId, cleanStale = true)` (F6)**: Uses `GET_AND_CLEAN_SESSIONS_SCRIPT` to atomically inspect `EXISTS` on each session key and remove only truly expired keys via `SREM`. Concurrently created sessions are never falsely unindexed.
+2. **Redis Topology & Cluster Compatibility**:
+   - The verified runtime infrastructure for Agency OS is **standalone Redis 7** (`redis:7-alpine`).
+   - The Lua scripts provide strict atomicity on standalone Redis and Sentinel-managed Redis.
+   - For multi-shard Redis Cluster deployments, cross-key scripts would require keys to share a hash slot or session operations to be routed to a dedicated session instance. This topology requirement is explicitly documented in code and architecture specs.
+3. **Application-Level In-Flight Authentication Race Boundary**:
+   - The atomic Lua scripts guarantee session storage atomicity.
+   - They do not eliminate the separate application-level race where an in-flight login validates credentials immediately before a password change on another device. Mitigating that separate lifecycle race requires a database-level `tokenVersion` or `securityEpoch` on the `User` model, planned for subsequent Phase 7 auth tasks.
+4. **AuthService Integration**:
+   - In `apps/api/src/modules/auth/auth.service.ts`, added `revokeAllUserSessions(userId)` delegating to `sessionManager.destroyAllUserSessions(userId)`.
+   - No unauthenticated or unauthorized public endpoints were created.
+5. **Real-Redis Integration Testing (F5)**:
+   - Created `packages/session/src/SessionManager.redis.integration.spec.ts` running against a live Redis 7 instance (`localhost:6379`).
+   - Replaced ambiguous test assertions with deterministic linearization checks verifying that pre-revocation sessions are 100% destroyed while post-revocation sessions are valid and indexed.
 
 ### 3. Verification & Test Evidence
 
-- **Session Manager Tests (`pnpm --filter @agency-os/session test`)**: 1/1 test file, 9/9 PASS covering all required scenarios:
-  1. Multi-user session indexing separation.
-  2. Single session destruction removing only that session from the user index.
-  3. All-session destruction invalidating all sessions for the target user.
-  4. Isolation between users (revoking User A does not touch User B).
-  5. Ordinary logout revoking only the active device session.
-  6. Sliding TTL refresh keeping session and index expiry aligned.
-  7. Safe stale session ID cleanup without granting access.
-  8. Redis pipeline error propagation (no false success).
-  9. Safe concurrent session creation and revocation.
-- **Auth Service Tests (`pnpm --filter @agency-os/api test -- src/modules/auth/`)**: 2/2 test files, 20/20 PASS (including `auth.service.spec.ts` and `auth.controller.spec.ts`).
+- **Real Redis Integration Tests (`pnpm --filter @agency-os/session test -- src/SessionManager.redis.integration.spec.ts`)**: 6/6 PASS on live Redis 7:
+  1. Real Lua script compilation and execution for all 5 scripts.
+  2. Concurrent validation vs revoke-all: validation cannot resurrect revoked sessions.
+  3. Concurrent destroy vs validation: destroyed sessions cannot be recreated.
+  4. Concurrent create vs revoke-all: pre-revocation sessions are guaranteed destroyed.
+  5. Concurrent stale index cleanup vs create: valid sessions are never unindexed.
+  6. Real-Redis user isolation and single-session logout.
+- **Session Manager Unit Tests (`pnpm --filter @agency-os/session test -- src/SessionManager.spec.ts`)**: 10/10 PASS covering all 9 lifecycle scenarios plus the F1 resurrection invariant.
+- **Combined Session Suite**: 2/2 test files, 16/16 tests PASS.
+- **Auth Service Tests (`pnpm --filter @agency-os/api test -- src/modules/auth/`)**: 2/2 test files, 20/20 PASS.
 - **Web App Tests (`pnpm --filter @agency-os/web test`)**: 8/8 test files, 111/111 PASS.
 - **Workspace Lint (`pnpm turbo run lint`)**: 9/9 packages PASS (0 errors, 55 pre-existing warnings).
 - **Workspace Typecheck (`pnpm turbo run typecheck`)**: 10/10 tasks PASS.

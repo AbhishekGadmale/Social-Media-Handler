@@ -2,13 +2,13 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Implement secure user-to-session indexing (`user_sessions:${userId}`) and all-session revocation (`destroyAllUserSessions(userId)`) in the Redis-backed `SessionManager`, with comprehensive tests covering 9 security & lifecycle scenarios.
+**Goal:** Implement secure user-to-session indexing (`user_sessions:${userId}`) and all-session revocation (`destroyAllUserSessions(userId)`) in the Redis-backed `SessionManager`, with full atomicity guarantees via Redis Lua scripts and real-Redis concurrency tests.
 
-**Architecture:** Extend `@agency-os/session`'s `SessionManager` with a Redis Set index per user (`user_sessions:${userId}`) maintained atomically during session creation, validation (sliding TTL refresh), and destruction. Expose `destroyAllUserSessions(userId)` with strict pipeline error handling, and expose `revokeAllUserSessions(userId)` on `AuthService`.
+**Architecture:** Extend `@agency-os/session`'s `SessionManager` with atomic Redis Lua scripts for session creation, validation/sliding TTL refresh, single session destruction, all-session revocation, and stale index cleanup. Expose `revokeAllUserSessions(userId)` on `AuthService`.
 
-**Tech Stack:** TypeScript, ioredis, Vitest, NestJS, Turbo monorepo.
+**Tech Stack:** TypeScript, ioredis, Redis 7 (standalone / Sentinel), Vitest, NestJS, Turbo monorepo.
 
-**Spec:** Kyosys Agency OS Phase 7.1, PR 1 Requirements.
+**Spec:** Kyosys Agency OS Phase 7.1, PR 1 Requirements & Muse Security Review Remediation.
 
 ## Global Constraints
 
@@ -20,7 +20,9 @@
 - Do NOT deploy to staging or production.
 - Do NOT merge the PR.
 - Never log session IDs, cookies, authentication tokens or secrets.
-- Use `user_sessions:${userId}` key pattern and atomic Redis pipelines.
+- Use `user_sessions:${userId}` key pattern and atomic Redis Lua scripts. Redis pipelines are NOT atomic and must NOT be relied upon for concurrency-sensitive session lifecycle state.
+- Supported Redis topology: Standalone Redis 7 (or Sentinel-backed Redis). Redis Cluster multi-key scripting is not supported unless keys share hash slots or sessions are routed to a dedicated instance.
+- Application-level authentication race limitation: Redis Lua scripts ensure atomicity of session storage operations. They do not prevent in-flight authentication where credentials were validated immediately before a password change; addressing that separate lifecycle race requires a database-level `tokenVersion` or `securityEpoch` on the User model in future auth phases.
 
 ---
 
@@ -36,46 +38,18 @@
 
 - Produces: `pnpm --filter @agency-os/session test` executable command.
 
-- [ ] **Step 1: Update `packages/session/package.json`**
+- [x] **Step 1: Update `packages/session/package.json`**
       Add `"test": "vitest run"` script and devDependencies `"vitest": "^4.1.10"`, `"@types/node": "^20.0.0"`.
 
-- [ ] **Step 2: Create `packages/session/vitest.config.ts`**
+- [x] **Step 2: Create `packages/session/vitest.config.ts`**
       Create Vitest config for `@agency-os/session` using node environment and setup file `../../test-setup.ts`.
 
-- [ ] **Step 3: Run `pnpm install` and verify `pnpm --filter @agency-os/session test` runs**
-      Run `pnpm install` to keep lockfile consistent for CI `--frozen-lockfile`. Verify runner works.
+- [x] **Step 3: Run `pnpm install` and verify test runner works**
+      Run `pnpm install` to keep lockfile consistent for CI `--frozen-lockfile`.
 
 ---
 
-### Task 2: Implement TDD Tests for `SessionManager` Covering All 9 Scenarios
-
-**Files:**
-
-- Create: `packages/session/src/SessionManager.spec.ts`
-
-**Interfaces:**
-
-- Tests all 9 required scenarios:
-  1. Sessions for 2 users indexed correctly.
-  2. Destroying 1 session removes only that session from the user index.
-  3. Destroying all user sessions invalidates every session for that user.
-  4. Revoking User A sessions leaves User B sessions valid.
-  5. Ordinary logout revokes only current session.
-  6. Sliding TTL refresh keeps session and index expiry aligned.
-  7. Expired/stale session IDs cleaned up safely.
-  8. Redis errors during revocation bubble up (no false success).
-  9. Concurrent creation/revocation safety.
-
-- [ ] **Step 1: Write failing tests in `packages/session/src/SessionManager.spec.ts`**
-      Implement the test suite mocking or simulating Redis behavior with complete fidelity to Redis semantics.
-
-- [ ] **Step 2: Run tests to verify failures on missing features**
-      Run: `pnpm --filter @agency-os/session test`
-      Expected: FAIL due to missing `destroyAllUserSessions`, `getUserSessionIds`, and user indexing logic.
-
----
-
-### Task 3: Implement User-to-Session Indexing & Revocation in `SessionManager`
+### Task 2: Implement Atomic Lua Scripts in `SessionManager`
 
 **Files:**
 
@@ -83,23 +57,31 @@
 
 **Interfaces:**
 
-- `createSession(userId: string): Promise<string>`
-- `validateSession(sessionId: string): Promise<SessionData | null>`
-- `destroySession(sessionId: string): Promise<void>`
-- `destroyAllUserSessions(userId: string): Promise<void>`
-- `getUserSessionIds(userId: string, cleanStale?: boolean): Promise<string[]>`
+- `createSession(userId: string): Promise<string>`: Atomic `SET` + `SADD` + `EXPIRE` via Lua.
+- `validateSession(sessionId: string): Promise<SessionData | null>`: Atomic `GET` + decode + update `expiresAt` + `SET` + index `EXPIRE` via Lua. Never resurrects deleted sessions.
+- `destroySession(sessionId: string): Promise<void>`: Atomic `GET` + `SREM` + `DEL` via Lua.
+- `destroyAllUserSessions(userId: string): Promise<void>`: Atomic `SMEMBERS` + delete all sessions + delete index set via Lua.
+- `getUserSessionIds(userId: string, cleanStale?: boolean): Promise<string[]>`: Atomic `EXISTS` check + `SREM` stale IDs via Lua.
 
-- [ ] **Step 1: Implement Redis pipeline indexing and sliding TTL in `SessionManager.ts`**
-      Add `USER_SESSIONS_PREFIX = 'user_sessions:'`.
-      Update `createSession` to pipeline session set, `sadd`, and `expire` on user index.
-      Update `validateSession` to refresh session TTL and user index TTL.
-      Update `destroySession` to delete session key and `srem` from user index.
-      Implement `destroyAllUserSessions(userId)` to delete all user session keys and the user index key with pipeline error propagation.
-      Implement `getUserSessionIds(userId, cleanStale)` with proactive stale session cleanup.
+- [x] **Step 1: Implement 5 atomic Lua scripts in `SessionManager.ts`**
+      Eliminate non-atomic pipelines. Every operation is linearizable at Redis server level.
 
-- [ ] **Step 2: Run tests to verify all 9 scenarios pass**
-      Run: `pnpm --filter @agency-os/session test`
-      Expected: PASS
+---
+
+### Task 3: Author Unit & Real-Redis Concurrency Integration Tests
+
+**Files:**
+
+- Modify: `packages/session/src/SessionManager.spec.ts`
+- Create: `packages/session/src/SessionManager.redis.integration.spec.ts`
+
+**Interfaces:**
+
+- Unit tests: Faithful mock simulation with unambiguous deterministic assertions.
+- Real Redis integration tests: Executes against live Redis 7 (`localhost:6379`), testing concurrent validation vs revoke-all (F1), concurrent create vs revoke-all (F2), destroy vs validation (F3), and stale cleanup vs creation (F6).
+
+- [x] **Step 1: Update unit tests in `SessionManager.spec.ts`**
+- [x] **Step 2: Implement real Redis integration tests in `SessionManager.redis.integration.spec.ts`**
 
 ---
 
@@ -112,17 +94,10 @@
 
 **Interfaces:**
 
-- Produces: `AuthService.revokeAllUserSessions(userId: string): Promise<void>`
+- `AuthService.revokeAllUserSessions(userId: string): Promise<void>`
 
-- [ ] **Step 1: Add failing test for `revokeAllUserSessions` in `apps/api/src/modules/auth/auth.service.spec.ts`**
-      Verify `authService.revokeAllUserSessions(userId)` calls `sessionManager.destroyAllUserSessions(userId)`.
-
-- [ ] **Step 2: Implement `revokeAllUserSessions` in `apps/api/src/modules/auth/auth.service.ts`**
-      Call `this.sessionManager.destroyAllUserSessions(userId)`.
-
-- [ ] **Step 3: Run `auth.service.spec.ts` and `auth.controller.spec.ts`**
-      Run: `pnpm --filter @agency-os/api test -- src/modules/auth/auth.service.spec.ts`
-      Expected: PASS
+- [x] **Step 1: Add unit tests in `apps/api/src/modules/auth/auth.service.spec.ts`**
+- [x] **Step 2: Implement `revokeAllUserSessions` in `apps/api/src/modules/auth/auth.service.ts`**
 
 ---
 
@@ -132,18 +107,7 @@
 
 - Documentation: `IMPLEMENTATION_STATUS.md`
 
-- [ ] **Step 1: Run full lint, typecheck, build, and unit test suites**
-      Run:
-- `pnpm turbo run lint`
-- `pnpm turbo run typecheck`
-- `pnpm turbo run build`
-- `pnpm --filter @agency-os/session test`
-- `pnpm --filter @agency-os/api test -- src/modules/auth/`
-- `pnpm --filter @agency-os/web test`
-
-- [ ] **Step 2: Update `IMPLEMENTATION_STATUS.md`**
-      Record Phase 7.1 PR 1 changes, status, and verification evidence accurately.
-
-- [ ] **Step 3: Commit and push feature branch `feat/user-session-indexing-revocation`**
-      Push to remote and open GitHub PR targeting `main`.
-      Request Muse review on exact PR HEAD. Do not merge.
+- [x] **Step 1: Run full lint, typecheck, build, and test suites**
+- [x] **Step 2: Update `IMPLEMENTATION_STATUS.md` with accurate remediation records**
+- [ ] **Step 3: Commit and push feature branch `feat/user-session-indexing-revocation` to PR #47**
+- [ ] **Step 4: Request Muse review on exact PR HEAD**
