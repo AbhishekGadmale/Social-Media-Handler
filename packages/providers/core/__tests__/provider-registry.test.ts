@@ -1,10 +1,24 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { ProviderRegistry, providerRegistry } from '../provider-registry';
 import { LinkedInProvider } from '../../linkedin/linkedin.provider';
 import { YouTubeProvider } from '../../youtube/youtube.provider';
 import { ProviderCapabilityError } from '../errors';
 
 describe('ProviderRegistry', () => {
+  const originalEnv = process.env;
+
+  beforeEach(() => {
+    process.env = {
+      ...originalEnv,
+      LINKEDIN_CLIENT_ID: 'test-client',
+      LINKEDIN_CLIENT_SECRET: 'test-secret',
+    };
+  });
+
+  afterEach(() => {
+    process.env = originalEnv;
+  });
+
   it('should register and resolve providers case-insensitively', () => {
     const registry = new ProviderRegistry();
     registry.register('LINKEDIN', () => new LinkedInProvider());

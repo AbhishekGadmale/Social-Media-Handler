@@ -74,6 +74,10 @@ describe('TokenService', () => {
   let prisma: PrismaClient;
 
   beforeAll(() => {
+    process.env.LINKEDIN_CLIENT_ID =
+      process.env.LINKEDIN_CLIENT_ID || 'test-linkedin-client-id';
+    process.env.LINKEDIN_CLIENT_SECRET =
+      process.env.LINKEDIN_CLIENT_SECRET || 'test-linkedin-client-secret';
     assertTestDatabaseUrl(process.env.DATABASE_URL);
     prisma = new PrismaClient();
   });
