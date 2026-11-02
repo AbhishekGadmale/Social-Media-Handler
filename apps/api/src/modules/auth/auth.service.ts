@@ -1,4 +1,8 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import {
+  Injectable,
+  UnauthorizedException,
+  BadRequestException,
+} from '@nestjs/common';
 import { UserRepository } from '@agency-os/database';
 import { SessionManager } from '@agency-os/session';
 import * as argon2 from '@node-rs/argon2';
@@ -39,7 +43,16 @@ export class AuthService {
     }
 
     const sessionId = await this.sessionManager.createSession(user.id);
-    return { sessionId, user };
+
+    // In-flight login race mitigation: verify that the password hash did not change
+    // while argon2.verify was executing.
+    const freshUser = await this.userRepository.findById(user.id);
+    if (!freshUser || freshUser.hashedPassword !== user.hashedPassword) {
+      await this.sessionManager.destroySession(sessionId);
+      throw new InvalidCredentialsException('INVALID_PASSWORD', user.id);
+    }
+
+    return { sessionId, user: freshUser };
   }
 
   async logout(sessionId: string): Promise<void> {
@@ -47,10 +60,54 @@ export class AuthService {
   }
 
   /**
-   * Revokes all active sessions for a user (e.g. on password change or security revocation).
+   * Revokes all active sessions for a user (e.g. on security revocation).
    * @param userId The ID of the user whose sessions should be invalidated.
    */
   async revokeAllUserSessions(userId: string): Promise<void> {
     await this.sessionManager.destroyAllUserSessions(userId);
+  }
+
+  /**
+   * Changes a user's password securely, updates the password hash in the database,
+   * and revokes all other active sessions while preserving the current active session.
+   *
+   * @param userId The authenticated user ID.
+   * @param currentPasswordPlain The user's current password.
+   * @param newPasswordPlain The desired new password.
+   * @param currentSessionId The session ID of the device making the change.
+   */
+  async changePassword(
+    userId: string,
+    currentPasswordPlain: string,
+    newPasswordPlain: string,
+    currentSessionId: string,
+  ): Promise<void> {
+    const user = await this.userRepository.findById(userId);
+    if (!user) {
+      throw new UnauthorizedException('User no longer exists');
+    }
+
+    const isValid = await argon2.verify(
+      user.hashedPassword,
+      currentPasswordPlain,
+    );
+    if (!isValid) {
+      throw new InvalidCredentialsException('INVALID_PASSWORD', userId);
+    }
+
+    if (currentPasswordPlain === newPasswordPlain) {
+      throw new BadRequestException(
+        'New password cannot be the same as the current password',
+      );
+    }
+
+    const newHashedPassword = await argon2.hash(newPasswordPlain);
+    await this.userRepository.updatePassword(userId, newHashedPassword);
+
+    // Revoke all other active sessions while preserving current session
+    await this.sessionManager.destroyOtherUserSessions(
+      userId,
+      currentSessionId,
+    );
   }
 }

@@ -1,4 +1,4 @@
-import { PrismaClient, User } from '@prisma/client';
+import { PrismaClient, User } from "@prisma/client";
 
 export class UserRepository {
   constructor(private prisma: PrismaClient) {}
@@ -12,6 +12,13 @@ export class UserRepository {
   async findById(id: string): Promise<User | null> {
     return this.prisma.user.findUnique({
       where: { id },
+    });
+  }
+
+  async updatePassword(id: string, hashedPassword: string): Promise<User> {
+    return this.prisma.user.update({
+      where: { id },
+      data: { hashedPassword },
     });
   }
 }

@@ -32,7 +32,9 @@ describe('AuthController (e2e)', () => {
     app = moduleFixture.createNestApplication();
     app.setGlobalPrefix('api');
     app.use(cookieParser());
-    app.useGlobalFilters(new AllExceptionsFilter(await app.resolve(PinoLogger)));
+    app.useGlobalFilters(
+      new AllExceptionsFilter(await app.resolve(PinoLogger)),
+    );
     await app.init();
 
     prisma = app.get<PrismaClient>(PrismaClient);
@@ -302,5 +304,202 @@ describe('AuthController (e2e)', () => {
 
     expect(checkRes.status).toBe(401);
     expect(checkRes.body.error.message).toBe('Invalid or expired session');
+  });
+
+  describe('/api/v1/auth/change-password (POST)', () => {
+    it('fails with 401 when unauthenticated', async () => {
+      const res = await request(app.getHttpServer())
+        .post('/api/v1/auth/change-password')
+        .send({
+          currentPassword: 'correctpassword',
+          newPassword: 'newsecurepassword123',
+        });
+
+      expect(res.status).toBe(401);
+      expect(res.body.error.message).toBe('No session cookie provided');
+    });
+
+    it('fails with 403 when CSRF token is missing or mismatched', async () => {
+      const loginRes = await request(app.getHttpServer())
+        .post('/api/v1/auth/login')
+        .send({ email: testUser.email, password: 'correctpassword' });
+
+      const cookies = loginRes.headers['set-cookie'] as string[];
+      const sessionCookieHeader = cookies.find((c) => c.startsWith('session='));
+      const sessCookie = sessionCookieHeader!.split(';')[0];
+
+      const res = await request(app.getHttpServer())
+        .post('/api/v1/auth/change-password')
+        .set('Cookie', sessCookie)
+        .send({
+          currentPassword: 'correctpassword',
+          newPassword: 'newsecurepassword123',
+        });
+
+      expect(res.status).toBe(403);
+      expect(res.body.error.message).toBe('CSRF token mismatch');
+    });
+
+    it('fails with 400 when new password is too short (< 8 chars)', async () => {
+      const loginRes = await request(app.getHttpServer())
+        .post('/api/v1/auth/login')
+        .send({ email: testUser.email, password: 'correctpassword' });
+
+      const cookies = loginRes.headers['set-cookie'] as string[];
+      const sess = cookies.find((c) => c.startsWith('session='))!.split(';')[0];
+      const csrf = cookies
+        .find((c) => c.startsWith('csrfToken='))!
+        .split(';')[0]
+        .split('=')[1];
+
+      const res = await request(app.getHttpServer())
+        .post('/api/v1/auth/change-password')
+        .set('Cookie', `${sess}; csrfToken=${csrf}`)
+        .set('x-csrf-token', csrf)
+        .send({
+          currentPassword: 'correctpassword',
+          newPassword: 'short',
+        });
+
+      expect(res.status).toBe(400);
+      expect(JSON.stringify(res.body)).toContain('at least 8 characters');
+    });
+
+    it('fails with 401 when current password is wrong', async () => {
+      const loginRes = await request(app.getHttpServer())
+        .post('/api/v1/auth/login')
+        .send({ email: testUser.email, password: 'correctpassword' });
+
+      const cookies = loginRes.headers['set-cookie'] as string[];
+      const sess = cookies.find((c) => c.startsWith('session='))!.split(';')[0];
+      const csrf = cookies
+        .find((c) => c.startsWith('csrfToken='))!
+        .split(';')[0]
+        .split('=')[1];
+
+      const res = await request(app.getHttpServer())
+        .post('/api/v1/auth/change-password')
+        .set('Cookie', `${sess}; csrfToken=${csrf}`)
+        .set('x-csrf-token', csrf)
+        .send({
+          currentPassword: 'wrongcurrentpassword',
+          newPassword: 'newsecurepassword123',
+        });
+
+      expect(res.status).toBe(401);
+      expect(res.body.error.message).toBe('Invalid credentials');
+    });
+
+    it('fails with 400 when new password is identical to current password', async () => {
+      const loginRes = await request(app.getHttpServer())
+        .post('/api/v1/auth/login')
+        .send({ email: testUser.email, password: 'correctpassword' });
+
+      const cookies = loginRes.headers['set-cookie'] as string[];
+      const sess = cookies.find((c) => c.startsWith('session='))!.split(';')[0];
+      const csrf = cookies
+        .find((c) => c.startsWith('csrfToken='))!
+        .split(';')[0]
+        .split('=')[1];
+
+      const res = await request(app.getHttpServer())
+        .post('/api/v1/auth/change-password')
+        .set('Cookie', `${sess}; csrfToken=${csrf}`)
+        .set('x-csrf-token', csrf)
+        .send({
+          currentPassword: 'correctpassword',
+          newPassword: 'correctpassword',
+        });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error.message).toContain('cannot be the same');
+    });
+
+    it('successfully changes password, preserves active session, revokes other sessions, and allows login with new password', async () => {
+      // 1. Device A logs in
+      const loginResA = await request(app.getHttpServer())
+        .post('/api/v1/auth/login')
+        .send({ email: testUser.email, password: 'correctpassword' });
+      const cookiesA = loginResA.headers['set-cookie'] as string[];
+      const sessA = cookiesA
+        .find((c) => c.startsWith('session='))!
+        .split(';')[0];
+      const csrfA = cookiesA
+        .find((c) => c.startsWith('csrfToken='))!
+        .split(';')[0]
+        .split('=')[1];
+
+      // 2. Device B logs in (creates second session)
+      const loginResB = await request(app.getHttpServer())
+        .post('/api/v1/auth/login')
+        .send({ email: testUser.email, password: 'correctpassword' });
+      const cookiesB = loginResB.headers['set-cookie'] as string[];
+      const sessB = cookiesB
+        .find((c) => c.startsWith('session='))!
+        .split(';')[0];
+
+      // Verify Device B can access /me before password change
+      const meResBBefore = await request(app.getHttpServer())
+        .get('/api/v1/auth/me')
+        .set('Cookie', sessB);
+      expect(meResBBefore.status).toBe(200);
+
+      // 3. Device A changes password
+      const changeRes = await request(app.getHttpServer())
+        .post('/api/v1/auth/change-password')
+        .set('Cookie', `${sessA}; csrfToken=${csrfA}`)
+        .set('x-csrf-token', csrfA)
+        .send({
+          currentPassword: 'correctpassword',
+          newPassword: 'BrandNewPassword123!',
+        });
+
+      expect(changeRes.status).toBe(200);
+      expect(changeRes.body.message).toBe('Password changed successfully');
+
+      // 4. Device A session remains valid
+      const meResA = await request(app.getHttpServer())
+        .get('/api/v1/auth/me')
+        .set('Cookie', sessA);
+      expect(meResA.status).toBe(200);
+      expect(meResA.body.user.email).toBe(testUser.email);
+
+      // 5. Device B session is revoked (returns 401)
+      const meResBAfter = await request(app.getHttpServer())
+        .get('/api/v1/auth/me')
+        .set('Cookie', sessB);
+      expect(meResBAfter.status).toBe(401);
+      expect(meResBAfter.body.error.message).toBe('Invalid or expired session');
+
+      // 6. Old password no longer works for login
+      const oldLoginRes = await request(app.getHttpServer())
+        .post('/api/v1/auth/login')
+        .send({ email: testUser.email, password: 'correctpassword' });
+      expect(oldLoginRes.status).toBe(401);
+
+      // 7. New password works for login
+      const newLoginRes = await request(app.getHttpServer())
+        .post('/api/v1/auth/login')
+        .send({ email: testUser.email, password: 'BrandNewPassword123!' });
+      expect(newLoginRes.status).toBe(200);
+
+      // Restore password back to 'correctpassword' for any subsequent test runs
+      const newCookies = newLoginRes.headers['set-cookie'] as string[];
+      const newSess = newCookies
+        .find((c) => c.startsWith('session='))!
+        .split(';')[0];
+      const newCsrf = newCookies
+        .find((c) => c.startsWith('csrfToken='))!
+        .split(';')[0]
+        .split('=')[1];
+      await request(app.getHttpServer())
+        .post('/api/v1/auth/change-password')
+        .set('Cookie', `${newSess}; csrfToken=${newCsrf}`)
+        .set('x-csrf-token', newCsrf)
+        .send({
+          currentPassword: 'BrandNewPassword123!',
+          newPassword: 'correctpassword',
+        });
+    });
   });
 });

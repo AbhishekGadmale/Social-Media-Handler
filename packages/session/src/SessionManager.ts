@@ -52,6 +52,7 @@ local sessionKey = KEYS[1]
 local userSessionsPrefix = ARGV[1]
 local ttlSeconds = tonumber(ARGV[2])
 local newExpiresAtIso = ARGV[3]
+local sessionId = ARGV[4]
 
 -- 1. Check if session key exists. If revoked or expired, return nil immediately.
 local rawData = redis.call('GET', sessionKey)
@@ -59,17 +60,22 @@ if not rawData then
   return nil
 end
 
--- 2. Decode session data, slide expiresAt, and encode
-local data = cjson.decode(rawData)
+-- 2. Decode session data safely with pcall to prevent unhandled script exceptions on corrupt JSON
+local ok, data = pcall(cjson.decode, rawData)
+if not ok or type(data) ~= 'table' then
+  return nil
+end
+
 data['expiresAt'] = newExpiresAtIso
 local updatedJson = cjson.encode(data)
 
 -- 3. Refresh session key with updated data and full TTL
 redis.call('SET', sessionKey, updatedJson, 'EX', ttlSeconds)
 
--- 4. Refresh user sessions set TTL to keep alignment
-if data['userId'] then
+-- 4. Refresh user sessions set TTL and self-heal missing index entry
+if data['userId'] and sessionId and sessionId ~= '' then
   local userSessionsKey = userSessionsPrefix .. data['userId']
+  redis.call('SADD', userSessionsKey, sessionId)
   local currentTtl = redis.call('TTL', userSessionsKey)
   if currentTtl < ttlSeconds then
     redis.call('EXPIRE', userSessionsKey, ttlSeconds)
@@ -86,8 +92,8 @@ local sessionId = ARGV[2]
 
 local rawData = redis.call('GET', sessionKey)
 if rawData then
-  local data = cjson.decode(rawData)
-  if data and data['userId'] then
+  local ok, data = pcall(cjson.decode, rawData)
+  if ok and type(data) == 'table' and data['userId'] then
     local userSessionsKey = userSessionsPrefix .. data['userId']
     redis.call('SREM', userSessionsKey, sessionId)
   end
@@ -107,6 +113,35 @@ for _, sid in ipairs(sessionIds) do
 end
 redis.call('DEL', userSessionsKey)
 return sessionIds
+`;
+
+const DESTROY_OTHER_USER_SESSIONS_SCRIPT = `
+local userSessionsKey = KEYS[1]
+local sessionPrefix = ARGV[1]
+local keepSessionId = ARGV[2]
+local ttlSeconds = tonumber(ARGV[3])
+
+local sessionIds = redis.call('SMEMBERS', userSessionsKey)
+local destroyedCount = 0
+
+for _, sid in ipairs(sessionIds) do
+  if sid ~= keepSessionId then
+    redis.call('DEL', sessionPrefix .. sid)
+    redis.call('SREM', userSessionsKey, sid)
+    destroyedCount = destroyedCount + 1
+  end
+end
+
+-- Ensure keepSessionId remains indexed with refreshed TTL
+if keepSessionId and keepSessionId ~= '' then
+  redis.call('SADD', userSessionsKey, keepSessionId)
+  local currentTtl = redis.call('TTL', userSessionsKey)
+  if currentTtl < ttlSeconds then
+    redis.call('EXPIRE', userSessionsKey, ttlSeconds)
+  end
+end
+
+return destroyedCount
 `;
 
 const GET_AND_CLEAN_SESSIONS_SCRIPT = `
@@ -191,6 +226,7 @@ export class SessionManager {
         this.USER_SESSIONS_PREFIX,
         this.SESSION_TTL_SECONDS.toString(),
         newExpiresAt,
+        sessionId,
       )) as string | null;
 
       if (!rawResult) {
@@ -224,6 +260,37 @@ export class SessionManager {
       );
     } catch (err: any) {
       throw new Error(`Failed to destroy session in Redis: ${err.message}`);
+    }
+  }
+
+  /**
+   * Atomically destroys all active sessions for a user EXCEPT the specified keepSessionId
+   * (e.g. on password change where the current device session is preserved).
+   * Linearization point: atomic execution of DESTROY_OTHER_USER_SESSIONS_SCRIPT in Redis.
+   * @param userId The user ID whose other sessions should be invalidated.
+   * @param keepSessionId The current session ID that must remain active.
+   * @returns The number of other sessions destroyed.
+   */
+  async destroyOtherUserSessions(
+    userId: string,
+    keepSessionId: string,
+  ): Promise<number> {
+    const userSessionsKey = `${this.USER_SESSIONS_PREFIX}${userId}`;
+
+    try {
+      const result = await this.redis.eval(
+        DESTROY_OTHER_USER_SESSIONS_SCRIPT,
+        1,
+        userSessionsKey,
+        this.SESSION_PREFIX,
+        keepSessionId,
+        this.SESSION_TTL_SECONDS.toString(),
+      );
+      return Number(result) || 0;
+    } catch (err: any) {
+      throw new Error(
+        `Failed to revoke other user sessions in Redis: ${err.message}`,
+      );
     }
   }
 

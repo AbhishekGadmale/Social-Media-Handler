@@ -2128,9 +2128,11 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
 
 ### 1. Summary & Motivation
 
-- **Status**: **READY FOR INDEPENDENT REVIEW (PR #47 UPDATED, DO NOT MERGE)**
-- **Branch**: `feat/user-session-indexing-revocation`
+- **Status**: **MERGED & VERIFIED IN CI (PR #47, Commit `efab83e2225b83090a32942dd35f80c6ed2e59de`)**
+- **Branch**: `feat/user-session-indexing-revocation` (Merged into `main`)
 - **Target Base**: `main` ([`80582dd77d9adfc5d303338b0ddbb353da7879db`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/80582dd77d9adfc5d303338b0ddbb353da7879db))
+- **Merge Commit**: [`efab83e2225b83090a32942dd35f80c6ed2e59de`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/efab83e2225b83090a32942dd35f80c6ed2e59de)
+- **Independent Security Review**: APPROVE (Verified by Muse on HEAD `8f1c3b4bca5cc7bde2c193b39e24621c8c2f86e7`)
 - **Scope Discipline**: Phase 7.1, PR 1 implements only session indexing and revocation semantics in the Redis-backed session manager and auth service. No public registration, organization migrations, member endpoints, billing models, or policy pages are introduced.
 - **Live Deployment Release Gate**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending external infrastructure provisioning and disaster recovery rehearsals G18/G19).
 
@@ -2173,3 +2175,55 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
 - **Workspace Lint (`pnpm turbo run lint`)**: 9/9 packages PASS (0 errors, 55 pre-existing warnings).
 - **Workspace Typecheck (`pnpm turbo run typecheck`)**: 10/10 tasks PASS.
 - **Workspace Build (`pnpm turbo run build`)**: 7/7 tasks PASS.
+
+## 40. Phase 7.1, PR 2: Session Hardening & Password-Change Revocation (PR #48)
+
+### 1. Summary & Motivation
+
+- **Status**: **READY FOR INDEPENDENT REVIEW (PR #48 CREATED, DO NOT MERGE)**
+- **Branch**: `feat/session-hardening-password-change-revocation`
+- **Target Base**: `main` ([`efab83e2225b83090a32942dd35f80c6ed2e59de`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/efab83e2225b83090a32942dd35f80c6ed2e59de))
+- **Scope Discipline**: Hardens session index self-healing and corrupt payload failure modes in `SessionManager`, introduces atomic single-session preservation during revocation (`destroyOtherUserSessions`), adds authenticated password changes with mandatory revocation of all other active sessions, and mitigates in-flight authentication race conditions without requiring schema migrations in this PR (deferring `securityEpoch` / `emailVerified` to PR 2A).
+- **Live Deployment Release Gate**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending external infrastructure provisioning and disaster recovery rehearsals G18/G19).
+
+### 2. Scope & Technical Architecture
+
+1. **Session Index Self-Healing & Fail-Closed Lua Hardening (`packages/session/src/SessionManager.ts`)**:
+   - **Self-Healing Index Set**: In `VALIDATE_SESSION_SCRIPT`, added `redis.call('SADD', userSessionsKey, sessionId)`. If a user's index set (`user_sessions:${userId}`) was evicted under Redis memory pressure or became desynchronized while a valid session key persisted, validating the session automatically restores the session ID into the user's index set and refreshes the set's TTL.
+   - **Protected JSON Decoding**: Hardened both `VALIDATE_SESSION_SCRIPT` and `DESTROY_SESSION_SCRIPT` using Lua `pcall(cjson.decode, rawData)`. If corrupted or malformed JSON data is present in a session key, the script returns `nil` instead of raising an unhandled Lua execution exception, enforcing a secure fail-closed security posture.
+   - **Atomic Selective Revocation (`destroyOtherUserSessions`)**: Added `DESTROY_OTHER_USER_SESSIONS_SCRIPT` that iterates over `user_sessions:${userId}`, skips `keepSessionId`, deletes all other `session:${sid}` keys, and removes them from the set in a single linearizable Redis transaction.
+
+2. **Database Repositories (`packages/database`)**:
+   - **`UserRepository.updatePassword(id, hashedPassword)`**: Securely updates the user password in PostgreSQL using Prisma Client.
+   - **`AuditLogRepository`**: Added `AUTH_PASSWORD_CHANGED` and `AUTH_PASSWORD_CHANGE_FAILED` to the `AuditAction` enum for security observability.
+
+3. **In-Flight Authentication Race Mitigation (`apps/api/src/modules/auth/auth.service.ts`)**:
+   - **Architectural Rationale for Migration Deferral**: Introducing database migrations (`securityEpoch`, `emailVerified`) in this intermediate PR was evaluated and deferred to PR 2A (Public Self-Registration & Onboarding) to avoid disjoint schema iterations before self-registration models are finalized.
+   - **Post-Verification Double-Check Invariant**: In `AuthService.login()`, credentials are confirmed with argon2 and a session is provisioned in Redis. Immediately following session creation, `AuthService` executes a fresh read of `user.hashedPassword` from the database. If `freshUser.hashedPassword !== user.hashedPassword`, an in-flight password change occurred concurrently on another device; the newly created session is immediately destroyed via `sessionManager.destroySession(sessionId)` and `InvalidCredentialsException('INVALID_PASSWORD', user.id)` is thrown.
+   - **Password Change Invariant**: In `AuthService.changePassword()`, current password verification is strictly enforced with argon2, identical new passwords are rejected (`400 Bad Request`), and the new password is hashed before updating PostgreSQL. Crucially, the database password update executes **prior** to invoking `sessionManager.destroyOtherUserSessions(userId, currentSessionId)`.
+
+4. **API Controller & Rate Limiting (`apps/api/src/modules/auth/auth.controller.ts`)**:
+   - **`POST /api/v1/auth/change-password`**: Protected by `@UseGuards(AuthGuard)` and throttled under `RateLimitPolicies.auth` (global Redis throttler). Requires authenticated session and valid `x-csrf-token` header.
+   - **Audit Trail & Secret Hygiene**: Best-effort audit logging records success (`AUTH_PASSWORD_CHANGED`) and failure (`AUTH_PASSWORD_CHANGE_FAILED`) with client IP and request ID. Plain-text passwords and cryptographic hashes are never logged, emitted in error messages, or returned in HTTP response payloads.
+
+### 3. Verification & Test Evidence
+
+- **Session Manager Unit Tests (`pnpm --filter @agency-os/session test -- src/SessionManager.spec.ts`)**: 14/14 PASS (+4 new tests covering self-healing index set restoration, corrupt JSON fail-closed decoding, `destroyOtherUserSessions` single-session preservation, and script error propagation).
+- **Live Redis 7 Integration Tests (`pnpm --filter @agency-os/session test -- src/SessionManager.redis.integration.spec.ts`)**: 10/10 PASS on standalone Redis 7:
+  1. Real Lua script compilation and execution for all scripts.
+  2. Concurrent validation vs revoke-all resurrection prevention.
+  3. Concurrent destroy vs validation invariant.
+  4. Concurrent create vs revoke-all linearization.
+  5. Concurrent stale index cleanup vs create safety.
+  6. Multi-user isolation during revocation.
+  7. Live Redis self-healing index set restoration on validation.
+  8. Live Redis corrupt JSON fail-closed evaluation.
+  9. Live Redis selective revocation preserving current session.
+  10. Live Redis concurrent validation vs selective revocation.
+- **API Auth Unit Tests (`pnpm --filter @agency-os/api test -- src/modules/auth/`)**: 30/30 PASS across 2 test files:
+  - `auth.service.spec.ts`: 15/15 PASS (including password change verification, current password mismatch rejection, identical password rejection, Argon2 hashing, atomic other-session destruction, and in-flight login race detection).
+  - `auth.controller.spec.ts`: 15/15 PASS (including authenticated endpoint routing, rate limit decorators, CSRF guard enforcement, audit logging, and zero credential leakage).
+- **All API Unit Tests (`pnpm --filter @agency-os/api test`)**: 22/22 test files, 282/282 PASS.
+- **Monorepo Lint (`pnpm turbo run lint`)**: 9/9 packages PASS (0 errors, 59 pre-existing warnings).
+- **Monorepo Typecheck (`pnpm turbo run typecheck`)**: 10/10 tasks PASS.
+- **Monorepo Build (`pnpm turbo run build`)**: 7/7 tasks PASS.
