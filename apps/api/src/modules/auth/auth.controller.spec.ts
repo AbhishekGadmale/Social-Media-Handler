@@ -20,6 +20,7 @@ describe('AuthController', () => {
     authServiceMock = {
       login: vi.fn(),
       logout: vi.fn(),
+      changePassword: vi.fn(),
     };
 
     memberRepoMock = {
@@ -429,6 +430,108 @@ describe('AuthController', () => {
           sameSite: 'lax',
         }),
       );
+    });
+  });
+
+  describe('changePassword', () => {
+    const mockUser: any = {
+      id: 'user-change-pw-controller',
+      email: 'changepw@example.com',
+    };
+
+    it('successfully calls authService.changePassword and logs AUTH_PASSWORD_CHANGED without leaking secrets', async () => {
+      authServiceMock.changePassword.mockResolvedValueOnce(undefined);
+
+      const result = await controller.changePassword(
+        {
+          currentPassword: 'oldPassword123',
+          newPassword: 'newSecretPassword456',
+        },
+        mockUser,
+        reqMock as Request,
+      );
+
+      expect(authServiceMock.changePassword).toHaveBeenCalledWith(
+        'user-change-pw-controller',
+        'oldPassword123',
+        'newSecretPassword456',
+        'sess-abc-123',
+      );
+
+      expect(auditServiceMock.logActionBestEffort).toHaveBeenCalledWith({
+        action: AuditAction.AUTH_PASSWORD_CHANGED,
+        actorId: 'user-change-pw-controller',
+        targetType: 'User',
+        targetId: 'user-change-pw-controller',
+        requestId: 'req-auth-123',
+      });
+
+      expect(result).toEqual({ message: 'Password changed successfully' });
+
+      // Invariant: password strings must never appear in audit calls
+      const auditCallsStr = JSON.stringify(
+        auditServiceMock.logActionBestEffort.mock.calls,
+      );
+      expect(auditCallsStr).not.toContain('oldPassword123');
+      expect(auditCallsStr).not.toContain('newSecretPassword456');
+    });
+
+    it('logs AUTH_PASSWORD_CHANGE_FAILED and rethrows when current password is invalid', async () => {
+      authServiceMock.changePassword.mockRejectedValueOnce(
+        new InvalidCredentialsException('INVALID_PASSWORD', mockUser.id),
+      );
+
+      await expect(
+        controller.changePassword(
+          {
+            currentPassword: 'wrongPassword',
+            newPassword: 'newSecretPassword456',
+          },
+          mockUser,
+          reqMock as Request,
+        ),
+      ).rejects.toThrow(InvalidCredentialsException);
+
+      expect(auditServiceMock.logActionBestEffort).toHaveBeenCalledWith({
+        action: AuditAction.AUTH_PASSWORD_CHANGE_FAILED,
+        actorId: 'user-change-pw-controller',
+        targetType: 'User',
+        targetId: 'user-change-pw-controller',
+        requestId: 'req-auth-123',
+        metadata: { reason: 'INVALID_PASSWORD' },
+      });
+
+      const auditCallsStr = JSON.stringify(
+        auditServiceMock.logActionBestEffort.mock.calls,
+      );
+      expect(auditCallsStr).not.toContain('wrongPassword');
+      expect(auditCallsStr).not.toContain('newSecretPassword456');
+    });
+
+    it('logs AUTH_PASSWORD_CHANGE_FAILED and rethrows on unexpected error', async () => {
+      authServiceMock.changePassword.mockRejectedValueOnce(
+        new Error('Database connection failed'),
+      );
+
+      await expect(
+        controller.changePassword(
+          {
+            currentPassword: 'oldPassword123',
+            newPassword: 'newSecretPassword456',
+          },
+          mockUser,
+          reqMock as Request,
+        ),
+      ).rejects.toThrow('Database connection failed');
+
+      expect(auditServiceMock.logActionBestEffort).toHaveBeenCalledWith({
+        action: AuditAction.AUTH_PASSWORD_CHANGE_FAILED,
+        actorId: 'user-change-pw-controller',
+        targetType: 'User',
+        targetId: 'user-change-pw-controller',
+        requestId: 'req-auth-123',
+        metadata: { reason: 'Database connection failed' },
+      });
     });
   });
 });

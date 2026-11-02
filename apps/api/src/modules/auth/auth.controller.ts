@@ -9,6 +9,8 @@ import {
   HttpCode,
   HttpStatus,
   BadRequestException,
+  UsePipes,
+  ValidationPipe,
 } from '@nestjs/common';
 import { AuthService, InvalidCredentialsException } from './auth.service';
 import type { Response, Request } from 'express';
@@ -22,6 +24,7 @@ import { WorkspaceMemberRepository } from '@agency-os/database';
 import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
 import * as crypto from 'crypto';
 import { LoginDto } from './dto/login.dto';
+import { ChangePasswordDto } from './dto/change-password.dto';
 
 import { RateLimitPolicies } from '../core/rate-limit.policies';
 
@@ -150,6 +153,57 @@ export class AuthController {
       sameSite: 'lax',
     });
     return { message: 'Logged out successfully' };
+  }
+
+  @UseGuards(AuthGuard)
+  @Throttle({ default: RateLimitPolicies.auth })
+  @Post('change-password')
+  @UsePipes(new ValidationPipe({ whitelist: true, transform: true }))
+  @HttpCode(HttpStatus.OK)
+  async changePassword(
+    @Body() body: ChangePasswordDto,
+    @CurrentUser() user: User,
+    @Req() req: Request,
+  ) {
+    const { currentPassword, newPassword } = body;
+    const sessionId = req.cookies?.session as string;
+    const requestId = (req as any).id;
+
+    try {
+      await this.authService.changePassword(
+        user.id,
+        currentPassword,
+        newPassword,
+        sessionId,
+      );
+
+      this.auditService.logActionBestEffort({
+        action: AuditAction.AUTH_PASSWORD_CHANGED,
+        actorId: user.id,
+        targetType: 'User',
+        targetId: user.id,
+        requestId,
+      });
+
+      return { message: 'Password changed successfully' };
+    } catch (e) {
+      this.auditService.logActionBestEffort({
+        action: AuditAction.AUTH_PASSWORD_CHANGE_FAILED,
+        actorId: user.id,
+        targetType: 'User',
+        targetId: user.id,
+        requestId,
+        metadata: {
+          reason:
+            e instanceof InvalidCredentialsException
+              ? e.reason
+              : e instanceof Error
+                ? e.message
+                : 'UNKNOWN_ERROR',
+        },
+      });
+      throw e;
+    }
   }
 
   @UseGuards(AuthGuard)

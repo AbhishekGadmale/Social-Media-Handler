@@ -85,13 +85,23 @@ class InMemoryRedisMock {
       const userSessionsPrefix = args[1];
       const ttlSeconds = parseInt(args[2], 10);
       const newExpiresAtIso = args[3];
+      const sessionId = args[4];
 
       const rawData = this.kvStore.get(sessionKey);
       if (!rawData) {
         return Promise.resolve(null);
       }
 
-      const data = JSON.parse(rawData);
+      let data: any;
+      try {
+        data = JSON.parse(rawData);
+        if (!data || typeof data !== "object") {
+          return Promise.resolve(null);
+        }
+      } catch {
+        return Promise.resolve(null);
+      }
+
       data.expiresAt = newExpiresAtIso;
       const updatedJson = JSON.stringify(data);
 
@@ -100,6 +110,14 @@ class InMemoryRedisMock {
 
       if (data.userId) {
         const userSessionsKey = `${userSessionsPrefix}${data.userId}`;
+        let set = this.setStore.get(userSessionsKey);
+        if (!set) {
+          set = new Set<string>();
+          this.setStore.set(userSessionsKey, set);
+        }
+        if (sessionId) {
+          set.add(sessionId);
+        }
         const currentTtl = this.ttlStore.get(userSessionsKey) ?? -2;
         if (currentTtl < ttlSeconds) {
           this.ttlStore.set(userSessionsKey, ttlSeconds);
@@ -179,6 +197,45 @@ class InMemoryRedisMock {
       }
 
       return Promise.resolve(activeSessionIds);
+    }
+
+    // 6. DESTROY_OTHER_USER_SESSIONS_SCRIPT (has keepSessionId)
+    if (script.includes("local keepSessionId = ARGV[2]")) {
+      const userSessionsKey = args[0];
+      const sessionPrefix = args[1];
+      const keepSessionId = args[2];
+      const ttlSeconds = parseInt(args[3], 10);
+
+      const set = this.setStore.get(userSessionsKey);
+      const sessionIds = set ? Array.from(set) : [];
+      let destroyedCount = 0;
+
+      for (const sid of sessionIds) {
+        if (sid !== keepSessionId) {
+          this.kvStore.delete(`${sessionPrefix}${sid}`);
+          this.ttlStore.delete(`${sessionPrefix}${sid}`);
+          if (set) {
+            set.delete(sid);
+          }
+          destroyedCount++;
+        }
+      }
+
+      if (keepSessionId) {
+        if (!set) {
+          const newSet = new Set<string>();
+          newSet.add(keepSessionId);
+          this.setStore.set(userSessionsKey, newSet);
+        } else {
+          set.add(keepSessionId);
+        }
+        const currentTtl = this.ttlStore.get(userSessionsKey) ?? -2;
+        if (currentTtl < ttlSeconds) {
+          this.ttlStore.set(userSessionsKey, ttlSeconds);
+        }
+      }
+
+      return Promise.resolve(destroyedCount);
     }
 
     return Promise.reject(new Error(`Unrecognized script in mock: ${script}`));
@@ -406,5 +463,86 @@ describe("SessionManager (Unit Tests with Atomic Script Simulation)", () => {
     const validated = await sessionManager.validateSession(sessionId);
     expect(validated).toBeNull();
     expect(await redisMock.get(`session:${sessionId}`)).toBeNull();
+  });
+
+  // PR #48 Hardening 1: Self-healing missing user_sessions set on valid session validation
+  it("PR48-1. validateSession self-heals a missing or evicted user_sessions index set", async () => {
+    const userId = "user-self-heal";
+    const sessionId = await sessionManager.createSession(userId);
+
+    // Simulate eviction or deletion of the user_sessions set while session payload survives
+    await redisMock.del(`user_sessions:${userId}`);
+    expect(await redisMock.smembers(`user_sessions:${userId}`)).toEqual([]);
+
+    // validateSession should heal the missing index entry
+    const validated = await sessionManager.validateSession(sessionId);
+    expect(validated).not.toBeNull();
+    expect(validated?.userId).toBe(userId);
+
+    // Index set should now contain the sessionId again
+    const userSessions = await sessionManager.getUserSessionIds(userId);
+    expect(userSessions).toContain(sessionId);
+    expect(await redisMock.smembers(`user_sessions:${userId}`)).toEqual([
+      sessionId,
+    ]);
+  });
+
+  // PR #48 Hardening 2: Corrupt session JSON handling (fail-closed, returns null without authenticating or throwing)
+  it("PR48-2. validateSession fails closed and returns null when session data in Redis is corrupt JSON", async () => {
+    const sessionId = "sess-corrupt-data";
+    // Write malformed non-JSON data directly to the session key
+    await redisMock.set(
+      `session:${sessionId}`,
+      "{malformed-json:broken",
+      "EX",
+      3600,
+    );
+
+    const validated = await sessionManager.validateSession(sessionId);
+    expect(validated).toBeNull();
+  });
+
+  // PR #48 Hardening 3: destroyOtherUserSessions preserves current session and invalidates all others
+  it("PR48-3. destroyOtherUserSessions preserves the specified session and revokes all other sessions", async () => {
+    const userId = "user-multi-device-change-pw";
+    const currentSession = await sessionManager.createSession(userId);
+    const otherSession1 = await sessionManager.createSession(userId);
+    const otherSession2 = await sessionManager.createSession(userId);
+
+    // Pre-condition: user has 3 active sessions
+    expect(await sessionManager.getUserSessionIds(userId)).toHaveLength(3);
+
+    // Revoke all OTHER sessions, keeping currentSession
+    const destroyedCount = await (
+      sessionManager as any
+    ).destroyOtherUserSessions(userId, currentSession);
+    expect(destroyedCount).toBe(2);
+
+    // Current session remains fully valid
+    const validCurrent = await sessionManager.validateSession(currentSession);
+    expect(validCurrent).not.toBeNull();
+    expect(validCurrent?.userId).toBe(userId);
+
+    // Other sessions are completely destroyed
+    expect(await sessionManager.validateSession(otherSession1)).toBeNull();
+    expect(await sessionManager.validateSession(otherSession2)).toBeNull();
+    expect(await redisMock.get(`session:${otherSession1}`)).toBeNull();
+    expect(await redisMock.get(`session:${otherSession2}`)).toBeNull();
+
+    // User index only contains currentSession
+    const remainingIds = await sessionManager.getUserSessionIds(userId);
+    expect(remainingIds).toEqual([currentSession]);
+  });
+
+  // PR #48 Hardening 4: destroyOtherUserSessions propagates Redis errors
+  it("PR48-4. destroyOtherUserSessions propagates Redis errors gracefully", async () => {
+    const userId = "user-error-other";
+    const currentSession = await sessionManager.createSession(userId);
+
+    redisMock.evalFailures.push(new Error("Redis connection dropped"));
+
+    await expect(
+      (sessionManager as any).destroyOtherUserSessions(userId, currentSession),
+    ).rejects.toThrow(/Failed to revoke other user sessions in Redis/);
   });
 });

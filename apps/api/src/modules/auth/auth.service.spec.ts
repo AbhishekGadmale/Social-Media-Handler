@@ -7,15 +7,17 @@ import * as argon2 from '@node-rs/argon2';
 
 vi.mock('@node-rs/argon2', () => ({
   verify: vi.fn(),
+  hash: vi.fn(),
 }));
 
 describe('AuthService', () => {
   let service: AuthService;
-  let userRepoMock: { findByEmail: any; findById: any };
+  let userRepoMock: { findByEmail: any; findById: any; updatePassword: any };
   let sessionManagerMock: {
     createSession: any;
     destroySession: any;
     destroyAllUserSessions: any;
+    destroyOtherUserSessions: any;
   };
 
   beforeEach(async () => {
@@ -24,12 +26,14 @@ describe('AuthService', () => {
     userRepoMock = {
       findByEmail: vi.fn(),
       findById: vi.fn(),
+      updatePassword: vi.fn(),
     };
 
     sessionManagerMock = {
       createSession: vi.fn(),
       destroySession: vi.fn(),
       destroyAllUserSessions: vi.fn(),
+      destroyOtherUserSessions: vi.fn(),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -53,6 +57,7 @@ describe('AuthService', () => {
       userRepoMock.findByEmail.mockResolvedValueOnce(mockUser);
       vi.mocked(argon2.verify).mockResolvedValueOnce(true);
       sessionManagerMock.createSession.mockResolvedValueOnce('sess-valid-123');
+      userRepoMock.findById.mockResolvedValueOnce(mockUser);
 
       const result = await service.login('user@example.com', 'mypassword');
 
@@ -64,6 +69,7 @@ describe('AuthService', () => {
       expect(sessionManagerMock.createSession).toHaveBeenCalledWith(
         'user-valid-1',
       );
+      expect(userRepoMock.findById).toHaveBeenCalledWith('user-valid-1');
       expect(result).toEqual({
         sessionId: 'sess-valid-123',
         user: mockUser,
@@ -149,6 +155,36 @@ describe('AuthService', () => {
         service.login('existing@example.com', 'correctpassword'),
       ).rejects.toThrow('Redis connection timed out');
     });
+
+    it('detects in-flight password change and destroys newly created session, throwing INVALID_PASSWORD', async () => {
+      const originalUser = {
+        id: 'user-race-1',
+        email: 'race@example.com',
+        hashedPassword: '$argon2id$oldpasswordhash',
+      };
+      const updatedUser = {
+        id: 'user-race-1',
+        email: 'race@example.com',
+        hashedPassword: '$argon2id$newpasswordhash', // password changed mid-flight!
+      };
+
+      userRepoMock.findByEmail.mockResolvedValueOnce(originalUser);
+      vi.mocked(argon2.verify).mockResolvedValueOnce(true);
+      sessionManagerMock.createSession.mockResolvedValueOnce(
+        'sess-race-created',
+      );
+      userRepoMock.findById.mockResolvedValueOnce(updatedUser);
+      sessionManagerMock.destroySession.mockResolvedValueOnce(undefined);
+
+      await expect(
+        service.login('race@example.com', 'oldpassword'),
+      ).rejects.toThrow(InvalidCredentialsException);
+
+      // Session created using stale credentials must be immediately destroyed
+      expect(sessionManagerMock.destroySession).toHaveBeenCalledWith(
+        'sess-race-created',
+      );
+    });
   });
 
   describe('logout', () => {
@@ -184,6 +220,155 @@ describe('AuthService', () => {
       await expect(
         service.revokeAllUserSessions('user-revoke-all-2'),
       ).rejects.toThrow('Redis connection lost');
+    });
+  });
+
+  describe('changePassword', () => {
+    const userId = 'user-change-pw-1';
+    const currentSessionId = 'sess-current-device';
+    const mockUser = {
+      id: userId,
+      email: 'changepw@example.com',
+      hashedPassword: '$argon2id$currenthash',
+    };
+
+    it('successfully changes password, updates hash in DB, and revokes other sessions', async () => {
+      userRepoMock.findById.mockResolvedValueOnce(mockUser);
+      vi.mocked(argon2.verify).mockResolvedValueOnce(true);
+      vi.mocked(argon2.hash).mockResolvedValueOnce('$argon2id$newhash123');
+      userRepoMock.updatePassword.mockResolvedValueOnce({
+        ...mockUser,
+        hashedPassword: '$argon2id$newhash123',
+      });
+      sessionManagerMock.destroyOtherUserSessions.mockResolvedValueOnce(2);
+
+      await service.changePassword(
+        userId,
+        'currentPassword123',
+        'newSecurePassword456',
+        currentSessionId,
+      );
+
+      expect(userRepoMock.findById).toHaveBeenCalledWith(userId);
+      expect(argon2.verify).toHaveBeenCalledWith(
+        '$argon2id$currenthash',
+        'currentPassword123',
+      );
+      expect(argon2.hash).toHaveBeenCalledWith('newSecurePassword456');
+      expect(userRepoMock.updatePassword).toHaveBeenCalledWith(
+        userId,
+        '$argon2id$newhash123',
+      );
+      expect(sessionManagerMock.destroyOtherUserSessions).toHaveBeenCalledWith(
+        userId,
+        currentSessionId,
+      );
+    });
+
+    it('throws InvalidCredentialsException when current password verification fails', async () => {
+      userRepoMock.findById.mockResolvedValueOnce(mockUser);
+      vi.mocked(argon2.verify).mockResolvedValueOnce(false);
+
+      let caughtError: any;
+      try {
+        await service.changePassword(
+          userId,
+          'wrongCurrentPassword',
+          'newSecurePassword456',
+          currentSessionId,
+        );
+      } catch (err) {
+        caughtError = err;
+      }
+
+      expect(caughtError).toBeInstanceOf(InvalidCredentialsException);
+      expect(caughtError.reason).toBe('INVALID_PASSWORD');
+      expect(caughtError.resolvedUserId).toBe(userId);
+      expect(userRepoMock.updatePassword).not.toHaveBeenCalled();
+      expect(
+        sessionManagerMock.destroyOtherUserSessions,
+      ).not.toHaveBeenCalled();
+    });
+
+    it('throws BadRequestException when new password is identical to current password', async () => {
+      userRepoMock.findById.mockResolvedValueOnce(mockUser);
+      vi.mocked(argon2.verify).mockResolvedValueOnce(true);
+
+      await expect(
+        service.changePassword(
+          userId,
+          'samePassword123',
+          'samePassword123',
+          currentSessionId,
+        ),
+      ).rejects.toThrow(
+        /New password cannot be the same as the current password/,
+      );
+
+      expect(userRepoMock.updatePassword).not.toHaveBeenCalled();
+      expect(
+        sessionManagerMock.destroyOtherUserSessions,
+      ).not.toHaveBeenCalled();
+    });
+
+    it('throws UnauthorizedException when user does not exist in database', async () => {
+      userRepoMock.findById.mockResolvedValueOnce(null);
+
+      await expect(
+        service.changePassword(
+          'nonexistent-user',
+          'currentPassword123',
+          'newSecurePassword456',
+          currentSessionId,
+        ),
+      ).rejects.toThrow(/User no longer exists/);
+
+      expect(argon2.verify).not.toHaveBeenCalled();
+      expect(userRepoMock.updatePassword).not.toHaveBeenCalled();
+    });
+
+    it('propagates database error when updatePassword fails and aborts session revocation', async () => {
+      userRepoMock.findById.mockResolvedValueOnce(mockUser);
+      vi.mocked(argon2.verify).mockResolvedValueOnce(true);
+      vi.mocked(argon2.hash).mockResolvedValueOnce('$argon2id$newhash123');
+      userRepoMock.updatePassword.mockRejectedValueOnce(
+        new Error('PostgreSQL deadlock error'),
+      );
+
+      await expect(
+        service.changePassword(
+          userId,
+          'currentPassword123',
+          'newSecurePassword456',
+          currentSessionId,
+        ),
+      ).rejects.toThrow('PostgreSQL deadlock error');
+
+      expect(
+        sessionManagerMock.destroyOtherUserSessions,
+      ).not.toHaveBeenCalled();
+    });
+
+    it('propagates Redis error when destroyOtherUserSessions fails', async () => {
+      userRepoMock.findById.mockResolvedValueOnce(mockUser);
+      vi.mocked(argon2.verify).mockResolvedValueOnce(true);
+      vi.mocked(argon2.hash).mockResolvedValueOnce('$argon2id$newhash123');
+      userRepoMock.updatePassword.mockResolvedValueOnce({
+        ...mockUser,
+        hashedPassword: '$argon2id$newhash123',
+      });
+      sessionManagerMock.destroyOtherUserSessions.mockRejectedValueOnce(
+        new Error('Redis cluster unreachable'),
+      );
+
+      await expect(
+        service.changePassword(
+          userId,
+          'currentPassword123',
+          'newSecurePassword456',
+          currentSessionId,
+        ),
+      ).rejects.toThrow('Redis cluster unreachable');
     });
   });
 });

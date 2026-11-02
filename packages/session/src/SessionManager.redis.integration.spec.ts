@@ -198,4 +198,96 @@ describe("SessionManager (Real Redis Integration & Concurrency Invariants)", () 
     const userBSessions = await sessionManager.getUserSessionIds(userB);
     expect(userBSessions.sort()).toEqual([sessB1, sessB2].sort());
   });
+
+  // Test 7: Real-Redis self-healing of missing user_sessions set
+  it("heals a missing or evicted user_sessions set upon validation on live Redis 7", async () => {
+    const userId = "real-user-self-heal";
+    const sessionId = await sessionManager.createSession(userId);
+
+    // Delete index set directly from Redis
+    await redis.del(`user_sessions:${userId}`);
+    expect(await redis.smembers(`user_sessions:${userId}`)).toEqual([]);
+
+    // validateSession executes VALIDATE_SESSION_SCRIPT with SADD
+    const valid = await sessionManager.validateSession(sessionId);
+    expect(valid).not.toBeNull();
+    expect(valid?.userId).toBe(userId);
+
+    // Verify index is restored in real Redis
+    const activeIds = await sessionManager.getUserSessionIds(userId);
+    expect(activeIds).toEqual([sessionId]);
+    expect(await redis.smembers(`user_sessions:${userId}`)).toEqual([
+      sessionId,
+    ]);
+  });
+
+  // Test 8: Real-Redis corrupt session JSON handling fails closed
+  it("fails closed and returns null on real Redis 7 when session payload is corrupt JSON", async () => {
+    const sessionId = "real-corrupt-session";
+    await redis.set(`session:${sessionId}`, "{broken-json-data", "EX", 3600);
+
+    // Script must not crash; must return null
+    const valid = await sessionManager.validateSession(sessionId);
+    expect(valid).toBeNull();
+  });
+
+  // Test 9: Real-Redis destroyOtherUserSessions preserves current session
+  it("destroys other sessions while preserving current session on real Redis 7", async () => {
+    const userId = "real-user-revoke-others";
+    const currentSession = await sessionManager.createSession(userId);
+    const other1 = await sessionManager.createSession(userId);
+    const other2 = await sessionManager.createSession(userId);
+
+    const destroyedCount = await sessionManager.destroyOtherUserSessions(
+      userId,
+      currentSession,
+    );
+    expect(destroyedCount).toBe(2);
+
+    // Current session is alive
+    const validCurrent = await sessionManager.validateSession(currentSession);
+    expect(validCurrent).not.toBeNull();
+    expect(validCurrent?.userId).toBe(userId);
+
+    // Others are dead
+    expect(await sessionManager.validateSession(other1)).toBeNull();
+    expect(await sessionManager.validateSession(other2)).toBeNull();
+    expect(await redis.get(`session:${other1}`)).toBeNull();
+    expect(await redis.get(`session:${other2}`)).toBeNull();
+
+    // Index set contains only current session
+    expect(await sessionManager.getUserSessionIds(userId)).toEqual([
+      currentSession,
+    ]);
+  });
+
+  // Test 10: Concurrency - concurrent validation vs destroyOtherUserSessions
+  it("concurrent validations cannot resurrect sessions revoked by destroyOtherUserSessions", async () => {
+    const userId = "real-user-concurrent-revoke-other";
+    const currentSession = await sessionManager.createSession(userId);
+    const targetSession = await sessionManager.createSession(userId);
+
+    // 15 parallel validations on targetSession racing against destroyOtherUserSessions
+    const validations = Array.from({ length: 15 }, () =>
+      sessionManager.validateSession(targetSession),
+    );
+    const revocation = sessionManager.destroyOtherUserSessions(
+      userId,
+      currentSession,
+    );
+
+    await Promise.all([...validations, revocation]);
+
+    // Linearization check: after revocation, targetSession MUST be dead
+    expect(await sessionManager.validateSession(targetSession)).toBeNull();
+    expect(await redis.get(`session:${targetSession}`)).toBeNull();
+
+    // currentSession MUST be alive
+    const validCurrent = await sessionManager.validateSession(currentSession);
+    expect(validCurrent).not.toBeNull();
+    expect(validCurrent?.userId).toBe(userId);
+
+    const finalSessions = await sessionManager.getUserSessionIds(userId);
+    expect(finalSessions).toEqual([currentSession]);
+  });
 });
