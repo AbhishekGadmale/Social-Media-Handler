@@ -12,7 +12,11 @@ vi.mock('@node-rs/argon2', () => ({
 describe('AuthService', () => {
   let service: AuthService;
   let userRepoMock: { findByEmail: any; findById: any };
-  let sessionManagerMock: { createSession: any; destroySession: any };
+  let sessionManagerMock: {
+    createSession: any;
+    destroySession: any;
+    destroyAllUserSessions: any;
+  };
 
   beforeEach(async () => {
     vi.clearAllMocks();
@@ -25,6 +29,7 @@ describe('AuthService', () => {
     sessionManagerMock = {
       createSession: vi.fn(),
       destroySession: vi.fn(),
+      destroyAllUserSessions: vi.fn(),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -155,6 +160,30 @@ describe('AuthService', () => {
       expect(sessionManagerMock.destroySession).toHaveBeenCalledWith(
         'sess-12345',
       );
+    });
+  });
+
+  describe('revokeAllUserSessions', () => {
+    it('calls destroyAllUserSessions in sessionManager with userId', async () => {
+      sessionManagerMock.destroyAllUserSessions.mockResolvedValueOnce(
+        undefined,
+      );
+
+      await service.revokeAllUserSessions('user-revoke-all-1');
+
+      expect(sessionManagerMock.destroyAllUserSessions).toHaveBeenCalledWith(
+        'user-revoke-all-1',
+      );
+    });
+
+    it('propagates Redis revocation errors', async () => {
+      sessionManagerMock.destroyAllUserSessions.mockRejectedValueOnce(
+        new Error('Redis connection lost'),
+      );
+
+      await expect(
+        service.revokeAllUserSessions('user-revoke-all-2'),
+      ).rejects.toThrow('Redis connection lost');
     });
   });
 });

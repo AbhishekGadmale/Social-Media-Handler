@@ -45,4 +45,12 @@ export class AuthService {
   async logout(sessionId: string): Promise<void> {
     await this.sessionManager.destroySession(sessionId);
   }
+
+  /**
+   * Revokes all active sessions for a user (e.g. on password change or security revocation).
+   * @param userId The ID of the user whose sessions should be invalidated.
+   */
+  async revokeAllUserSessions(userId: string): Promise<void> {
+    await this.sessionManager.destroyAllUserSessions(userId);
+  }
 }
