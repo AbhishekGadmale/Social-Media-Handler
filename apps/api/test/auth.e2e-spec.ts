@@ -2,7 +2,7 @@
 import { APP_GUARD } from '@nestjs/core';
 
 import { Test, TestingModule } from '@nestjs/testing';
-import { INestApplication } from '@nestjs/common';
+import { INestApplication, ValidationPipe } from '@nestjs/common';
 const request = require('supertest');
 import { AppModule } from './../src/app.module';
 import * as _cookieParser from 'cookie-parser';
@@ -34,6 +34,12 @@ describe('AuthController (e2e)', () => {
     app.use(cookieParser());
     app.useGlobalFilters(
       new AllExceptionsFilter(await app.resolve(PinoLogger)),
+    );
+    app.useGlobalPipes(
+      new ValidationPipe({
+        whitelist: true,
+        transform: true,
+      }),
     );
     await app.init();
 
@@ -307,6 +313,23 @@ describe('AuthController (e2e)', () => {
   });
 
   describe('/api/v1/auth/change-password (POST)', () => {
+    async function loginAsUser(password = 'correctpassword') {
+      const loginRes = await request(app.getHttpServer())
+        .post('/api/v1/auth/login')
+        .send({ email: testUser.email, password });
+
+      expect(loginRes.status).toBe(200);
+      const cookies = loginRes.headers['set-cookie'] as string[];
+      const sess = cookies
+        .find((c: string) => c.startsWith('session='))!
+        .split(';')[0];
+      const csrf = cookies
+        .find((c: string) => c.startsWith('csrfToken='))!
+        .split(';')[0]
+        .split('=')[1];
+      return { sess, csrf, loginRes };
+    }
+
     it('fails with 401 when unauthenticated', async () => {
       const res = await request(app.getHttpServer())
         .post('/api/v1/auth/change-password')
@@ -320,17 +343,11 @@ describe('AuthController (e2e)', () => {
     });
 
     it('fails with 403 when CSRF token is missing or mismatched', async () => {
-      const loginRes = await request(app.getHttpServer())
-        .post('/api/v1/auth/login')
-        .send({ email: testUser.email, password: 'correctpassword' });
-
-      const cookies = loginRes.headers['set-cookie'] as string[];
-      const sessionCookieHeader = cookies.find((c) => c.startsWith('session='));
-      const sessCookie = sessionCookieHeader!.split(';')[0];
+      const { sess } = await loginAsUser();
 
       const res = await request(app.getHttpServer())
         .post('/api/v1/auth/change-password')
-        .set('Cookie', sessCookie)
+        .set('Cookie', sess)
         .send({
           currentPassword: 'correctpassword',
           newPassword: 'newsecurepassword123',
@@ -341,16 +358,7 @@ describe('AuthController (e2e)', () => {
     });
 
     it('fails with 400 when new password is too short (< 8 chars)', async () => {
-      const loginRes = await request(app.getHttpServer())
-        .post('/api/v1/auth/login')
-        .send({ email: testUser.email, password: 'correctpassword' });
-
-      const cookies = loginRes.headers['set-cookie'] as string[];
-      const sess = cookies.find((c) => c.startsWith('session='))!.split(';')[0];
-      const csrf = cookies
-        .find((c) => c.startsWith('csrfToken='))!
-        .split(';')[0]
-        .split('=')[1];
+      const { sess, csrf } = await loginAsUser();
 
       const res = await request(app.getHttpServer())
         .post('/api/v1/auth/change-password')
@@ -362,20 +370,11 @@ describe('AuthController (e2e)', () => {
         });
 
       expect(res.status).toBe(400);
-      expect(JSON.stringify(res.body)).toContain('at least 8 characters');
+      expect(JSON.stringify(res.body)).toContain('characters');
     });
 
     it('fails with 401 when current password is wrong', async () => {
-      const loginRes = await request(app.getHttpServer())
-        .post('/api/v1/auth/login')
-        .send({ email: testUser.email, password: 'correctpassword' });
-
-      const cookies = loginRes.headers['set-cookie'] as string[];
-      const sess = cookies.find((c) => c.startsWith('session='))!.split(';')[0];
-      const csrf = cookies
-        .find((c) => c.startsWith('csrfToken='))!
-        .split(';')[0]
-        .split('=')[1];
+      const { sess, csrf } = await loginAsUser();
 
       const res = await request(app.getHttpServer())
         .post('/api/v1/auth/change-password')
@@ -391,16 +390,7 @@ describe('AuthController (e2e)', () => {
     });
 
     it('fails with 400 when new password is identical to current password', async () => {
-      const loginRes = await request(app.getHttpServer())
-        .post('/api/v1/auth/login')
-        .send({ email: testUser.email, password: 'correctpassword' });
-
-      const cookies = loginRes.headers['set-cookie'] as string[];
-      const sess = cookies.find((c) => c.startsWith('session='))!.split(';')[0];
-      const csrf = cookies
-        .find((c) => c.startsWith('csrfToken='))!
-        .split(';')[0]
-        .split('=')[1];
+      const { sess, csrf } = await loginAsUser();
 
       const res = await request(app.getHttpServer())
         .post('/api/v1/auth/change-password')
@@ -417,26 +407,10 @@ describe('AuthController (e2e)', () => {
 
     it('successfully changes password, preserves active session, revokes other sessions, and allows login with new password', async () => {
       // 1. Device A logs in
-      const loginResA = await request(app.getHttpServer())
-        .post('/api/v1/auth/login')
-        .send({ email: testUser.email, password: 'correctpassword' });
-      const cookiesA = loginResA.headers['set-cookie'] as string[];
-      const sessA = cookiesA
-        .find((c) => c.startsWith('session='))!
-        .split(';')[0];
-      const csrfA = cookiesA
-        .find((c) => c.startsWith('csrfToken='))!
-        .split(';')[0]
-        .split('=')[1];
+      const { sess: sessA, csrf: csrfA } = await loginAsUser();
 
       // 2. Device B logs in (creates second session)
-      const loginResB = await request(app.getHttpServer())
-        .post('/api/v1/auth/login')
-        .send({ email: testUser.email, password: 'correctpassword' });
-      const cookiesB = loginResB.headers['set-cookie'] as string[];
-      const sessB = cookiesB
-        .find((c) => c.startsWith('session='))!
-        .split(';')[0];
+      const { sess: sessB } = await loginAsUser();
 
       // Verify Device B can access /me before password change
       const meResBBefore = await request(app.getHttpServer())

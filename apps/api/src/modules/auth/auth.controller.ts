@@ -9,6 +9,8 @@ import {
   HttpCode,
   HttpStatus,
   BadRequestException,
+  UsePipes,
+  ValidationPipe,
 } from '@nestjs/common';
 import { AuthService, InvalidCredentialsException } from './auth.service';
 import type { Response, Request } from 'express';
@@ -156,6 +158,7 @@ export class AuthController {
   @UseGuards(AuthGuard)
   @Throttle({ default: RateLimitPolicies.auth })
   @Post('change-password')
+  @UsePipes(new ValidationPipe({ whitelist: true, transform: true }))
   @HttpCode(HttpStatus.OK)
   async changePassword(
     @Body() body: ChangePasswordDto,
