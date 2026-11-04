@@ -2257,3 +2257,94 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
    - **Resolution Plan**: Prioritized as follow-up task in Phase 7.1 PR 2A (Public Self-Registration & Onboarding): Introduce a `securityEpoch` / `tokenVersion` column on the `User` model and validate it against the session payload during `validateSession()` or JWT/session verification. This ensures that even in the event of a partial Redis outage, stale sessions are immediately rejected upon their next database-backed validation check.
 2. **Release Gate**:
    - **Live Deployment**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending external infrastructure provisioning and disaster recovery rehearsals G18/G19).
+
+
+## 41. Phase 7.1, PR 2A: Public Signup, Workspace Provisioning & Security Epoch (PR #49)
+
+### 1. Summary & Motivation
+- **Public Self-Registration**: Exposes an unauthenticated, rate-limited public signup endpoint (`POST /api/v1/auth/signup`) allowing new users to onboard without prior administrative provisioning.
+- **Atomic Multi-Tenant Provisioning**: On signup, atomically provisions `User`, personal `Organization`, default `Workspace`, and `WorkspaceMember` with `OWNER` role inside a single PostgreSQL transaction (`$transaction`). Prevents orphaned or partially provisioned tenant states.
+- **Security Epoch Invariant (Muse M1 Resolution)**: Implements database-backed `securityEpoch` on `User` and in the Redis session payload. Solves the distributed revocation race condition identified in PR #48 review: `AuthGuard` verifies exact equality (`session.securityEpoch === user.securityEpoch`), failing closed on any mismatch, staleness, or tampering with zero extra database queries.
+- **Email Verification Primitives & Unverified Account Restrictions (Option A)**: Establishes `emailVerified` (Boolean), `emailVerifiedAt` (DateTime), and `EmailVerificationToken` table with SHA-256 token hashing and atomic conditional consumption. Restricts unverified users from accessing workspace-scoped endpoints (`WorkspaceGuard`) and initiating OAuth account links (`OAuthController`). Production verification email issuance and public consumption endpoint are strictly deferred to PR #50.
+- **Anti-Enumeration Parity**: Regardless of whether an email is novel or pre-existing, `POST /api/v1/auth/signup` returns HTTP 201 with identical response body (`{"message": "Registration request received."}`), emits zero session cookies, and executes dummy Argon2id password hashing on duplicate emails to eliminate response-timing side channels.
+
+### 2. Scope & Technical Architecture
+
+1. **Database Layer (`packages/database`)**:
+   - **Schema & Migration (`schema.prisma`, migration `20261102000000_add_user_verification_and_security_epoch`)**:
+     - Added `emailVerified` (`Boolean`, default `false`), `emailVerifiedAt` (`DateTime?`), and `securityEpoch` (`Int`, default `1`) to `User`.
+     - Created `EmailVerificationToken` table: `id` (UUID), `userId` (relation with `onDelete: Cascade`), `tokenHash` (VarChar 64, unique SHA-256), `expiresAt` (DateTime), `consumedAt` (DateTime?), `createdAt`.
+     - Safe backfill included in migration: existing users set to `emailVerified = true` and `securityEpoch = 1`.
+   - **User Repository (`UserRepository.ts`)**:
+     - `createWithTenantTransaction()`: Executes within a single Prisma transaction. Generates UUIDv7 for all entities, normalizes email, hashes password with Argon2id, creates User (`emailVerified: false`, `securityEpoch: 1`), Organization, Workspace, and WorkspaceMember (`role: OWNER`). Enforces strict server-side control over all identifiers and roles.
+     - `updatePasswordAndIncrementEpoch()`: Atomically updates `hashedPassword` and increments `securityEpoch: { increment: 1 }` returning the updated user.
+     - `incrementSecurityEpoch()`: Atomically increments `securityEpoch` for total session invalidation events.
+   - **Email Verification Token Repository (`EmailVerificationTokenRepository.ts`)**:
+     - `createToken()`: Generates and stores 64-char SHA-256 hash of a 32-byte cryptographically secure random token with 24h expiration.
+     - `findByTokenHash()`: Queries token by unique hash.
+     - `consumeToken()`: Performs atomic conditional update (`WHERE id = ... AND consumedAt IS NULL AND expiresAt > NOW()`) and sets user `emailVerified: true` and `emailVerifiedAt: NOW()`.
+   - **Audit Logging (`AuditLogRepository.ts`)**: Added `AUTH_SIGNUP_SUCCEEDED` and `AUTH_SIGNUP_DUPLICATE_EMAIL`.
+
+2. **Session Layer (`packages/session`)**:
+   - **Session Payload (`SessionData`)**: Added optional `securityEpoch?: number`.
+   - **Session Creation**: `createSession(userId, securityEpoch?)` records `securityEpoch` into the session JSON payload and user index.
+   - **Selective Revocation with Atomic Epoch Update**: Updated Redis Lua script `DESTROY_OTHER_USER_SESSIONS_SCRIPT` and method `destroyOtherUserSessions(userId, keepSessionId, newSecurityEpoch?)`. Atomically removes all other user sessions from Redis while updating the retained current session's `securityEpoch` to `newSecurityEpoch`.
+
+3. **API & Security Layer (`apps/api`)**:
+   - **Signup DTO (`signup.dto.ts`)**: Validates `email` (normalized, lowercase), `password` (min 8, max 128 chars), and optional sanitized strings for `organizationName` and `workspaceName`.
+   - **Signup Endpoint & Rate Limiting (`auth.controller.ts`)**: Exposes `POST /api/v1/auth/signup` throttled under `RateLimitPolicies.auth` (5 requests per 15 minutes per IP; 1,000 in test environments). Emits zero cookies, prevents auto-login, and returns `201 Created` with a generic message.
+   - **Signup Service Flow (`auth.service.ts`)**: Checks email existence. If duplicate, executes dummy Argon2id verification for timing parity, writes `AUTH_SIGNUP_DUPLICATE_EMAIL` audit log, and returns success without error. If new, invokes `userRepository.createWithTenantTransaction()` and writes `AUTH_SIGNUP_SUCCEEDED` audit log. Per approved Option A architecture, live email provider delivery, initial verification token generation during signup, public verification endpoints (`POST /verify-email`), and resend endpoints are strictly deferred to PR #50.
+   - **Login & Password-Change Epoch Synchronization (`auth.service.ts`)**:
+     - `login()` stores authoritative `user.securityEpoch` into Redis session and performs post-session double-check of both `hashedPassword` and `securityEpoch`.
+     - `changePassword()` calls `userRepository.updatePasswordAndIncrementEpoch()`, then synchronizes Redis via `sessionManager.destroyOtherUserSessions(userId, currentSessionId, newEpoch)`.
+     - `revokeAllUserSessions()` increments database epoch first, then purges all user sessions in Redis.
+   - **Security Epoch Validation (`AuthGuard.ts`)**:
+     - Enforces exact equality: `session.securityEpoch === user.securityEpoch`.
+     - Rejects stale sessions (`session.securityEpoch < user.securityEpoch`), anomalous/tampered sessions (`session.securityEpoch > user.securityEpoch`), and malformed/non-integer values.
+     - Permits missing legacy session epoch if and only if authoritative DB epoch is exactly `1`.
+     - On mismatch, fails closed, immediately destroys stale session in Redis, and throws `UnauthorizedException`. Reuses already loaded user entity (zero additional DB queries).
+   - **Unverified Account Access Restrictions**:
+     - `WorkspaceGuard.ts`: Blocks unverified users (`user.emailVerified !== true`) from accessing workspace routes with `403 Forbidden ('Email verification required to access workspaces')`.
+     - `OAuthController.ts`: Blocks unverified users from completing OAuth provider callbacks.
+   - **Email Delivery Safety (`email-delivery.service.ts`)**:
+     - `MockEmailDeliveryService`: Verifies provider contracts; strictly throws an error if initialized in production (`NODE_ENV === 'production'`).
+     - Live email provider and worker deferred to PR #50 per approved Option A architecture.
+
+### 3. Verification & Test Evidence
+
+- **Monorepo Lint (`pnpm turbo run lint`)**: 9/9 packages PASS (0 errors, 59 pre-existing warnings).
+- **Monorepo Typecheck (`pnpm turbo run typecheck`)**: 10/10 tasks PASS.
+- **Monorepo Build (`pnpm turbo run build`)**: 7/7 tasks PASS.
+- **Session Layer Unit & Live Integration Tests**:
+  - `SessionManager.spec.ts`: 16/16 PASS (+2 tests covering `securityEpoch` storage, retrieval, and Lua script atomic update).
+  - `SessionManager.redis.integration.spec.ts`: 10/10 PASS on live Redis 7.
+- **Database Layer Tests (`packages/database`)**:
+  - 12/12 test files, 100/100 PASS.
+  - `UserRepository.spec.ts`: 5/5 PASS (atomic multi-tenant transaction, role/epoch server defaults, password & epoch increment).
+  - `EmailVerificationTokenRepository.spec.ts`: 6/6 PASS (token hash creation, retrieval, conditional atomic consumption, expiry rejection).
+- **API Unit Tests (`apps/api`)**:
+  - 25/25 test files, 304/304 PASS.
+  - `auth.guard.spec.ts`: 11/11 PASS (exact epoch equality, rejection of lower epoch, rejection of higher epoch, malformed epoch rejection, legacy epoch 1 acceptance, Redis session purge on mismatch).
+  - `workspace.guard.spec.ts`: 5/5 PASS (unverified user 403 Forbidden, verified user access permitted).
+  - `email-delivery.service.spec.ts`: 3/3 PASS (mock delivery logging, production environment fail-closed exception).
+  - `auth.service.spec.ts`: 14/14 PASS (public signup flow, anti-enumeration timing mitigation, login epoch persistence, password change epoch increment).
+  - `auth.controller.spec.ts`: 18/18 PASS (signup routing, 201 response, zero cookie issuance, rate limiting decorators).
+  - `oauth.controller.spec.ts`: 15/15 PASS (unverified user OAuth link blocking).
+- **API E2E Tests (`apps/api`)**:
+  - 5/5 test files, 88/88 PASS against live PostgreSQL 16, Redis 7, and MinIO:
+    1. `auth.e2e-spec.ts`: 19/19 PASS (public signup 201, zero session cookies, anti-enumeration duplicate email parity, invalid email/password rejection, security epoch session invalidation).
+    2. `publishing.e2e-spec.ts`: 51/51 PASS.
+    3. `accounts.e2e-spec.ts`: 6/6 PASS.
+    4. `analytics.e2e-spec.ts`: 6/6 PASS.
+    5. `media.storage.e2e-spec.ts`: 6/6 PASS.
+
+### 4. Remaining Scope & Follow-Ups (PR #50)
+
+1. **PR #50 Scope (Deferred Email Delivery Lifecycle)**:
+   - Integrate production email delivery provider (Resend / AWS SES / SMTP) with DKIM/SPF and webhook delivery tracking.
+   - Background worker queue for asynchronous email dispatch.
+   - Public endpoint `POST /api/v1/auth/verify-email` with raw token verification and rate limiting.
+   - Public endpoint `POST /api/v1/auth/resend-verification` with rate limiting and anti-enumeration.
+   - HTML/text email templates for signup verification.
+2. **Release Gate**:
+   - **Live Deployment**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending PR #50 completion, human code review, external infrastructure provisioning, and disaster recovery rehearsals G18/G19).

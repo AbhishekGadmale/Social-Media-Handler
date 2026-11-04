@@ -107,6 +107,8 @@ describe('Publishing API (e2e)', () => {
         id: generateId(),
         email: 'pub-test1@example.com',
         hashedPassword: await argon2.hash('password'),
+        emailVerified: true,
+        securityEpoch: 1,
       },
     });
 
@@ -115,6 +117,8 @@ describe('Publishing API (e2e)', () => {
         id: generateId(),
         email: 'pub-test2@example.com',
         hashedPassword: await argon2.hash('password'),
+        emailVerified: true,
+        securityEpoch: 1,
       },
     });
 
@@ -123,6 +127,8 @@ describe('Publishing API (e2e)', () => {
         id: generateId(),
         email: 'pub-test3@example.com',
         hashedPassword: await argon2.hash('password'),
+        emailVerified: true,
+        securityEpoch: 1,
       },
     });
 

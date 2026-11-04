@@ -20,6 +20,12 @@ export class WorkspaceGuard implements CanActivate {
       throw new ForbiddenException('User not authenticated');
     }
 
+    if (!user.emailVerified) {
+      throw new ForbiddenException(
+        'Email verification required to access workspaces',
+      );
+    }
+
     if (!workspaceId) {
       return true; // No workspace context needed for this route
     }

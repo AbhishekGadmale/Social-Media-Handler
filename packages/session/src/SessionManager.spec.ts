@@ -205,6 +205,7 @@ class InMemoryRedisMock {
       const sessionPrefix = args[1];
       const keepSessionId = args[2];
       const ttlSeconds = parseInt(args[3], 10);
+      const newSecurityEpoch = args[4] && args[4] !== "" ? parseInt(args[4], 10) : undefined;
 
       const set = this.setStore.get(userSessionsKey);
       const sessionIds = set ? Array.from(set) : [];
@@ -232,6 +233,22 @@ class InMemoryRedisMock {
         const currentTtl = this.ttlStore.get(userSessionsKey) ?? -2;
         if (currentTtl < ttlSeconds) {
           this.ttlStore.set(userSessionsKey, ttlSeconds);
+        }
+
+        if (typeof newSecurityEpoch === "number" && !isNaN(newSecurityEpoch)) {
+          const keepKey = `${sessionPrefix}${keepSessionId}`;
+          const rawData = this.kvStore.get(keepKey);
+          if (rawData) {
+            try {
+              const data = JSON.parse(rawData);
+              if (data && typeof data === "object") {
+                data.securityEpoch = newSecurityEpoch;
+                this.kvStore.set(keepKey, JSON.stringify(data));
+              }
+            } catch {
+              // ignore parse error
+            }
+          }
         }
       }
 
@@ -544,5 +561,38 @@ describe("SessionManager (Unit Tests with Atomic Script Simulation)", () => {
     await expect(
       (sessionManager as any).destroyOtherUserSessions(userId, currentSession),
     ).rejects.toThrow(/Failed to revoke other user sessions in Redis/);
+  });
+  // PR #49 Hardening 1: createSession with securityEpoch
+  it("PR49-1. createSession stores securityEpoch in session data and validateSession preserves it", async () => {
+    const userId = "user-epoch-create";
+    const sessionId = await sessionManager.createSession(userId, 3);
+
+    const session = await sessionManager.validateSession(sessionId);
+    expect(session).not.toBeNull();
+    expect(session?.userId).toBe(userId);
+    expect(session?.securityEpoch).toBe(3);
+  });
+
+  // PR #49 Hardening 2: destroyOtherUserSessions updates keepSessionId's securityEpoch
+  it("PR49-2. destroyOtherUserSessions atomically updates securityEpoch on the preserved session", async () => {
+    const userId = "user-epoch-update";
+    const currentSession = await sessionManager.createSession(userId, 1);
+    const otherSession = await sessionManager.createSession(userId, 1);
+
+    const destroyedCount = await sessionManager.destroyOtherUserSessions(
+      userId,
+      currentSession,
+      2,
+    );
+    expect(destroyedCount).toBe(1);
+
+    // Other session is gone
+    expect(await sessionManager.validateSession(otherSession)).toBeNull();
+
+    // Current session is preserved and has epoch updated to 2
+    const validatedCurrent = await sessionManager.validateSession(currentSession);
+    expect(validatedCurrent).not.toBeNull();
+    expect(validatedCurrent?.userId).toBe(userId);
+    expect(validatedCurrent?.securityEpoch).toBe(2);
   });
 });

@@ -94,6 +94,13 @@ export class OAuthController {
   ) {
     const { code, state, error } = query;
     const requestId = getOrCreateCorrelationId(req);
+
+    if (req.user && !req.user.emailVerified) {
+      throw new ForbiddenException(
+        'Email verification required to access workspaces',
+      );
+    }
+
     const userId = req.user!.id;
 
     if (error) {

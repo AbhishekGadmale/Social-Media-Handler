@@ -24,6 +24,7 @@ import { WorkspaceMemberRepository } from '@agency-os/database';
 import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
 import * as crypto from 'crypto';
 import { LoginDto } from './dto/login.dto';
+import { SignupDto } from './dto/signup.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
 
 import { RateLimitPolicies } from '../core/rate-limit.policies';
@@ -38,6 +39,25 @@ export class AuthController {
     private readonly memberRepo: WorkspaceMemberRepository,
     private readonly auditService: AuditService,
   ) {}
+
+  @Throttle({ default: RateLimitPolicies.auth })
+  @Post('signup')
+  @UsePipes(new ValidationPipe({ whitelist: true, transform: true }))
+  @HttpCode(HttpStatus.CREATED)
+  async signup(@Body() body: SignupDto, @Req() req: Request) {
+    const isProduction = process.env.NODE_ENV === 'production';
+    const isSecureRequest = Boolean(req.secure);
+    const allowInsecureHttp = process.env.ALLOW_INSECURE_HTTP_AUTH === 'true';
+
+    if (isProduction && !isSecureRequest && !allowInsecureHttp) {
+      throw new BadRequestException(
+        'HTTPS is required for registration in production environments. Please configure TLS on your reverse proxy or custom domain.',
+      );
+    }
+
+    const requestId = (req as any).id;
+    return this.authService.signup(body, requestId);
+  }
 
   @Throttle({ default: RateLimitPolicies.auth })
   @Post('login')

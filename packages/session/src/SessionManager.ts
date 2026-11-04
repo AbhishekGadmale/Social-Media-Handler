@@ -5,6 +5,7 @@ export interface SessionData {
   userId: string;
   createdAt: string;
   expiresAt: string;
+  securityEpoch?: number;
 }
 
 /**
@@ -120,6 +121,7 @@ local userSessionsKey = KEYS[1]
 local sessionPrefix = ARGV[1]
 local keepSessionId = ARGV[2]
 local ttlSeconds = tonumber(ARGV[3])
+local newSecurityEpoch = tonumber(ARGV[4])
 
 local sessionIds = redis.call('SMEMBERS', userSessionsKey)
 local destroyedCount = 0
@@ -138,6 +140,24 @@ if keepSessionId and keepSessionId ~= '' then
   local currentTtl = redis.call('TTL', userSessionsKey)
   if currentTtl < ttlSeconds then
     redis.call('EXPIRE', userSessionsKey, ttlSeconds)
+  end
+
+  -- Update securityEpoch if newSecurityEpoch is provided
+  if newSecurityEpoch then
+    local keepKey = sessionPrefix .. keepSessionId
+    local rawData = redis.call('GET', keepKey)
+    if rawData then
+      local ok, data = pcall(cjson.decode, rawData)
+      if ok and type(data) == 'table' then
+        data['securityEpoch'] = newSecurityEpoch
+        local currentSessionTtl = redis.call('TTL', keepKey)
+        if currentSessionTtl > 0 then
+          redis.call('SET', keepKey, cjson.encode(data), 'EX', currentSessionTtl)
+        else
+          redis.call('SET', keepKey, cjson.encode(data), 'EX', ttlSeconds)
+        end
+      end
+    end
   end
 end
 
@@ -174,7 +194,7 @@ export class SessionManager {
    * @param userId The ID of the authenticated user.
    * @returns The newly generated session ID.
    */
-  async createSession(userId: string): Promise<string> {
+  async createSession(userId: string, securityEpoch?: number): Promise<string> {
     const sessionId = generateId();
     const now = new Date();
     const expiresAt = new Date(now.getTime() + this.SESSION_TTL_SECONDS * 1000);
@@ -183,6 +203,7 @@ export class SessionManager {
       userId,
       createdAt: now.toISOString(),
       expiresAt: expiresAt.toISOString(),
+      ...(typeof securityEpoch === 'number' ? { securityEpoch } : {}),
     };
 
     const sessionKey = `${this.SESSION_PREFIX}${sessionId}`;
@@ -274,6 +295,7 @@ export class SessionManager {
   async destroyOtherUserSessions(
     userId: string,
     keepSessionId: string,
+    newSecurityEpoch?: number,
   ): Promise<number> {
     const userSessionsKey = `${this.USER_SESSIONS_PREFIX}${userId}`;
 
@@ -285,6 +307,7 @@ export class SessionManager {
         this.SESSION_PREFIX,
         keepSessionId,
         this.SESSION_TTL_SECONDS.toString(),
+        newSecurityEpoch !== undefined ? newSecurityEpoch.toString() : "",
       );
       return Number(result) || 0;
     } catch (err: any) {

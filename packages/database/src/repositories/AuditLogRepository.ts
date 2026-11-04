@@ -2,6 +2,8 @@ import { PrismaClient, Prisma } from "@prisma/client";
 import { generateId } from "../id";
 
 export enum AuditAction {
+  AUTH_SIGNUP_SUCCEEDED = "AUTH_SIGNUP_SUCCEEDED",
+  AUTH_SIGNUP_DUPLICATE_EMAIL = "AUTH_SIGNUP_DUPLICATE_EMAIL",
   AUTH_LOGIN_SUCCEEDED = "AUTH_LOGIN_SUCCEEDED",
   AUTH_LOGIN_FAILED = "AUTH_LOGIN_FAILED",
   AUTH_LOGOUT = "AUTH_LOGOUT",

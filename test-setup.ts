@@ -25,6 +25,11 @@ if (envPath && fs.existsSync(envPath)) {
   });
 }
 
+if (!process.env.TOKEN_ENCRYPTION_KEY) {
+  process.env.TOKEN_ENCRYPTION_KEY =
+    '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+}
+
 if (!process.env.TEST_DATABASE_URL) {
   throw new Error(`TEST_DATABASE_URL is not set in root .env. Loaded from: ${envPath}`);
 }

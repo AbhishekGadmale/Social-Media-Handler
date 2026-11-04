@@ -73,6 +73,8 @@ describe('AnalyticsController (e2e)', () => {
         id: generateId(),
         email: `test-analytics-${generateId()}@example.com`,
         hashedPassword,
+        emailVerified: true,
+        securityEpoch: 1,
       },
     });
 
