@@ -642,17 +642,29 @@ describe('AuthController (e2e)', () => {
       });
       expect(activeTokens).toHaveLength(1);
 
-      // 7. Verify email using the token dispatched by MockEmailDeliveryService
+      // 7. Verify email using the latest token dispatched by MockEmailDeliveryService
       const emailService = app.get(EMAIL_DELIVERY_SERVICE) as MockEmailDeliveryService;
-      const latestEmail = emailService.sentEmails.find(
+      const sentForUser = emailService.sentEmails.filter(
         (e: any) => e.toEmail === signedUpEmail,
       );
-      expect(latestEmail).toBeDefined();
-      const rawVerificationToken = latestEmail!.rawToken;
+      expect(sentForUser.length).toBeGreaterThanOrEqual(2);
+      const staleToken = sentForUser[0].rawToken;
+      const activeToken = sentForUser[sentForUser.length - 1].rawToken;
 
+      // 7a. Prior token was invalidated during resend; verifying with stale token fails (400)
+      const staleVerifyRes = await request(app.getHttpServer())
+        .post('/api/v1/auth/verify-email')
+        .send({ token: staleToken });
+
+      expect(staleVerifyRes.status).toBe(400);
+      expect(staleVerifyRes.body.error.message).toBe(
+        'Invalid or expired verification token',
+      );
+
+      // 7b. Verifying with the active token succeeds (200 OK)
       const verifyRes = await request(app.getHttpServer())
         .post('/api/v1/auth/verify-email')
-        .send({ token: rawVerificationToken });
+        .send({ token: activeToken });
 
       expect(verifyRes.status).toBe(200);
       expect(verifyRes.body.message).toBe('Email verified successfully.');
@@ -695,7 +707,7 @@ describe('AuthController (e2e)', () => {
       // 10. Replay attack with same token is rejected (400 Bad Request)
       const replayRes = await request(app.getHttpServer())
         .post('/api/v1/auth/verify-email')
-        .send({ token: rawVerificationToken });
+        .send({ token: activeToken });
 
       expect(replayRes.status).toBe(400);
       expect(replayRes.body.error.message).toBe(
