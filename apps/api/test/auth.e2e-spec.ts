@@ -594,7 +594,7 @@ describe('AuthController (e2e)', () => {
 
       // 4. Accessing another workspace where the user is NOT a member is strictly rejected with 403 Forbidden (tenant isolation verified)
       const otherWorkspaceRes = await request(app.getHttpServer())
-        .post('/api/v1/workspaces/ws-non-existent-or-forbidden/test-posts')
+        .post(`/api/v1/workspaces/${generateId()}/test-posts`)
         .set('Cookie', `${sessCookie}; csrfToken=${csrfVal}`)
         .set('x-csrf-token', csrfVal)
         .send({});
