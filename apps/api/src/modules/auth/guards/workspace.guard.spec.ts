@@ -3,7 +3,7 @@ import { WorkspaceGuard } from './workspace.guard';
 import { ForbiddenException, ExecutionContext } from '@nestjs/common';
 import { WorkspaceRole } from '@agency-os/database';
 
-describe('WorkspaceGuard (Unverified Account Gating)', () => {
+describe('WorkspaceGuard (Option A: Email Verification Enforcement Deferred to PR #50)', () => {
   let guard: WorkspaceGuard;
   let memberRepoMock: {
     findByWorkspaceAndUserId: any;
@@ -34,6 +34,27 @@ describe('WorkspaceGuard (Unverified Account Gating)', () => {
     guard = new WorkspaceGuard(memberRepoMock as any);
   });
 
+  it('allows access when user is authenticated, emailVerified is false, and user is workspace member (Option A)', async () => {
+    const user = { id: 'user-unverified', emailVerified: false };
+    const { context, request } = createMockContext(user, 'ws-123');
+
+    memberRepoMock.findByWorkspaceAndUserId.mockResolvedValueOnce({
+      id: 'member-1',
+      workspaceId: 'ws-123',
+      userId: 'user-unverified',
+      role: WorkspaceRole.OWNER,
+    });
+
+    const result = await guard.canActivate(context);
+
+    expect(result).toBe(true);
+    expect(request.workspaceRole).toBe(WorkspaceRole.OWNER);
+    expect(memberRepoMock.findByWorkspaceAndUserId).toHaveBeenCalledWith(
+      'ws-123',
+      'user-unverified',
+    );
+  });
+
   it('allows access when user is authenticated, emailVerified is true, and user is workspace member', async () => {
     const user = { id: 'user-1', emailVerified: true };
     const { context, request } = createMockContext(user, 'ws-123');
@@ -49,20 +70,10 @@ describe('WorkspaceGuard (Unverified Account Gating)', () => {
 
     expect(result).toBe(true);
     expect(request.workspaceRole).toBe(WorkspaceRole.OWNER);
-  });
-
-  it('rejects with 403 Forbidden when user is unverified (emailVerified: false)', async () => {
-    const user = { id: 'user-unverified', emailVerified: false };
-    const { context } = createMockContext(user, 'ws-123');
-
-    await expect(guard.canActivate(context)).rejects.toThrow(
-      new ForbiddenException(
-        'Email verification required to access workspaces',
-      ),
+    expect(memberRepoMock.findByWorkspaceAndUserId).toHaveBeenCalledWith(
+      'ws-123',
+      'user-1',
     );
-
-    // Assert database membership lookup is never reached
-    expect(memberRepoMock.findByWorkspaceAndUserId).not.toHaveBeenCalled();
   });
 
   it('rejects with 403 Forbidden when user is not attached to request', async () => {
@@ -73,8 +84,8 @@ describe('WorkspaceGuard (Unverified Account Gating)', () => {
     );
   });
 
-  it('rejects with 403 Forbidden when user is verified but not a member of the requested workspace', async () => {
-    const user = { id: 'user-1', emailVerified: true };
+  it('rejects with 403 Forbidden when user is not a member of the requested workspace (tenant isolation)', async () => {
+    const user = { id: 'user-unverified', emailVerified: false };
     const { context } = createMockContext(user, 'ws-other');
 
     memberRepoMock.findByWorkspaceAndUserId.mockResolvedValueOnce(null);
@@ -84,8 +95,8 @@ describe('WorkspaceGuard (Unverified Account Gating)', () => {
     );
   });
 
-  it('returns true if no workspaceId param exists on route and user is verified', async () => {
-    const user = { id: 'user-1', emailVerified: true };
+  it('returns true if no workspaceId param exists on route', async () => {
+    const user = { id: 'user-unverified', emailVerified: false };
     const { context } = createMockContext(user);
 
     const result = await guard.canActivate(context);

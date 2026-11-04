@@ -204,27 +204,36 @@ describe('OAuthController', () => {
   });
 
   describe('callbackProvider', () => {
-    it('Scenario 14: rejects unverified account with 403 Forbidden before processing callback', async () => {
+    it('allows unverified accounts to complete callback (Option A: verification enforcement deferred to PR #50)', async () => {
       const unverifiedReq = {
         ...mockReq,
         user: { id: 'user-unverified', emailVerified: false },
       };
 
-      await expect(
-        controller.callbackProvider(
-          SocialProvider.LINKEDIN,
-          { code: 'test-code', state: 'test-state' },
-          unverifiedReq as Request,
-          mockRes as Response,
-        ),
-      ).rejects.toThrow(
-        new ForbiddenException(
-          'Email verification required to access workspaces',
-        ),
+      mockOAuthService.handleOAuthCallback.mockResolvedValueOnce({
+        workspaceId: 'workspace-123',
+        socialAccountId: 'account-123',
+        isNew: true,
+      });
+
+      await controller.callbackProvider(
+        SocialProvider.LINKEDIN,
+        { code: 'test-code', state: 'test-state' },
+        unverifiedReq as Request,
+        mockRes as Response,
       );
 
-      expect(mockOAuthService.handleOAuthCallback).not.toHaveBeenCalled();
-      expect(mockRes.redirect).not.toHaveBeenCalled();
+      expect(mockOAuthService.handleOAuthCallback).toHaveBeenCalledWith(
+        SocialProvider.LINKEDIN,
+        'user-unverified',
+        'test-state',
+        'test-code',
+        'http://localhost:3001/api/v1/oauth/linkedin/callback',
+        'req-1',
+      );
+      expect(mockRes.redirect).toHaveBeenCalledWith(
+        'http://localhost:3000/workspace-123/accounts',
+      );
     });
     it('redirects to the correct workspace accounts page on success', async () => {
       const workspaceId = 'workspace-123';

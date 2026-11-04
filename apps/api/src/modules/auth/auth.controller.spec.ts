@@ -22,8 +22,6 @@ describe('AuthController', () => {
       login: vi.fn(),
       logout: vi.fn(),
       changePassword: vi.fn(),
-      verifyEmail: vi.fn(),
-      resendVerification: vi.fn(),
     };
 
     memberRepoMock = {
@@ -596,87 +594,6 @@ describe('AuthController', () => {
         requestId: 'req-auth-123',
         metadata: { reason: 'Database connection failed' },
       });
-    });
-  });
-
-  describe('verifyEmail', () => {
-    const validDto = { token: 'a'.repeat(64) };
-
-    it('delegates to authService.verifyEmail and returns response payload', async () => {
-      authServiceMock.verifyEmail.mockResolvedValueOnce({
-        message: 'Email verified successfully.',
-      });
-
-      const result = await controller.verifyEmail(validDto, reqMock as Request);
-
-      expect(authServiceMock.verifyEmail).toHaveBeenCalledWith(
-        validDto.token,
-        'req-auth-123',
-      );
-      expect(result).toEqual({ message: 'Email verified successfully.' });
-    });
-
-    it('rejects non-HTTPS verification requests in production without insecure override', async () => {
-      const prevEnv = process.env.NODE_ENV;
-      const prevOverride = process.env.ALLOW_INSECURE_HTTP_AUTH;
-      process.env.NODE_ENV = 'production';
-      delete process.env.ALLOW_INSECURE_HTTP_AUTH;
-
-      try {
-        const insecureReq = { ...reqMock, secure: false };
-        await expect(
-          controller.verifyEmail(validDto, insecureReq as Request),
-        ).rejects.toThrow(BadRequestException);
-      } finally {
-        process.env.NODE_ENV = prevEnv;
-        if (prevOverride !== undefined) {
-          process.env.ALLOW_INSECURE_HTTP_AUTH = prevOverride;
-        }
-      }
-    });
-  });
-
-  describe('resendVerification', () => {
-    const validDto = { email: 'user@example.com' };
-
-    it('delegates to authService.resendVerification and returns generic response', async () => {
-      authServiceMock.resendVerification.mockResolvedValueOnce({
-        message:
-          'If an unverified account exists for this email, a verification link has been sent.',
-      });
-
-      const result = await controller.resendVerification(
-        validDto,
-        reqMock as Request,
-      );
-
-      expect(authServiceMock.resendVerification).toHaveBeenCalledWith(
-        'user@example.com',
-        'req-auth-123',
-      );
-      expect(result).toEqual({
-        message:
-          'If an unverified account exists for this email, a verification link has been sent.',
-      });
-    });
-
-    it('rejects non-HTTPS resend requests in production without insecure override', async () => {
-      const prevEnv = process.env.NODE_ENV;
-      const prevOverride = process.env.ALLOW_INSECURE_HTTP_AUTH;
-      process.env.NODE_ENV = 'production';
-      delete process.env.ALLOW_INSECURE_HTTP_AUTH;
-
-      try {
-        const insecureReq = { ...reqMock, secure: false };
-        await expect(
-          controller.resendVerification(validDto, insecureReq as Request),
-        ).rejects.toThrow(BadRequestException);
-      } finally {
-        process.env.NODE_ENV = prevEnv;
-        if (prevOverride !== undefined) {
-          process.env.ALLOW_INSECURE_HTTP_AUTH = prevOverride;
-        }
-      }
     });
   });
 });

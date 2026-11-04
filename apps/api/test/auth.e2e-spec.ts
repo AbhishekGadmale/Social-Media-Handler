@@ -12,10 +12,6 @@ import { AllExceptionsFilter } from '../src/filters/all-exceptions.filter';
 import { PinoLogger } from 'nestjs-pino';
 import * as argon2 from '@node-rs/argon2';
 import Redis from 'ioredis';
-import {
-  EMAIL_DELIVERY_SERVICE,
-  MockEmailDeliveryService,
-} from '../src/modules/auth/email-delivery.service';
 
 describe('AuthController (e2e)', () => {
   let app: INestApplication;
@@ -517,12 +513,6 @@ describe('AuthController (e2e)', () => {
       expect(signedUpUser.emailVerifiedAt).toBeNull();
       expect(signedUpUser.securityEpoch).toBe(1);
 
-      // Verify email verification token was provisioned in the same database transaction
-      const tokenRecord = await prisma.emailVerificationToken.findFirst({
-        where: { userId: signedUpUser.id },
-      });
-      expect(tokenRecord).toBeDefined();
-      expect(tokenRecord?.consumedAt).toBeNull();
 
       signedUpOrg = await prisma.organization.findFirst({
         where: { name: 'Signup Org E2E' },
@@ -563,8 +553,8 @@ describe('AuthController (e2e)', () => {
       expect(res.headers['set-cookie']).toBeUndefined();
     });
 
-    it('Scenario 14: unverified accounts can log in and view profile but are rejected with 403 on tenant workspace routes', async () => {
-      // 1. Unverified user logs in
+    it('Scenario 14: unverified accounts can log in, access their provisioned workspace, and perform actions (Option A: verification enforcement deferred to PR #50)', async () => {
+      // 1. Unverified user logs in successfully
       const loginRes = await request(app.getHttpServer())
         .post('/api/v1/auth/login')
         .send({
@@ -576,14 +566,14 @@ describe('AuthController (e2e)', () => {
       const cookies = loginRes.headers['set-cookie'] as string[];
       expect(cookies).toBeDefined();
       const sessCookie = cookies
-        .find((c) => c.startsWith('session='))!
+        .find((c: string) => c.startsWith('session='))!
         .split(';')[0];
       const csrfVal = cookies
-        .find((c) => c.startsWith('csrfToken='))!
+        .find((c: string) => c.startsWith('csrfToken='))!
         .split(';')[0]
         .split('=')[1];
 
-      // 2. GET /me succeeds and reflects unverified status
+      // 2. GET /me succeeds and reflects unverified status (emailVerified: false)
       const meRes = await request(app.getHttpServer())
         .get('/api/v1/auth/me')
         .set('Cookie', sessCookie);
@@ -592,19 +582,27 @@ describe('AuthController (e2e)', () => {
       expect(meRes.body.user.email).toBe(signedUpEmail);
       expect(meRes.body.user.emailVerified).toBe(false);
 
-      // 3. Accessing workspace routes is strictly blocked by WorkspaceGuard (403 Forbidden)
+      // 3. Accessing own provisioned workspace route succeeds (200 OK) under Option A
       const workspaceRes = await request(app.getHttpServer())
         .post(`/api/v1/workspaces/${signedUpWorkspace.id}/test-posts`)
         .set('Cookie', `${sessCookie}; csrfToken=${csrfVal}`)
         .set('x-csrf-token', csrfVal)
         .send({});
 
-      expect(workspaceRes.status).toBe(403);
-      expect(workspaceRes.body.error.message).toBe(
-        'Email verification required to access workspaces',
-      );
+      expect(workspaceRes.status).toBe(200);
+      expect(workspaceRes.body.message).toBe('Post created');
 
-      // 4. Password change succeeds for unverified accounts
+      // 4. Accessing another workspace where the user is NOT a member is strictly rejected with 403 Forbidden (tenant isolation verified)
+      const otherWorkspaceRes = await request(app.getHttpServer())
+        .post('/api/v1/workspaces/ws-non-existent-or-forbidden/test-posts')
+        .set('Cookie', `${sessCookie}; csrfToken=${csrfVal}`)
+        .set('x-csrf-token', csrfVal)
+        .send({});
+
+      expect(otherWorkspaceRes.status).toBe(403);
+      expect(otherWorkspaceRes.body.error.message).toBe('User is not a member of this workspace');
+
+      // 5. Password change succeeds for unverified accounts
       const changePwRes = await request(app.getHttpServer())
         .post('/api/v1/auth/change-password')
         .set('Cookie', `${sessCookie}; csrfToken=${csrfVal}`)
@@ -617,7 +615,7 @@ describe('AuthController (e2e)', () => {
       expect(changePwRes.status).toBe(200);
       expect(changePwRes.body.message).toBe('Password changed successfully');
 
-      // 5. Logout succeeds for unverified accounts
+      // 6. Logout succeeds for unverified accounts
       const logoutRes = await request(app.getHttpServer())
         .post('/api/v1/auth/logout')
         .set('Cookie', `${sessCookie}; csrfToken=${csrfVal}`)
@@ -626,93 +624,14 @@ describe('AuthController (e2e)', () => {
       expect(logoutRes.status).toBe(200);
       expect(logoutRes.body.message).toBe('Logged out successfully');
 
-      // 6. Resend verification: invalidates prior active tokens, generates new token, sends email
-      const resendRes = await request(app.getHttpServer())
-        .post('/api/v1/auth/resend-verification')
-        .send({ email: signedUpEmail });
-
-      expect(resendRes.status).toBe(200);
-      expect(resendRes.body.message).toBe(
-        'If an unverified account exists for this email, a verification link has been sent.',
-      );
-
-      // Verify in DB that only 1 unconsumed token exists
-      const activeTokens = await prisma.emailVerificationToken.findMany({
-        where: { userId: signedUpUser.id, consumedAt: null },
-      });
-      expect(activeTokens).toHaveLength(1);
-
-      // 7. Verify email using the latest token dispatched by MockEmailDeliveryService
-      const emailService = app.get(EMAIL_DELIVERY_SERVICE) as MockEmailDeliveryService;
-      const sentForUser = emailService.sentEmails.filter(
-        (e: any) => e.toEmail === signedUpEmail,
-      );
-      expect(sentForUser.length).toBeGreaterThanOrEqual(2);
-      const staleToken = sentForUser[0].rawToken;
-      const activeToken = sentForUser[sentForUser.length - 1].rawToken;
-
-      // 7a. Prior token was invalidated during resend; verifying with stale token fails (400)
-      const staleVerifyRes = await request(app.getHttpServer())
-        .post('/api/v1/auth/verify-email')
-        .send({ token: staleToken });
-
-      expect(staleVerifyRes.status).toBe(400);
-      expect(staleVerifyRes.body.error.message).toBe(
-        'Invalid or expired verification token',
-      );
-
-      // 7b. Verifying with the active token succeeds (200 OK)
-      const verifyRes = await request(app.getHttpServer())
-        .post('/api/v1/auth/verify-email')
-        .send({ token: activeToken });
-
-      expect(verifyRes.status).toBe(200);
-      expect(verifyRes.body.message).toBe('Email verified successfully.');
-
-      // 8. Direct DB check reflects emailVerified: true and emailVerifiedAt
-      const verifiedDbUser = await prisma.user.findUnique({
+      // 7. Verify user remains emailVerified: false and emailVerifiedAt: null in PostgreSQL database
+      const dbUser = await prisma.user.findUnique({
         where: { id: signedUpUser.id },
       });
-      expect(verifiedDbUser?.emailVerified).toBe(true);
-      expect(verifiedDbUser?.emailVerifiedAt).not.toBeNull();
-
-      // 9. With email verified, login and access workspace routes now succeeds (200 OK)
-      const verifiedLoginRes = await request(app.getHttpServer())
-        .post('/api/v1/auth/login')
-        .send({
-          email: signedUpEmail,
-          password: 'UpdatedUnverifiedPass789!',
-        });
-
-      expect(verifiedLoginRes.status).toBe(200);
-      const vCookies = verifiedLoginRes.headers['set-cookie'] as string[];
-      expect(vCookies).toBeDefined();
-      const vSess = vCookies
-        .find((c) => c.startsWith('session='))!
-        .split(';')[0];
-      const vCsrf = vCookies
-        .find((c) => c.startsWith('csrfToken='))!
-        .split(';')[0]
-        .split('=')[1];
-
-      const verifiedWorkspaceRes = await request(app.getHttpServer())
-        .post(`/api/v1/workspaces/${signedUpWorkspace.id}/test-posts`)
-        .set('Cookie', `${vSess}; csrfToken=${vCsrf}`)
-        .set('x-csrf-token', vCsrf)
-        .send({});
-
-      expect(verifiedWorkspaceRes.status).toBe(200);
-      expect(verifiedWorkspaceRes.body.message).toBe('Post created');
-
-      // 10. Replay attack with same token is rejected (400 Bad Request)
-      const replayRes = await request(app.getHttpServer())
-        .post('/api/v1/auth/verify-email')
-        .send({ token: activeToken });
-
-      expect(replayRes.status).toBe(400);
-      expect(replayRes.body.error.message).toBe(
-        'Invalid or expired verification token',
-      );
+      expect(dbUser?.emailVerified).toBe(false);
+      expect(dbUser?.emailVerifiedAt).toBeNull();
+      // Security epoch incremented by password change
+      expect(dbUser?.securityEpoch).toBe(2);
 
       // Cleanup signed up user data
       await prisma.emailVerificationToken.deleteMany({

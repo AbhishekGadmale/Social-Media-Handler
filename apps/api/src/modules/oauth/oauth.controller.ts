@@ -95,11 +95,9 @@ export class OAuthController {
     const { code, state, error } = query;
     const requestId = getOrCreateCorrelationId(req);
 
-    if (req.user && !req.user.emailVerified) {
-      throw new ForbiddenException(
-        'Email verification required to access workspaces',
-      );
-    }
+    // Architectural Decision (Option A - PR #49):
+    // Email verification enforcement is deferred to PR #50.
+    // OAuth linking is permitted for authenticated users while verification lifecycle is finalized.
 
     const userId = req.user!.id;
 

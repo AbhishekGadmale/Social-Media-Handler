@@ -26,8 +26,6 @@ import * as crypto from 'crypto';
 import { LoginDto } from './dto/login.dto';
 import { SignupDto } from './dto/signup.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
-import { VerifyEmailDto } from './dto/verify-email.dto';
-import { ResendVerificationDto } from './dto/resend-verification.dto';
 
 import { RateLimitPolicies } from '../core/rate-limit.policies';
 
@@ -59,47 +57,6 @@ export class AuthController {
 
     const requestId = (req as any).id;
     return this.authService.signup(body, requestId);
-  }
-
-  @Throttle({ default: RateLimitPolicies.auth })
-  @Post('verify-email')
-  @UsePipes(new ValidationPipe({ whitelist: true, transform: true }))
-  @HttpCode(HttpStatus.OK)
-  async verifyEmail(@Body() body: VerifyEmailDto, @Req() req: Request) {
-    const isProduction = process.env.NODE_ENV === 'production';
-    const isSecureRequest = Boolean(req.secure);
-    const allowInsecureHttp = process.env.ALLOW_INSECURE_HTTP_AUTH === 'true';
-
-    if (isProduction && !isSecureRequest && !allowInsecureHttp) {
-      throw new BadRequestException(
-        'HTTPS is required for email verification in production environments. Please configure TLS on your reverse proxy or custom domain.',
-      );
-    }
-
-    const requestId = (req as any).id;
-    return this.authService.verifyEmail(body.token, requestId);
-  }
-
-  @Throttle({ default: RateLimitPolicies.auth })
-  @Post('resend-verification')
-  @UsePipes(new ValidationPipe({ whitelist: true, transform: true }))
-  @HttpCode(HttpStatus.OK)
-  async resendVerification(
-    @Body() body: ResendVerificationDto,
-    @Req() req: Request,
-  ) {
-    const isProduction = process.env.NODE_ENV === 'production';
-    const isSecureRequest = Boolean(req.secure);
-    const allowInsecureHttp = process.env.ALLOW_INSECURE_HTTP_AUTH === 'true';
-
-    if (isProduction && !isSecureRequest && !allowInsecureHttp) {
-      throw new BadRequestException(
-        'HTTPS is required for verification resend in production environments. Please configure TLS on your reverse proxy or custom domain.',
-      );
-    }
-
-    const requestId = (req as any).id;
-    return this.authService.resendVerification(body.email, requestId);
   }
 
   @Throttle({ default: RateLimitPolicies.auth })
