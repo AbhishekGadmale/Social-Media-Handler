@@ -49,6 +49,27 @@ export class EmailVerificationTokenRepository {
   }
 
   /**
+   * Invalidates any active (unconsumed) verification tokens for a given user.
+   * Useful when re-issuing a verification email to ensure prior links are retired.
+   */
+  async invalidateActiveUserTokens(
+    userId: string,
+    tx?: Prisma.TransactionClient,
+  ): Promise<number> {
+    const client = tx ?? this.prisma;
+    const result = await client.emailVerificationToken.updateMany({
+      where: {
+        userId,
+        consumedAt: null,
+      },
+      data: {
+        consumedAt: new Date(),
+      },
+    });
+    return result.count;
+  }
+
+  /**
    * Atomically consumes a verification token in a single conditional update.
    * Succeeds if and only if:
    * 1. A token matching the SHA-256 hash exists.
