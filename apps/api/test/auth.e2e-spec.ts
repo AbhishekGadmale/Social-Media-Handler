@@ -491,7 +491,7 @@ describe('AuthController (e2e)', () => {
         .post('/api/v1/auth/signup')
         .send({
           email: signedUpEmail,
-          password: 'SecureSignupPass123!',
+          password: 'correctpassword',
           organizationName: 'Signup Org E2E',
           workspaceName: 'Signup Workspace E2E',
         });
@@ -558,7 +558,7 @@ describe('AuthController (e2e)', () => {
         .post('/api/v1/auth/login')
         .send({
           email: signedUpEmail,
-          password: 'SecureSignupPass123!',
+          password: 'correctpassword',
         });
 
       expect(loginRes.status).toBe(200);
@@ -599,7 +599,7 @@ describe('AuthController (e2e)', () => {
         .set('Cookie', `${sessCookie}; csrfToken=${csrfVal}`)
         .set('x-csrf-token', csrfVal)
         .send({
-          currentPassword: 'SecureSignupPass123!',
+          currentPassword: 'correctpassword',
           newPassword: 'UpdatedUnverifiedPass789!',
         });
 
