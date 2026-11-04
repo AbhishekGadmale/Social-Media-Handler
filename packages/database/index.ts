@@ -12,3 +12,4 @@ export * from './src/publishing/state-machine';
 export * from './src/repositories/PublishingRepository';
 export * from './src/check-test-db';
 export * from './src/repositories/ExecutionMetadataRepository';
+export * from './src/repositories/EmailVerificationTokenRepository';

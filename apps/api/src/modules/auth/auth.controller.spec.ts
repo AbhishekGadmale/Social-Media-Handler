@@ -18,6 +18,7 @@ describe('AuthController', () => {
 
   beforeEach(async () => {
     authServiceMock = {
+      signup: vi.fn(),
       login: vi.fn(),
       logout: vi.fn(),
       changePassword: vi.fn(),
@@ -56,6 +57,67 @@ describe('AuthController', () => {
       .compile();
 
     controller = module.get<AuthController>(AuthController);
+  });
+
+  describe('signup', () => {
+    it('Scenario 10 & 11: returns generic 201 response and sets zero cookies for new registration', async () => {
+      authServiceMock.signup.mockResolvedValueOnce({
+        message: 'Registration request received.',
+      });
+
+      const body = {
+        email: 'newuser@example.com',
+        password: 'Password123!',
+        organizationName: 'New Org',
+        workspaceName: 'New WS',
+      };
+
+      const result = await controller.signup(body, reqMock as Request);
+
+      expect(authServiceMock.signup).toHaveBeenCalledWith(body, 'req-auth-123');
+      expect(result).toEqual({ message: 'Registration request received.' });
+      // Assert ZERO cookies are issued
+      expect(resMock.cookie).not.toHaveBeenCalled();
+    });
+
+    it('Scenario 10 & 11: returns identical 201 response and sets zero cookies for duplicate email registration', async () => {
+      authServiceMock.signup.mockResolvedValueOnce({
+        message: 'Registration request received.',
+      });
+
+      const body = {
+        email: 'duplicate@example.com',
+        password: 'Password123!',
+      };
+
+      const result = await controller.signup(body, reqMock as Request);
+
+      expect(authServiceMock.signup).toHaveBeenCalledWith(body, 'req-auth-123');
+      expect(result).toEqual({ message: 'Registration request received.' });
+      expect(resMock.cookie).not.toHaveBeenCalled();
+    });
+
+    it('enforces HTTPS in production unless ALLOW_INSECURE_HTTP_AUTH=true', async () => {
+      const origEnv = process.env.NODE_ENV;
+      const origInsecure = process.env.ALLOW_INSECURE_HTTP_AUTH;
+      process.env.NODE_ENV = 'production';
+      delete process.env.ALLOW_INSECURE_HTTP_AUTH;
+
+      const insecureReq = {
+        id: 'req-insecure',
+        secure: false,
+      };
+
+      await expect(
+        controller.signup(
+          { email: 'user@example.com', password: 'Password123!' },
+          insecureReq as Request,
+        ),
+      ).rejects.toThrow(BadRequestException);
+
+      process.env.NODE_ENV = origEnv;
+      if (origInsecure) process.env.ALLOW_INSECURE_HTTP_AUTH = origInsecure;
+    });
   });
 
   describe('login', () => {

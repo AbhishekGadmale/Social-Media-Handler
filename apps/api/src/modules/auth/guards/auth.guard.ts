@@ -34,6 +34,29 @@ export class AuthGuard implements CanActivate {
       throw new UnauthorizedException('User no longer exists');
     }
 
+    // Security Epoch Validation (Muse M1 Resolution)
+    const sessionEpoch = session.securityEpoch;
+    const userEpoch = user.securityEpoch;
+
+    // Check legacy session compatibility: undefined is permitted iff user.securityEpoch === 1
+    if (sessionEpoch === undefined) {
+      if (userEpoch !== 1) {
+        await this.sessionManager.destroySession(sessionId);
+        throw new UnauthorizedException('Invalid or expired session');
+      }
+    } else {
+      // Must be a valid positive integer matching user's epoch exactly
+      if (
+        typeof sessionEpoch !== 'number' ||
+        !Number.isInteger(sessionEpoch) ||
+        sessionEpoch < 1 ||
+        sessionEpoch !== userEpoch
+      ) {
+        await this.sessionManager.destroySession(sessionId);
+        throw new UnauthorizedException('Invalid or expired session');
+      }
+    }
+
     // Attach user to request
     request.user = user;
 

@@ -72,6 +72,8 @@ describe('AccountsController (e2e)', () => {
         id: generateId(),
         email: `test-${generateId()}@example.com`,
         hashedPassword,
+        emailVerified: true,
+        securityEpoch: 1,
       },
     });
 

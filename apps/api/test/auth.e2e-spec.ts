@@ -62,6 +62,8 @@ describe('AuthController (e2e)', () => {
         id: generateId(),
         email: `test-${generateId()}@example.com`,
         hashedPassword,
+        emailVerified: true,
+        securityEpoch: 1,
       },
     });
 
@@ -474,6 +476,179 @@ describe('AuthController (e2e)', () => {
           currentPassword: 'BrandNewPassword123!',
           newPassword: 'correctpassword',
         });
+    });
+  });
+  describe('/api/v1/auth/signup (POST) & Tenant Provisioning', () => {
+    let signedUpEmail: string;
+    let signedUpUser: any;
+    let signedUpOrg: any;
+    let signedUpWorkspace: any;
+
+    it('Scenario 10, 11 & 13: atomically provisions User, Organization, Workspace, and OWNER member without issuing cookies', async () => {
+      signedUpEmail = `signup-${generateId()}@example.com`;
+
+      const res = await request(app.getHttpServer())
+        .post('/api/v1/auth/signup')
+        .send({
+          email: signedUpEmail,
+          password: 'correctpassword',
+          organizationName: 'Signup Org E2E',
+          workspaceName: 'Signup Workspace E2E',
+        });
+
+      expect(res.status).toBe(201);
+      expect(res.body).toEqual({
+        message: 'Registration request received.',
+      });
+
+      // Assert zero cookies are set
+      expect(res.headers['set-cookie']).toBeUndefined();
+
+      // Verify PostgreSQL database state directly
+      signedUpUser = await prisma.user.findUnique({
+        where: { email: signedUpEmail },
+      });
+      expect(signedUpUser).toBeDefined();
+      expect(signedUpUser.emailVerified).toBe(false);
+      expect(signedUpUser.emailVerifiedAt).toBeNull();
+      expect(signedUpUser.securityEpoch).toBe(1);
+
+
+      signedUpOrg = await prisma.organization.findFirst({
+        where: { name: 'Signup Org E2E' },
+      });
+      expect(signedUpOrg).toBeDefined();
+
+      signedUpWorkspace = await prisma.workspace.findFirst({
+        where: {
+          organizationId: signedUpOrg.id,
+          name: 'Signup Workspace E2E',
+        },
+      });
+      expect(signedUpWorkspace).toBeDefined();
+
+      const member = await prisma.workspaceMember.findFirst({
+        where: {
+          workspaceId: signedUpWorkspace.id,
+          userId: signedUpUser.id,
+        },
+      });
+      expect(member).toBeDefined();
+      expect(member?.role).toBe('OWNER');
+    });
+
+    it('Scenario 10: provides observable anti-enumeration parity for duplicate email signups', async () => {
+      const res = await request(app.getHttpServer())
+        .post('/api/v1/auth/signup')
+        .send({
+          email: signedUpEmail,
+          password: 'DifferentPassword456!',
+        });
+
+      // Identical status and response payload
+      expect(res.status).toBe(201);
+      expect(res.body).toEqual({
+        message: 'Registration request received.',
+      });
+      expect(res.headers['set-cookie']).toBeUndefined();
+    });
+
+    it('Scenario 14: unverified accounts can log in, access their provisioned workspace, and perform actions (Option A: verification enforcement deferred to PR #50)', async () => {
+      // 1. Unverified user logs in successfully
+      const loginRes = await request(app.getHttpServer())
+        .post('/api/v1/auth/login')
+        .send({
+          email: signedUpEmail,
+          password: 'correctpassword',
+        });
+
+      expect(loginRes.status).toBe(200);
+      const cookies = loginRes.headers['set-cookie'] as string[];
+      expect(cookies).toBeDefined();
+      const sessCookie = cookies
+        .find((c: string) => c.startsWith('session='))!
+        .split(';')[0];
+      const csrfVal = cookies
+        .find((c: string) => c.startsWith('csrfToken='))!
+        .split(';')[0]
+        .split('=')[1];
+
+      // 2. GET /me succeeds and reflects unverified status (emailVerified: false)
+      const meRes = await request(app.getHttpServer())
+        .get('/api/v1/auth/me')
+        .set('Cookie', sessCookie);
+
+      expect(meRes.status).toBe(200);
+      expect(meRes.body.user.email).toBe(signedUpEmail);
+      expect(meRes.body.user.emailVerified).toBe(false);
+
+      // 3. Accessing own provisioned workspace route succeeds (200 OK) under Option A
+      const workspaceRes = await request(app.getHttpServer())
+        .post(`/api/v1/workspaces/${signedUpWorkspace.id}/test-posts`)
+        .set('Cookie', `${sessCookie}; csrfToken=${csrfVal}`)
+        .set('x-csrf-token', csrfVal)
+        .send({});
+
+      expect(workspaceRes.status).toBe(200);
+      expect(workspaceRes.body.message).toBe('Post created');
+
+      // 4. Accessing another workspace where the user is NOT a member is strictly rejected with 403 Forbidden (tenant isolation verified)
+      const otherWorkspaceRes = await request(app.getHttpServer())
+        .post(`/api/v1/workspaces/${generateId()}/test-posts`)
+        .set('Cookie', `${sessCookie}; csrfToken=${csrfVal}`)
+        .set('x-csrf-token', csrfVal)
+        .send({});
+
+      expect(otherWorkspaceRes.status).toBe(403);
+      expect(otherWorkspaceRes.body.error.message).toBe('User is not a member of this workspace');
+
+      // 5. Password change succeeds for unverified accounts
+      const changePwRes = await request(app.getHttpServer())
+        .post('/api/v1/auth/change-password')
+        .set('Cookie', `${sessCookie}; csrfToken=${csrfVal}`)
+        .set('x-csrf-token', csrfVal)
+        .send({
+          currentPassword: 'correctpassword',
+          newPassword: 'UpdatedUnverifiedPass789!',
+        });
+
+      expect(changePwRes.status).toBe(200);
+      expect(changePwRes.body.message).toBe('Password changed successfully');
+
+      // 6. Logout succeeds for unverified accounts
+      const logoutRes = await request(app.getHttpServer())
+        .post('/api/v1/auth/logout')
+        .set('Cookie', `${sessCookie}; csrfToken=${csrfVal}`)
+        .set('x-csrf-token', csrfVal);
+
+      expect(logoutRes.status).toBe(200);
+      expect(logoutRes.body.message).toBe('Logged out successfully');
+
+      // 7. Verify user remains emailVerified: false and emailVerifiedAt: null in PostgreSQL database
+      const dbUser = await prisma.user.findUnique({
+        where: { id: signedUpUser.id },
+      });
+      expect(dbUser?.emailVerified).toBe(false);
+      expect(dbUser?.emailVerifiedAt).toBeNull();
+      // Security epoch incremented by password change
+      expect(dbUser?.securityEpoch).toBe(2);
+
+      // Cleanup signed up user data
+      await prisma.emailVerificationToken.deleteMany({
+        where: { userId: signedUpUser.id },
+      });
+      await prisma.workspaceMember.deleteMany({
+        where: { userId: signedUpUser.id },
+      });
+      await prisma.workspace.deleteMany({
+        where: { id: signedUpWorkspace.id },
+      });
+      await prisma.organization.deleteMany({
+        where: { id: signedUpOrg.id },
+      });
+      await prisma.user.deleteMany({
+        where: { id: signedUpUser.id },
+      });
     });
   });
 });

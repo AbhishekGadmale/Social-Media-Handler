@@ -85,6 +85,8 @@ describe('Media Storage & Upload Integration (e2e)', () => {
         id: generateId(),
         email: 'media-test@example.com',
         hashedPassword,
+        emailVerified: true,
+        securityEpoch: 1,
       },
     });
 
