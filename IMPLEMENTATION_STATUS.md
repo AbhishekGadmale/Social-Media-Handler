@@ -2267,7 +2267,7 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
   - **Approved Implementation HEAD**: `9abe7a60ae03c6f756ae3edfec632c206f28881f`
   - **Independent Review**: Approved by Muse review following resolution of B1 (GitGuardian incident #39580066 marked as a test credential in the GitGuardian dashboard, clearing the required check after test fixtures were updated at HEAD) and B2 (email verification dead end deferred to follow-up milestone PR #51 via Option A; E2E cross-tenant test UUID fixture corrected).
   - **CI Quality Gates**: 6/6 checks passed on approved HEAD and 5/5 checks passed on merge commit.
-  - **Next Milestone**: PR #51 (Email Delivery Lifecycle, Verification Endpoints & 403 Enforcement Restoration).
+  - **Next Milestone**: PR #51 merged (Email Verification Lifecycle, Verification Endpoints & 403 Enforcement Restoration); next milestone TBD.
 - **Public Self-Registration**: Exposes an unauthenticated, rate-limited public signup endpoint (`POST /api/v1/auth/signup`) allowing new users to onboard without prior administrative provisioning.
 - **Atomic Multi-Tenant Provisioning**: On signup, atomically provisions `User`, personal `Organization`, default `Workspace`, and `WorkspaceMember` with `OWNER` role inside a single PostgreSQL transaction (`$transaction`). Prevents orphaned or partially provisioned tenant states.
 - **Security Epoch Invariant (Muse M1 Resolution)**: Implements database-backed `securityEpoch` on `User` and in the Redis session payload. Solves the distributed revocation race condition identified in PR #48 review: `AuthGuard` verifies exact equality (`session.securityEpoch === user.securityEpoch`), failing closed on any mismatch, staleness, or tampering with zero extra database queries.
@@ -2346,9 +2346,9 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
     4. `analytics.e2e-spec.ts`: 6/6 PASS.
     5. `media.storage.e2e-spec.ts`: 6/6 PASS.
 
-### 4. Remaining Scope & Follow-Ups (PR #51)
+### 4. Remaining Scope & Follow-Ups (PR #51 — Merged)
 
-1. **PR #51 Scope (Deferred Email Delivery Lifecycle)**:
+1. **PR #51 Scope (Deferred Email Delivery Lifecycle — Merged in PR #51)**:
    - Integrate production email delivery provider (Resend / AWS SES / SMTP) with DKIM/SPF and webhook delivery tracking.
    - Background worker queue for asynchronous email dispatch.
    - Public endpoint `POST /api/v1/auth/verify-email` with raw token verification and rate limiting.
