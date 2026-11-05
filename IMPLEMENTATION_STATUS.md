@@ -2259,9 +2259,15 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
    - **Live Deployment**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending external infrastructure provisioning and disaster recovery rehearsals G18/G19).
 
 
-## 41. Phase 7.1, PR 2A: Public Signup, Workspace Provisioning & Security Epoch (PR #49)
+## 41. Phase 7.1, PR 2A: Public Signup, Workspace Provisioning & Security Epoch (PR #49) — MERGED
 
 ### 1. Summary & Motivation
+- **Merge Status & Identity**: Successfully merged into `main` on 2026-11-04T19:10:04Z.
+  - **Merge Commit SHA**: `325012d7c94702bac2656ebe1a89e74102910460`
+  - **Approved Implementation HEAD**: `9abe7a60ae03c6f756ae3edfec632c206f28881f`
+  - **Independent Review**: Approved by Muse review following resolution of B1 (GitGuardian secret findings resolved via scanner-safe test fixtures) and B2 (email verification dead end deferred to PR #50 via Option A; E2E cross-tenant test UUID fixture corrected).
+  - **CI Quality Gates**: 6/6 checks passed on approved HEAD and 5/5 checks passed on merge commit.
+  - **Next Milestone**: PR #50 (Email Delivery Lifecycle, Verification Endpoints & 403 Enforcement Restoration).
 - **Public Self-Registration**: Exposes an unauthenticated, rate-limited public signup endpoint (`POST /api/v1/auth/signup`) allowing new users to onboard without prior administrative provisioning.
 - **Atomic Multi-Tenant Provisioning**: On signup, atomically provisions `User`, personal `Organization`, default `Workspace`, and `WorkspaceMember` with `OWNER` role inside a single PostgreSQL transaction (`$transaction`). Prevents orphaned or partially provisioned tenant states.
 - **Security Epoch Invariant (Muse M1 Resolution)**: Implements database-backed `securityEpoch` on `User` and in the Redis session payload. Solves the distributed revocation race condition identified in PR #48 review: `AuthGuard` verifies exact equality (`session.securityEpoch === user.securityEpoch`), failing closed on any mismatch, staleness, or tampering with zero extra database queries.
@@ -2327,11 +2333,11 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
 - **API Unit Tests (`apps/api`)**:
   - 25/25 test files, 304/304 PASS.
   - `auth.guard.spec.ts`: 11/11 PASS (exact epoch equality, rejection of lower epoch, rejection of higher epoch, malformed epoch rejection, legacy epoch 1 acceptance, Redis session purge on mismatch).
-  - `workspace.guard.spec.ts`: 5/5 PASS (unverified user 403 Forbidden, verified user access permitted).
+  - `workspace.guard.spec.ts`: 5/5 PASS (unverified user access permitted under Option A, tenant isolation and non-member 403 rejection verified).
   - `email-delivery.service.spec.ts`: 3/3 PASS (mock delivery logging, production environment fail-closed exception).
   - `auth.service.spec.ts`: 14/14 PASS (public signup flow, anti-enumeration timing mitigation, login epoch persistence, password change epoch increment).
   - `auth.controller.spec.ts`: 18/18 PASS (signup routing, 201 response, zero cookie issuance, rate limiting decorators).
-  - `oauth.controller.spec.ts`: 15/15 PASS (unverified user OAuth link blocking).
+  - `oauth.controller.spec.ts`: 15/15 PASS (unverified user OAuth link callback permitted under Option A).
 - **API E2E Tests (`apps/api`)**:
   - 5/5 test files, 88/88 PASS against live PostgreSQL 16, Redis 7, and MinIO:
     1. `auth.e2e-spec.ts`: 19/19 PASS (public signup 201, zero session cookies, anti-enumeration duplicate email parity, invalid email/password rejection, security epoch session invalidation).
