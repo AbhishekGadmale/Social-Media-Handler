@@ -78,4 +78,23 @@ export class AccountsController {
 
     return { queued: true, jobId: job.id };
   }
+
+  @Throttle({ default: RateLimitPolicies.expensive })
+  @Post(':accountId/disconnect')
+  @UseGuards(AuthGuard, WorkspaceGuard, PermissionGuard)
+  @RequirePermission('accounts.disconnect')
+  async disconnectAccount(
+    @Param('workspaceId', ParseUUIDPipe) workspaceId: string,
+    @Param('accountId', ParseUUIDPipe) accountId: string,
+    @Req() req: Request,
+  ) {
+    const userId = (req as any).user?.id;
+    const requestId = (req as any).id;
+    return this.accountsService.disconnectAccount(
+      workspaceId,
+      accountId,
+      userId,
+      requestId,
+    );
+  }
 }

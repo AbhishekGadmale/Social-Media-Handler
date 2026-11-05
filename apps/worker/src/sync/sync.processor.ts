@@ -84,26 +84,36 @@ export class SyncProcessor extends WorkerHost implements OnModuleInit {
         include: { connection: true },
       });
 
-      if (!account || !account.connection) {
+      if (!account) {
         throw new UnrecoverableError(
           `Account or connection not found for id: ${socialAccountId} in workspace: ${workspaceId}`,
         );
       }
 
       if (account.status !== SocialAccountStatus.ACTIVE) {
+        const isDisconnected =
+          account.status === SocialAccountStatus.DISCONNECTED;
+        const reason = isDisconnected ? 'account_disconnected' : 'not_active';
         this.logger.info(
           {
             ...jobMeta,
             action: 'sync_skipped',
-            reason: 'not_active',
+            reason,
+            accountStatus: account.status,
           },
           'Skipping sync for non-active account',
         );
         await this.completeSyncRun(syncRun.id, SyncRunStatus.SKIPPED, {
           skipped: true,
-          reason: 'not_active',
+          reason,
         });
         return;
+      }
+
+      if (!account.connection) {
+        throw new UnrecoverableError(
+          `Account or connection not found for id: ${socialAccountId} in workspace: ${workspaceId}`,
+        );
       }
 
       // Check & obtain valid execution credentials via TokenService

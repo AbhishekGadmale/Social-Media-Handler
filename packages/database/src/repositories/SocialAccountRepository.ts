@@ -1,3 +1,6 @@
+import { decrypt } from '../crypto/encryption';
+import { generateId } from '../id';
+import { AuditAction } from './AuditLogRepository';
 import { PrismaClient, SocialAccount, SocialProvider, SocialAccountStatus, Prisma } from '@prisma/client';
 
 export class SocialAccountRepository {
@@ -147,6 +150,99 @@ export class SocialAccountRepository {
         results.push(result);
       }
       return results;
+    });
+  }
+  async getDecryptedCredentials(socialAccountId: string): Promise<{
+    accessToken: string;
+    refreshToken?: string | null;
+  } | null> {
+    const conn = await this.prisma.socialConnection.findUnique({
+      where: { socialAccountId },
+    });
+
+    if (
+      !conn ||
+      !conn.encryptedAccessToken ||
+      !conn.accessTokenIv ||
+      !conn.accessTokenAuthTag
+    ) {
+      return null;
+    }
+
+    const accessToken = decrypt({
+      encrypted: conn.encryptedAccessToken,
+      iv: conn.accessTokenIv,
+      authTag: conn.accessTokenAuthTag,
+      keyVersion: conn.keyVersion,
+    });
+
+    let refreshToken: string | null = null;
+    if (
+      conn.encryptedRefreshToken &&
+      conn.refreshTokenIv &&
+      conn.refreshTokenAuthTag
+    ) {
+      refreshToken = decrypt({
+        encrypted: conn.encryptedRefreshToken,
+        iv: conn.refreshTokenIv,
+        authTag: conn.refreshTokenAuthTag,
+        keyVersion: conn.keyVersion,
+      });
+    }
+
+    return {
+      accessToken,
+      refreshToken,
+    };
+  }
+
+  async disconnect(
+    workspaceId: string,
+    socialAccountId: string,
+    actorId?: string | null,
+    metadata?: Record<string, any>,
+    requestId?: string | null,
+  ): Promise<void> {
+    await this.prisma.$transaction(async (tx) => {
+      const conn = await tx.socialConnection.findUnique({
+        where: { socialAccountId },
+      });
+
+      if (conn) {
+        await tx.socialConnection.update({
+          where: { id: conn.id },
+          data: {
+            encryptedAccessToken: null,
+            accessTokenIv: null,
+            accessTokenAuthTag: null,
+            encryptedRefreshToken: null,
+            refreshTokenIv: null,
+            refreshTokenAuthTag: null,
+            expiresAt: null,
+            refreshExpiresAt: null,
+          },
+        });
+      }
+
+      await tx.socialAccount.update({
+        where: { id: socialAccountId },
+        data: {
+          status: SocialAccountStatus.DISCONNECTED,
+        },
+      });
+
+      await tx.auditLog.create({
+        data: {
+          id: generateId(),
+          workspaceId,
+          actorId,
+          action: AuditAction.ACCOUNT_DISCONNECTED,
+          targetType: 'SocialAccount',
+          targetId: socialAccountId,
+          requestId,
+          metadata: metadata || Prisma.JsonNull,
+        },
+      });
     });
   }
 }

@@ -85,7 +85,7 @@ describe('SyncProcessor', () => {
 
   const createMockData = async (
     provider: any,
-    status = SocialAccountStatus.ACTIVE,
+    status: SocialAccountStatus = SocialAccountStatus.ACTIVE,
     expiresAt?: Date,
     refreshToken?: string,
   ) => {
@@ -435,5 +435,27 @@ describe('SyncProcessor', () => {
     expect(syncRun!.status).toBe(SyncRunStatus.FAILED);
 
     credSpy.mockRestore();
+  });
+  it('gracefully skips sync for DISCONNECTED account with SyncRunStatus.SKIPPED and reason account_disconnected', async () => {
+    const { workspace, account } = await createMockData(
+      'YOUTUBE',
+      SocialAccountStatus.DISCONNECTED,
+    );
+    const job = {
+      data: { socialAccountId: account.id, workspaceId: workspace.id },
+      id: 'job-disconnected-sync',
+    } as unknown as Job<any>;
+
+    (invokeMod.invokeCapability as jest.Mock).mockClear();
+
+    await processor.process(job);
+
+    expect(invokeMod.invokeCapability).not.toHaveBeenCalled();
+
+    const syncRun = await prisma.syncRun.findFirst({
+      orderBy: { startedAt: 'desc' },
+    });
+    expect(syncRun!.status).toBe(SyncRunStatus.SKIPPED);
+    expect((syncRun!.counts as any).reason).toBe('account_disconnected');
   });
 });

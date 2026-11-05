@@ -40,6 +40,7 @@ export class YouTubeProvider implements ISocialProvider, IPublishingProvider {
   private clientSecret: string;
   private authorizeUrl = "https://accounts.google.com/o/oauth2/v2/auth";
   private tokenUrl = "https://oauth2.googleapis.com/token";
+  private revokeUrl = "https://oauth2.googleapis.com/revoke";
   private channelsUrl = "https://youtube.googleapis.com/youtube/v3/channels";
 
   constructor() {
@@ -219,6 +220,33 @@ export class YouTubeProvider implements ISocialProvider, IPublishingProvider {
         ? data.scope.split(" ")
         : ["https://www.googleapis.com/auth/youtube.readonly"],
     };
+  }
+
+  async revokeToken(credentials: OAuthCredentials): Promise<void> {
+    const token = credentials.accessToken || credentials.refreshToken;
+    if (!token) return;
+
+    const params = new URLSearchParams({ token });
+    const response = await this.fetchWithTimeout(
+      this.revokeUrl,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body: params.toString(),
+      },
+      10000,
+    );
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      const safeError = errorText.split(token).join("***");
+      throw new ProviderApiError(
+        `Failed to revoke YouTube/Google token: ${safeError}`,
+        response.status,
+      );
+    }
   }
 
   async getProfiles(

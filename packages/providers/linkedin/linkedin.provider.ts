@@ -179,6 +179,19 @@ export class LinkedInProvider implements ISocialProvider, IPublishingProvider {
     };
   }
 
+  /**
+   * Best-effort token revocation.
+   *
+   * Note: The LinkedIn OAuth 2.0 API does not provide a programmatic server-side token
+   * revocation endpoint (RFC 7009 is not implemented by LinkedIn). Tokens expire naturally
+   * or must be manually deauthorized by the member in their LinkedIn account settings.
+   * We skip gracefully without throwing.
+   */
+  async revokeToken(_credentials: OAuthCredentials): Promise<void> {
+    // Graceful no-op: LinkedIn lacks server-side OAuth2 revocation endpoint.
+    return Promise.resolve();
+  }
+
   async getProfiles(credentials: OAuthCredentials): Promise<ProviderProfileResult[]> {
     const response = await fetch(this.userInfoUrl, {
       headers: {

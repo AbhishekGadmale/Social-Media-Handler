@@ -228,6 +228,48 @@ export class PublishingProcessor extends WorkerHost {
       return;
     }
 
+    // 3b. Account Status Fencing (fail fast if account is not ACTIVE)
+    if (variant.socialAccount.status !== SocialAccountStatus.ACTIVE) {
+      const isDisconnected =
+        variant.socialAccount.status === SocialAccountStatus.DISCONNECTED;
+      const failureReason = isDisconnected
+        ? 'Social account is disconnected'
+        : 'Social account requires reauthorization';
+      const failureCode = isDisconnected
+        ? 'ACCOUNT_DISCONNECTED'
+        : 'ACCOUNT_REAUTH_REQUIRED';
+
+      await this.prisma.postPlatformVariant.update({
+        where: { id: publicationId },
+        data: { status: PostStatus.FAILED },
+      });
+      await this.prisma.publicationAttempt.create({
+        data: {
+          id: generateId(),
+          variantId: publicationId,
+          attemptNumber: await this.getNextAttemptNumber(publicationId),
+          status: 'FAILED',
+          failureCategory: 'AUTH_REQUIRED',
+          failureCode,
+          providerResponse: { reason: failureReason },
+          startedAt: new Date(),
+          completedAt: new Date(),
+        },
+      });
+      this.logger.warn({
+        msg: 'publication.job.account_not_active',
+        reason: failureReason,
+        accountStatus: variant.socialAccount.status,
+        ...jobMeta,
+      });
+      await this.emitAudit(
+        variant.workspaceId,
+        publicationId,
+        'PUBLICATION_FAILED',
+      );
+      return;
+    }
+
     // 4. Atomic Worker Claim & Coordination
     let isContinuation = false;
     let currentOperationId: string | null = null;

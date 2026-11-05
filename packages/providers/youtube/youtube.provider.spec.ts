@@ -212,4 +212,55 @@ describe('YouTubeProvider', () => {
     expect(provider.deletePost).toBeUndefined();
     expect(provider.getPostMetrics).toBeUndefined();
   });
+  describe('revokeToken', () => {
+    it('calls Google revoke endpoint with POST and urlencoded token parameter', async () => {
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+      });
+
+      await provider.revokeToken({ accessToken: 'mock-google-token' });
+
+      expect(global.fetch).toHaveBeenCalledWith(
+        'https://oauth2.googleapis.com/revoke',
+        expect.objectContaining({
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: 'token=mock-google-token',
+        }),
+      );
+    });
+
+    it('falls back to refreshToken if accessToken is missing', async () => {
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+      });
+
+      await provider.revokeToken({ accessToken: '', refreshToken: 'mock-refresh-token' });
+
+      expect(global.fetch).toHaveBeenCalledWith(
+        'https://oauth2.googleapis.com/revoke',
+        expect.objectContaining({
+          body: 'token=mock-refresh-token',
+        }),
+      );
+    });
+
+    it('throws sanitized ProviderApiError on non-2xx response', async () => {
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 400,
+        text: async () => 'error: token mock-google-token invalid',
+      });
+
+      await expect(
+        provider.revokeToken({ accessToken: 'mock-google-token' }),
+      ).rejects.toThrow('Failed to revoke YouTube/Google token: error: token *** invalid');
+    });
+
+    it('no-ops safely if neither accessToken nor refreshToken is provided', async () => {
+      global.fetch = vi.fn();
+      await provider.revokeToken({ accessToken: '' });
+      expect(global.fetch).not.toHaveBeenCalled();
+    });
+  });
 });

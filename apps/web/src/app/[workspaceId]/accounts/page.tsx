@@ -27,8 +27,8 @@ export default function AccountsPage() {
   } = useQuery(accountQueries.list(workspaceId));
 
   const accounts = data?.accounts || [];
-  const hasYoutube = accounts.some(a => a.provider === 'YOUTUBE');
-  const hasLinkedin = accounts.some(a => a.provider === 'LINKEDIN');
+  const hasYoutube = accounts.some(a => a.provider === 'YOUTUBE' && a.status !== 'DISCONNECTED');
+  const hasLinkedin = accounts.some(a => a.provider === 'LINKEDIN' && a.status !== 'DISCONNECTED');
 
   const handleConnectYoutube = async () => {
     try {
@@ -178,7 +178,7 @@ export default function AccountsPage() {
       ) : (
         <div className="space-y-4" aria-label="List of connected accounts">
           {accounts.map((account) => (
-            <AccountCard key={account.id} account={account} />
+            <AccountCard key={account.id} account={account} onDisconnect={() => refetch()} />
           ))}
         </div>
       )}
