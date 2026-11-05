@@ -481,6 +481,33 @@ describe('AuthService', () => {
         'sess-race-created',
       );
     });
+
+    it('Scenario M2: destroys newly created session when findById re-read throws an error', async () => {
+      const originalUser = {
+        id: 'user-reread-err-1',
+        email: 'reread@example.com',
+        hashedPassword: '$argon2id$passwordhash',
+        securityEpoch: 1,
+      };
+
+      userRepoMock.findByEmail.mockResolvedValueOnce(originalUser);
+      vi.mocked(argon2.verify).mockResolvedValueOnce(true);
+      sessionManagerMock.createSession.mockResolvedValueOnce(
+        'sess-to-be-destroyed',
+      );
+      userRepoMock.findById.mockRejectedValueOnce(
+        new Error('Postgres connection pool exhausted'),
+      );
+      sessionManagerMock.destroySession.mockResolvedValueOnce(undefined);
+
+      await expect(
+        service.login('reread@example.com', 'password'),
+      ).rejects.toThrow('Postgres connection pool exhausted');
+
+      expect(sessionManagerMock.destroySession).toHaveBeenCalledWith(
+        'sess-to-be-destroyed',
+      );
+    });
   });
 
   describe('logout', () => {
@@ -512,6 +539,43 @@ describe('AuthService', () => {
       );
       expect(sessionManagerMock.destroyAllUserSessions).toHaveBeenCalledWith(
         'user-revoke-all-1',
+      );
+    });
+
+    it('retries destroyAllUserSessions when Redis encounters a transient failure', async () => {
+      userRepoMock.incrementSecurityEpoch.mockResolvedValueOnce({
+        id: 'user-revoke-all-1',
+        securityEpoch: 2,
+      });
+      sessionManagerMock.destroyAllUserSessions
+        .mockRejectedValueOnce(new Error('Transient Redis timeout'))
+        .mockResolvedValueOnce(undefined);
+
+      await service.revokeAllUserSessions('user-revoke-all-1');
+
+      expect(userRepoMock.incrementSecurityEpoch).toHaveBeenCalledWith(
+        'user-revoke-all-1',
+      );
+      expect(sessionManagerMock.destroyAllUserSessions).toHaveBeenCalledTimes(
+        2,
+      );
+    });
+
+    it('does not throw when destroyAllUserSessions fails all retries (DB epoch already incremented)', async () => {
+      userRepoMock.incrementSecurityEpoch.mockResolvedValueOnce({
+        id: 'user-revoke-all-1',
+        securityEpoch: 2,
+      });
+      sessionManagerMock.destroyAllUserSessions.mockRejectedValue(
+        new Error('Persistent Redis down'),
+      );
+
+      await expect(
+        service.revokeAllUserSessions('user-revoke-all-1'),
+      ).resolves.toBeUndefined();
+
+      expect(sessionManagerMock.destroyAllUserSessions).toHaveBeenCalledTimes(
+        3,
       );
     });
   });
@@ -561,7 +625,7 @@ describe('AuthService', () => {
       );
     });
 
-    it('Scenario 8: fails closed when Redis fails during destroyOtherUserSessions', async () => {
+    it('Scenario 8: retries destroyOtherUserSessions and reports sessionCleanupDeferred: true without throwing when Redis fails all retries', async () => {
       userRepoMock.findById.mockResolvedValueOnce(mockUser);
       vi.mocked(argon2.verify).mockResolvedValueOnce(true);
       vi.mocked(argon2.hash).mockResolvedValueOnce('$argon2id$newhash123');
@@ -570,18 +634,55 @@ describe('AuthService', () => {
         hashedPassword: '$argon2id$newhash123',
         securityEpoch: 2,
       });
-      sessionManagerMock.destroyOtherUserSessions.mockRejectedValueOnce(
+      sessionManagerMock.destroyOtherUserSessions.mockRejectedValue(
         new Error('Redis connection dropped'),
       );
 
-      await expect(
-        service.changePassword(
-          userId,
-          'currentPassword123',
-          'newSecurePassword456',
-          currentSessionId,
+      const result = await service.changePassword(
+        userId,
+        'currentPassword123',
+        'newSecurePassword456',
+        currentSessionId,
+      );
+
+      expect(sessionManagerMock.destroyOtherUserSessions).toHaveBeenCalledTimes(
+        3,
+      );
+      expect(result).toEqual({
+        success: true,
+        sessionCleanupDeferred: true,
+        message: expect.stringContaining(
+          'terminating other active sessions failed',
         ),
-      ).rejects.toThrow('Redis connection dropped');
+      });
+    });
+
+    it('retries destroyOtherUserSessions and returns success: true when retry succeeds', async () => {
+      userRepoMock.findById.mockResolvedValueOnce(mockUser);
+      vi.mocked(argon2.verify).mockResolvedValueOnce(true);
+      vi.mocked(argon2.hash).mockResolvedValueOnce('$argon2id$newhash123');
+      userRepoMock.updatePasswordAndIncrementEpoch.mockResolvedValueOnce({
+        ...mockUser,
+        hashedPassword: '$argon2id$newhash123',
+        securityEpoch: 2,
+      });
+      sessionManagerMock.destroyOtherUserSessions
+        .mockRejectedValueOnce(new Error('Temporary Redis timeout'))
+        .mockResolvedValueOnce(1);
+
+      const result = await service.changePassword(
+        userId,
+        'currentPassword123',
+        'newSecurePassword456',
+        currentSessionId,
+      );
+
+      expect(sessionManagerMock.destroyOtherUserSessions).toHaveBeenCalledTimes(
+        2,
+      );
+      expect(result).toEqual({
+        success: true,
+      });
     });
 
     it('throws InvalidCredentialsException when current password verification fails', async () => {

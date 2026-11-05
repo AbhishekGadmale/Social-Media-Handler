@@ -2140,7 +2140,7 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
 
 1. **Atomic Session Lifecycle via Redis Lua Scripts (F1, F2, F3, F4, F6, F7)**:
    - Replaced all non-atomic Redis pipelines with dedicated Redis Lua scripts executed via `redis.eval()`, establishing true server-side atomicity and linearizability.
-   - **`createSession(userId)` (F2, F7)**: Uses `CREATE_SESSION_SCRIPT` to atomically execute `SET session:${sessionId}`, `SADD user_sessions:${userId} ${sessionId}`, and refresh the index TTL. Eliminates the race window where revoke-all could run between creation and indexing, and prevents partial failures from leaving unindexed keys.
+   - **`createSession(userId)` (F2, F7)**: Uses `CREATE_SESSION_SCRIPT` to atomically execute `SET session:${sessionId}`, `SADD user_sessions:${userId} ${sessionId}`, and refresh the index TTL. Eliminates the race window where revoke-all could run between creation and indexing by guaranteeing command atomicity against concurrent client interleaving (while noting that Redis Lua scripts execute atomically against concurrent commands but do not roll back preceding commands on mid-script runtime error).
    - **`validateSession(sessionId)` (F1, F3)**: Uses `VALIDATE_SESSION_SCRIPT` to atomically check key existence, decode session data with `cjson`, update `expiresAt`, refresh `session:${sessionId}` TTL, and refresh `user_sessions:${userId}` TTL. If the session was deleted or revoked, the script returns `nil` and performs zero writes, guaranteeing that concurrent validation can **never resurrect a destroyed or revoked session**.
    - **`destroySession(sessionId)` (F3)**: Uses `DESTROY_SESSION_SCRIPT` to atomically decode the session, remove the session ID from `user_sessions:${userId}`, and delete `session:${sessionId}` in a single execution step.
    - **`destroyAllUserSessions(userId)`**: Uses `DESTROY_ALL_USER_SESSIONS_SCRIPT` to atomically read all session IDs from `user_sessions:${userId}`, delete each `session:${sid}` key, and delete the user index set.
@@ -2212,7 +2212,7 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
 
 4. **API Controller & Rate Limiting (`apps/api/src/modules/auth/auth.controller.ts`)**:
    - **`POST /api/v1/auth/change-password`**: Protected by `@UseGuards(AuthGuard)` and throttled under `RateLimitPolicies.auth` (global Redis throttler). Requires authenticated session and valid `x-csrf-token` header.
-   - **Audit Trail & Secret Hygiene**: Best-effort audit logging records success (`AUTH_PASSWORD_CHANGED`) and failure (`AUTH_PASSWORD_CHANGE_FAILED`) with client IP and request ID. Plain-text passwords and cryptographic hashes are never logged, emitted in error messages, or returned in HTTP response payloads.
+   - **Audit Trail & Secret Hygiene**: Best-effort audit logging records success (`AUTH_PASSWORD_CHANGED`) and failure (`AUTH_PASSWORD_CHANGE_FAILED`) with request ID. Plain-text passwords and cryptographic hashes are never logged, emitted in error messages, or returned in HTTP response payloads.
 
 ### 3. Verification & Test Evidence
 
@@ -2235,7 +2235,7 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
 - **Monorepo Lint (`pnpm turbo run lint`)**: 9/9 packages PASS (0 errors, 59 pre-existing warnings).
 - **Monorepo Typecheck (`pnpm turbo run typecheck`)**: 10/10 tasks PASS.
 - **Monorepo Build (`pnpm turbo run build`)**: 7/7 tasks PASS.
-- **Pre-Merge GitHub Actions CI (Commit `fc11169`)**: All 6 check runs PASSED (success):
+- **Pre-Merge GitHub Actions CI (Commit `da2e8e6`)**: All 6 check runs PASSED (success):
   1. `GitGuardian Security Checks`: completed (success)
   2. `API E2E Tests`: completed (success)
   3. `Application Builds`: completed (success)
@@ -2366,7 +2366,7 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
   - **Approved Implementation HEAD**: `edbd12fa0c40b39be15f5c0cbbcbd8ec3cbef6ff`
   - **Independent Review**: Approved by Muse review (no blocking findings; non-blocking M1 noted: production without RESEND_API_KEY falls back to Noop while 403 gates are active — deploy prerequisite, not a code defect).
   - **CI Quality Gates**: 6/6 checks passed on approved HEAD.
-  - **Next Milestone**: TBD.
+  - **Next Milestone**: PR #52 — Phase 7.1: Social Account Disconnect Flow.
 - **Complete Verification Lifecycle**: Implements full email verification token issuance, delivery, public consumption, and anti-enumeration resend capabilities, closing the architectural deferral from PR #49 (Option A / Muse finding B2).
 - **Coupled Gates & Flow Invariant**: Re-enables 403 enforcement gating on unverified accounts simultaneously with the production verification and resend endpoints, preventing any unverified lockout or dead-end state.
 - **Single-Transaction Signup Token Issuance**: When a new user registers via `POST /api/v1/auth/signup`, an initial 32-byte cryptographically secure random verification token (24-hour expiry, stored exclusively as a SHA-256 hash) is provisioned atomically inside `UserRepository.createWithTenantTransaction` alongside the `User`, `Organization`, `Workspace`, and `WorkspaceMember` records. The signup response strictly maintains generic HTTP 201 anti-enumeration parity.
@@ -2445,7 +2445,7 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
   - **Approved Implementation HEAD**: `7a783881b5a7b2ed5972ecf75e70944e17c69ffc` (no drift)
   - **Independent Review**: Approved by Muse independent review with zero blocking findings.
   - **CI Quality Gates**: 6/6 CI green on the approved head (GitGuardian Security Checks, Code Quality, Tests, Application Builds, API E2E Tests, Docker Build & Smoke Test).
-  - **Next Milestone**: TBD.
+  - **Next Milestone**: PR #54 — Phase 7.1, PR 3: Session Hardening Follow-Ups (M1–M5) & Revoke-All Sessions Wiring.
 - **Review Findings (non-blocking)**:
   - **L1**: 404-vs-403 distinguishes a missing account from a foreign-workspace account (UUIDs unguessable; established pattern — practical risk nil).
   - **L2**: The `?? SocialAccountStatus.ACTIVE` default in the publishing fence and validator is fail-open if status were ever undefined (Prisma guarantees non-null — theoretical only).
@@ -2518,4 +2518,71 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
    - Pull Request #52 opened against `main` branch: **COMPLETED**.
    - All 6 GitHub Actions quality checks verified green: **COMPLETED**.
    - Independent Muse review completed and PR merged into `main`: **COMPLETED**.
-   - **Next Milestone**: TBD.
+   - **Next Milestone**: PR #54 — Phase 7.1, PR 3: Session Hardening Follow-Ups (M1–M5) & Revoke-All Sessions Wiring.
+
+## 44. Phase 7.1, PR 3: Session Hardening Follow-Ups (M1–M5) & Revoke-All Sessions Wiring
+
+### 1. Summary & Motivation
+
+- **Status**: **IMPLEMENTED & VERIFIED LOCALLY (PR Pending Review)**
+- **Branch**: `feat/session-followups-m1-m5`
+- **Target Base**: `main` ([`2df90cffe274586a1d1e6a6c914970f8c69f36d1`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/2df90cffe274586a1d1e6a6c914970f8c69f36d1))
+- **Scope Discipline**: PR 3 resolves all session hardening leftovers (findings M1–M5) identified during independent Muse review of PR #48 and wires up `AuthService.revokeAllUserSessions` into a production-ready, CSRF-protected, user-scoped endpoint. No schema migrations or billing models are introduced.
+- **Live Deployment Release Gate**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending independent Muse approval, external infrastructure provisioning, and disaster recovery rehearsals G18/G19).
+
+### 2. Scope & Technical Architecture (Findings M1–M5 Resolved)
+
+1. **M1 — Password-Change Revoke Failure Resilience (`AuthService.changePassword`)**:
+   - **Order-of-Operations Invariant**: In `AuthService.changePassword()`, `userRepository.updatePasswordAndIncrementEpoch` executes prior to Redis session revocation. This update-then-revoke sequence is load-bearing: incrementing `securityEpoch` in PostgreSQL immediately invalidates concurrent sessions at the `AuthGuard` boundary before Redis cleanup even runs.
+   - **Bounded Retry Mechanism**: Wrapped `sessionManager.destroyOtherUserSessions(userId, currentSessionId, updatedUser.securityEpoch)` in a bounded 3-attempt retry loop with exponential backoff (50ms, 100ms).
+   - **Fail-Resilient Deferred Outcome**: If Redis revocation fails across all 3 retry attempts, `AuthService.changePassword` does NOT throw an unhandled 500 error (which previously resulted in the user being informed that password change failed when the database password and epoch were already updated). Instead, it logs a structured warning (`password_change.session_cleanup_deferred`) and returns `{ success: true, sessionCleanupDeferred: true, message: 'Password changed successfully, but terminating other active sessions failed. Stale sessions will be invalidated on their next request via security epoch enforcement.' }`.
+   - **Authoritative Epoch Enforcement Backstop**: Stale sessions surviving in Redis are guaranteed to fail on their very next request: `AuthGuard` compares `session.securityEpoch` against `user.securityEpoch` in PostgreSQL. Mismatched sessions are immediately destroyed in Redis and rejected with HTTP 401 Unauthorized.
+   - **API Controller Parity (`AuthController.changePassword`)**: Surfaces `sessionCleanupDeferred: true` in the HTTP 200 OK response payload and logs `AuditAction.AUTH_PASSWORD_CHANGED` with `metadata: { sessionCleanupDeferred: true }`.
+
+2. **M2 — Login Re-Read Leak Prevention (`AuthService.login`)**:
+   - In `AuthService.login()`, credentials are confirmed with argon2 and a session is provisioned in Redis before a fresh re-read of `userRepository.findById(user.id)` verifies that no concurrent password/epoch change occurred in-flight.
+   - Wrapped the post-creation `findById` re-read in a `try/catch` block. If the database query throws an error (e.g. database timeout or connection pool exhaustion), the newly created session is immediately destroyed via `sessionManager.destroySession(sessionId)` before the database exception is rethrown, preventing orphaned, indexed session keys from leaking in Redis until TTL expiration.
+
+3. **M3, M4, M5 — Documentation Corrections**:
+   - **M3 (§40)**: Corrected the audit trail documentation for password changes to reflect that `requestId` only is recorded (client IP is not collected).
+   - **M4 (§40)**: Corrected the CI commit citation for PR #48 from intermediate commit `fc11169` to the approved PR HEAD `da2e8e6` (`da2e8e6280090a29c0e880f648fb6290e19a9321`).
+   - **M5 (§39)**: Corrected description of `createSession` Lua script to state that Lua provides atomicity against concurrent command interleaving, rather than transactional rollback in the event of mid-script runtime exceptions.
+
+4. **Revoke-All User Sessions Endpoint (`POST /api/v1/auth/sessions/revoke-all`)**:
+   - **Audit Action**: Added `AUTH_REVOKE_ALL_SESSIONS = "AUTH_REVOKE_ALL_SESSIONS"` to the `AuditAction` enum in `packages/database/src/repositories/AuditLogRepository.ts`.
+   - **Service Wiring (`AuthService.revokeAllUserSessions`)**: Atomically increments `securityEpoch` in PostgreSQL via `userRepository.incrementSecurityEpoch(userId)`, then purges all user sessions in Redis via `sessionManager.destroyAllUserSessions(userId)` with bounded 3-attempt retry resilience.
+   - **API Controller Endpoint (`AuthController.revokeAllSessions`)**:
+     - Route: `POST /api/v1/auth/sessions/revoke-all`.
+     - Guards: Protected by `AuthGuard` (validates session, security epoch, and CSRF header `x-csrf-token`).
+     - Throttling: Enforced under `RateLimitPolicies.auth`.
+     - Strict Identity Trust: Extracts `userId` strictly from authenticated session (`req.user.id`). No `userId` or workspace parameters accepted in URL or request body.
+     - Cookie Hygiene: Clears both `session` and `csrfToken` HTTP cookies in the response (`clearSessionCookies`).
+     - Audit Logging: Best-effort audit logging logs `AUTH_REVOKE_ALL_SESSIONS` with `actorId`, `targetId`, and `requestId`.
+   - **Frontend UI Status**: Verified that `apps/web` currently does not expose a user settings or security profile page (only dashboard, login, and workspace management exist). The endpoint is documented, exposed, and verified for direct client integration.
+
+### 3. Verification & Test Evidence
+
+- **Auth Service Unit Tests (`apps/api/src/modules/auth/auth.service.spec.ts`)**: 24/24 PASS:
+  - M2 login re-read DB failure session cleanup test.
+  - M1 bounded retry and deferred cleanup outcome test (asserts 3 retry attempts, warning log, no throw, and deferred outcome).
+  - M1 retry recovery test (asserts 2 attempts and success outcome).
+  - `revokeAllUserSessions` transient failure retry and resilience tests.
+- **Auth Controller Unit Tests (`apps/api/src/modules/auth/auth.controller.spec.ts`)**: 24/24 PASS:
+  - M1 deferred cleanup payload and audit metadata test.
+  - `revokeAllSessions` endpoint routing, user scoping, audit logging, and cookie clearance tests.
+- **Combined Auth Unit Suite**: 5/5 test files, 71/71 PASS (`auth.service.spec.ts`, `auth.controller.spec.ts`, `auth.guard.spec.ts`, `workspace.guard.spec.ts`, `email-delivery.service.spec.ts`).
+- **All API Unit Tests (`pnpm --filter @agency-os/api test`)**: 26/26 test files, 331/331 PASS.
+- **Auth E2E Suite (`apps/api/test/auth.e2e-spec.ts`)**: 23/23 PASS:
+  - Scenario M1 E2E test: Simulates Redis revocation failure, verifies password is changed, response returns `{ sessionCleanupDeferred: true }`, and stale secondary session is immediately rejected with 401 via `AuthGuard` epoch check.
+  - Revoke-all E2E tests: 401 unauthenticated check, 403 CSRF mismatch check, and complete revocation lifecycle asserting 200 OK, cookie clearance, stale session 401 rejection, DB epoch incrementation, and subsequent login with new epoch.
+- **Monorepo Lint (`pnpm turbo run lint`)**: 9/9 packages PASS with 0 errors.
+- **Monorepo Typecheck (`pnpm turbo run typecheck`)**: 10/10 tasks PASS with 0 errors.
+- **Monorepo Build (`pnpm turbo run build`)**: 7/7 tasks PASS.
+
+### 4. Release Gate & Next Steps
+
+1. **Release Gate**:
+   - **Live Deployment**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending independent Muse code review, external infrastructure provisioning, and disaster recovery rehearsals G18/G19).
+2. **Milestone Completion Status**:
+   - Feature branch `feat/session-followups-m1-m5` ready for Pull Request creation against `main`: **READY**.
+   - Independent Muse review required before any merge: **PENDING**.

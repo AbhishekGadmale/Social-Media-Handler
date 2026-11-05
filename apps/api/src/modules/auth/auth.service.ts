@@ -21,6 +21,12 @@ import {
   type EmailDeliveryService,
 } from './email-delivery.service';
 
+export interface ChangePasswordResult {
+  success: boolean;
+  sessionCleanupDeferred?: boolean;
+  message?: string;
+}
+
 export type AuthFailureReason = 'USER_NOT_FOUND' | 'INVALID_PASSWORD';
 
 export class InvalidCredentialsException extends UnauthorizedException {
@@ -293,7 +299,25 @@ export class AuthService {
 
     // In-flight login race mitigation: verify that the password hash and security epoch did not change
     // while argon2.verify was executing.
-    const freshUser = await this.userRepository.findById(user.id);
+    let freshUser;
+    try {
+      freshUser = await this.userRepository.findById(user.id);
+    } catch (err) {
+      await this.sessionManager
+        .destroySession(sessionId)
+        .catch((cleanupErr) => {
+          this.logger.warn({
+            msg: 'login.session_cleanup_failed',
+            sessionId,
+            userId: user.id,
+            error:
+              cleanupErr instanceof Error
+                ? cleanupErr.message
+                : String(cleanupErr),
+          });
+        });
+      throw err;
+    }
     if (
       !freshUser ||
       freshUser.hashedPassword !== user.hashedPassword ||
@@ -317,7 +341,24 @@ export class AuthService {
    */
   async revokeAllUserSessions(userId: string): Promise<void> {
     await this.userRepository.incrementSecurityEpoch(userId);
-    await this.sessionManager.destroyAllUserSessions(userId);
+    const maxAttempts = 3;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        await this.sessionManager.destroyAllUserSessions(userId);
+        break;
+      } catch (err) {
+        if (attempt < maxAttempts) {
+          const backoffMs = 50 * Math.pow(2, attempt - 1);
+          await new Promise((resolve) => setTimeout(resolve, backoffMs));
+        } else {
+          this.logger.warn({
+            msg: 'revoke_all_sessions.redis_cleanup_failed',
+            userId,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+    }
   }
 
   /**
@@ -334,7 +375,7 @@ export class AuthService {
     currentPasswordPlain: string,
     newPasswordPlain: string,
     currentSessionId: string,
-  ): Promise<void> {
+  ): Promise<ChangePasswordResult> {
     const user = await this.userRepository.findById(userId);
     if (!user) {
       throw new UnauthorizedException('User no longer exists');
@@ -361,11 +402,49 @@ export class AuthService {
         newHashedPassword,
       );
 
-    // Revoke all other active sessions while preserving current session and updating its epoch in Redis
-    await this.sessionManager.destroyOtherUserSessions(
-      userId,
-      currentSessionId,
-      updatedUser.securityEpoch,
-    );
+    // Revoke all other active sessions while preserving current session and updating its epoch in Redis.
+    // Wrap with bounded retry (3 attempts) with short exponential backoff.
+    // If Redis cleanup fails after retries, do NOT throw an unhandled error after password has
+    // already been changed in the database; return a deferred cleanup result instead.
+    // Stale sessions remain strictly guarded by AuthGuard's securityEpoch enforcement.
+    let sessionCleanupDeferred = false;
+    const maxAttempts = 3;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        await this.sessionManager.destroyOtherUserSessions(
+          userId,
+          currentSessionId,
+          updatedUser.securityEpoch,
+        );
+        sessionCleanupDeferred = false;
+        break;
+      } catch (err) {
+        if (attempt < maxAttempts) {
+          const backoffMs = 50 * Math.pow(2, attempt - 1);
+          await new Promise((resolve) => setTimeout(resolve, backoffMs));
+        } else {
+          sessionCleanupDeferred = true;
+          this.logger.warn({
+            msg: 'password_change.session_cleanup_deferred',
+            userId,
+            currentSessionId,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+    }
+
+    if (sessionCleanupDeferred) {
+      return {
+        success: true,
+        sessionCleanupDeferred: true,
+        message:
+          'Password changed successfully, but terminating other active sessions failed. Stale sessions will be invalidated on their next request via security epoch enforcement.',
+      };
+    }
+
+    return {
+      success: true,
+    };
   }
 }

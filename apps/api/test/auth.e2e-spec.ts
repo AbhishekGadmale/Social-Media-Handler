@@ -8,6 +8,7 @@ import { AppModule } from './../src/app.module';
 import * as _cookieParser from 'cookie-parser';
 const cookieParser = _cookieParser.default || _cookieParser;
 import { PrismaClient, generateId } from '@agency-os/database';
+import { SessionManager } from '@agency-os/session';
 import { AllExceptionsFilter } from '../src/filters/all-exceptions.filter';
 import { PinoLogger } from 'nestjs-pino';
 import * as argon2 from '@node-rs/argon2';
@@ -481,7 +482,185 @@ describe('AuthController (e2e)', () => {
           newPassword: 'correctpassword',
         });
     });
+
+    it('Scenario M1: returns sessionCleanupDeferred: true when Redis revoke fails, but changes password and rejects stale sessions via AuthGuard epoch check', async () => {
+      // 1. Device A logs in
+      const { sess: sessA, csrf: csrfA } = await loginAsUser();
+
+      // 2. Device B logs in (second session)
+      const { sess: sessB } = await loginAsUser();
+
+      // Verify Device B can access /me before password change
+      const meResBBefore = await request(app.getHttpServer())
+        .get('/api/v1/auth/me')
+        .set('Cookie', sessB);
+      expect(meResBBefore.status).toBe(200);
+
+      // Spy on sessionManager.destroyOtherUserSessions to force failure
+      const sessionManager = app.get(SessionManager);
+      const destroyOtherSpy = jest
+        .spyOn(sessionManager, 'destroyOtherUserSessions')
+        .mockRejectedValue(new Error('Simulated Redis failure'));
+
+      try {
+        // 3. Device A changes password
+        const changeRes = await request(app.getHttpServer())
+          .post('/api/v1/auth/change-password')
+          .set('Cookie', `${sessA}; csrfToken=${csrfA}`)
+          .set('x-csrf-token', csrfA)
+          .send({
+            currentPassword: 'correctpassword',
+            newPassword: 'DeferredPassword123!',
+          });
+
+        expect(changeRes.status).toBe(200);
+        expect(changeRes.body.sessionCleanupDeferred).toBe(true);
+        expect(changeRes.body.message).toContain('terminating other active sessions failed');
+
+        // 4. Stale Device B session is rejected via AuthGuard epoch check (status 401)
+        const meResBAfter = await request(app.getHttpServer())
+          .get('/api/v1/auth/me')
+          .set('Cookie', sessB);
+        expect(meResBAfter.status).toBe(401);
+        expect(meResBAfter.body.error.message).toBe('Invalid or expired session');
+
+        // 5. Old password no longer works
+        const oldLogin = await request(app.getHttpServer())
+          .post('/api/v1/auth/login')
+          .send({ email: testUser.email, password: 'correctpassword' });
+        expect(oldLogin.status).toBe(401);
+
+        // 6. New password works
+        const newLogin = await request(app.getHttpServer())
+          .post('/api/v1/auth/login')
+          .send({ email: testUser.email, password: 'DeferredPassword123!' });
+        expect(newLogin.status).toBe(200);
+      } finally {
+        destroyOtherSpy.mockRestore();
+
+        // Restore password back to correctpassword
+        const loginAgain = await request(app.getHttpServer())
+          .post('/api/v1/auth/login')
+          .send({ email: testUser.email, password: 'DeferredPassword123!' });
+        if (loginAgain.status === 200) {
+          const cookies = loginAgain.headers['set-cookie'] as string[];
+          const s = cookies.find((c: string) => c.startsWith('session='))!.split(';')[0];
+          const c = cookies.find((c: string) => c.startsWith('csrfToken='))!.split(';')[0].split('=')[1];
+          await request(app.getHttpServer())
+            .post('/api/v1/auth/change-password')
+            .set('Cookie', `${s}; csrfToken=${c}`)
+            .set('x-csrf-token', c)
+            .send({
+              currentPassword: 'DeferredPassword123!',
+              newPassword: 'correctpassword',
+            });
+        }
+      }
+    });
   });
+
+  describe('/api/v1/auth/sessions/revoke-all (POST)', () => {
+    async function loginAsUser(password = 'correctpassword') {
+      const loginRes = await request(app.getHttpServer())
+        .post('/api/v1/auth/login')
+        .send({ email: testUser.email, password });
+
+      expect(loginRes.status).toBe(200);
+      const cookies = loginRes.headers['set-cookie'] as string[];
+      const sess = cookies
+        .find((c: string) => c.startsWith('session='))!
+        .split(';')[0];
+      const csrf = cookies
+        .find((c: string) => c.startsWith('csrfToken='))!
+        .split(';')[0]
+        .split('=')[1];
+      return { sess, csrf, loginRes };
+    }
+
+    it('fails with 401 when unauthenticated', async () => {
+      const res = await request(app.getHttpServer())
+        .post('/api/v1/auth/sessions/revoke-all');
+
+      expect(res.status).toBe(401);
+      expect(res.body.error.message).toBe('No session cookie provided');
+    });
+
+    it('fails with 403 when CSRF token is missing or mismatched', async () => {
+      const { sess } = await loginAsUser();
+
+      const res = await request(app.getHttpServer())
+        .post('/api/v1/auth/sessions/revoke-all')
+        .set('Cookie', sess);
+
+      expect(res.status).toBe(403);
+      expect(res.body.error.message).toBe('CSRF token mismatch');
+    });
+
+    it('successfully revokes all active sessions for authenticated user and clears cookies', async () => {
+      // 1. Device A logs in
+      const { sess: sessA, csrf: csrfA } = await loginAsUser();
+
+      // 2. Device B logs in
+      const { sess: sessB } = await loginAsUser();
+
+      // Both can access /me before revocation
+      const meResABefore = await request(app.getHttpServer())
+        .get('/api/v1/auth/me')
+        .set('Cookie', sessA);
+      expect(meResABefore.status).toBe(200);
+
+      const meResBBefore = await request(app.getHttpServer())
+        .get('/api/v1/auth/me')
+        .set('Cookie', sessB);
+      expect(meResBBefore.status).toBe(200);
+
+      const userBefore = await prisma.user.findUnique({
+        where: { id: testUser.id },
+      });
+      const initialEpoch = userBefore!.securityEpoch;
+
+      // 3. Device A calls revoke-all
+      const revokeRes = await request(app.getHttpServer())
+        .post('/api/v1/auth/sessions/revoke-all')
+        .set('Cookie', `${sessA}; csrfToken=${csrfA}`)
+        .set('x-csrf-token', csrfA);
+
+      expect(revokeRes.status).toBe(200);
+      expect(revokeRes.body.message).toBe('All sessions revoked successfully');
+
+      // Assert cookies cleared
+      const cookies = revokeRes.headers['set-cookie'] as string[];
+      expect(cookies).toBeDefined();
+      expect(cookies.some((c: string) => c.startsWith('session=;') || c.includes('session=;'))).toBe(true);
+
+      // 4. Device A session is revoked (returns 401)
+      const meResAAfter = await request(app.getHttpServer())
+        .get('/api/v1/auth/me')
+        .set('Cookie', sessA);
+      expect(meResAAfter.status).toBe(401);
+
+      // 5. Device B session is revoked (returns 401)
+      const meResBAfter = await request(app.getHttpServer())
+        .get('/api/v1/auth/me')
+        .set('Cookie', sessB);
+      expect(meResBAfter.status).toBe(401);
+
+      // 6. DB securityEpoch was incremented
+      const userAfter = await prisma.user.findUnique({
+        where: { id: testUser.id },
+      });
+      expect(userAfter!.securityEpoch).toBe(initialEpoch + 1);
+
+      // 7. User can log in again and get fresh valid session
+      const { sess: freshSess } = await loginAsUser();
+      const meResFresh = await request(app.getHttpServer())
+        .get('/api/v1/auth/me')
+        .set('Cookie', freshSess);
+      expect(meResFresh.status).toBe(200);
+      expect(meResFresh.body.user.email).toBe(testUser.email);
+    });
+  });
+
   describe('/api/v1/auth/signup (POST) & Tenant Provisioning', () => {
     let signedUpEmail: string;
     let signedUpUser: any;
