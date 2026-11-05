@@ -13,6 +13,10 @@ export interface CreateUserWithTenantInput {
   hashedPassword: string;
   organizationName?: string;
   workspaceName?: string;
+  verificationToken?: {
+    tokenHash: string;
+    expiresAt: Date;
+  };
 }
 
 export interface CreateUserWithTenantResult {
@@ -113,6 +117,18 @@ export class UserRepository {
           role: WorkspaceRole.OWNER,
         },
       });
+
+      if (input.verificationToken) {
+        await tx.emailVerificationToken.create({
+          data: {
+            id: generateId(),
+            userId,
+            tokenHash: input.verificationToken.tokenHash,
+            expiresAt: input.verificationToken.expiresAt,
+            consumedAt: null,
+          },
+        });
+      }
 
       return { user, organization, workspace, membership };
     });

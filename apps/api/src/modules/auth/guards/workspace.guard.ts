@@ -20,11 +20,11 @@ export class WorkspaceGuard implements CanActivate {
       throw new ForbiddenException('User not authenticated');
     }
 
-    // Architectural Decision (Option A - PR #49):
-    // Email verification enforcement is deferred to PR #50.
-    // Newly registered users are created with emailVerified: false, but are permitted
-    // to access their provisioned workspace during this interim phase.
-    // Full email verification lifecycle and 403 gating will be introduced in PR #50.
+    if (!user.emailVerified) {
+      throw new ForbiddenException(
+        'Email verification required to access workspaces',
+      );
+    }
 
     if (!workspaceId) {
       return true; // No workspace context needed for this route

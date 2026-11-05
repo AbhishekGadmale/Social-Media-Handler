@@ -99,6 +99,60 @@ describe('UserRepository', () => {
       expect(result.membership.role).toBe(WorkspaceRole.OWNER);
     });
 
+    it('creates verification token record in the same transaction when verificationToken is provided', async () => {
+      const txMock = {
+        user: {
+          create: vi.fn().mockImplementation(({ data }) =>
+            Promise.resolve({ ...data, createdAt: new Date(), updatedAt: new Date() }),
+          ),
+        },
+        organization: {
+          create: vi.fn().mockImplementation(({ data }) =>
+            Promise.resolve({ ...data, createdAt: new Date(), updatedAt: new Date() }),
+          ),
+        },
+        workspace: {
+          create: vi.fn().mockImplementation(({ data }) =>
+            Promise.resolve({ ...data, createdAt: new Date(), updatedAt: new Date() }),
+          ),
+        },
+        workspaceMember: {
+          create: vi.fn().mockImplementation(({ data }) =>
+            Promise.resolve({ ...data, createdAt: new Date(), updatedAt: new Date() }),
+          ),
+        },
+        emailVerificationToken: {
+          create: vi.fn().mockImplementation(({ data }) =>
+            Promise.resolve({ ...data, createdAt: new Date() }),
+          ),
+        },
+      };
+
+      prismaMock.$transaction.mockImplementation(async (callback: any) => {
+        return callback(txMock);
+      });
+
+      const expiresAt = new Date(Date.now() + 86400000);
+      const result = await repo.createWithTenantTransaction({
+        email: 'carol@example.com',
+        hashedPassword: '$argon2id$hashed',
+        verificationToken: {
+          tokenHash: 'dummy-sha256-hash',
+          expiresAt,
+        },
+      });
+
+      expect(txMock.emailVerificationToken.create).toHaveBeenCalledWith({
+        data: {
+          id: expect.any(String),
+          userId: result.user.id,
+          tokenHash: 'dummy-sha256-hash',
+          expiresAt,
+          consumedAt: null,
+        },
+      });
+    });
+
     it('rolls back the transaction if member creation fails', async () => {
       const txMock = {
         user: {

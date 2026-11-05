@@ -2350,3 +2350,75 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
    - HTML/text email templates for signup verification.
 2. **Release Gate**:
    - **Live Deployment**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending PR #50 completion, human code review, external infrastructure provisioning, and disaster recovery rehearsals G18/G19).
+
+
+## 42. Phase 7.1, PR 2B: Email Verification Lifecycle, Verification Endpoints & 403 Enforcement Restoration (PR #51)
+
+### 1. Summary & Motivation
+- **Complete Verification Lifecycle**: Implements full email verification token issuance, delivery, public consumption, and anti-enumeration resend capabilities, closing the architectural deferral from PR #49 (Option A / Muse finding B2).
+- **Coupled Gates & Flow Invariant**: Re-enables 403 enforcement gating on unverified accounts simultaneously with the production verification and resend endpoints, preventing any unverified lockout or dead-end state.
+- **Single-Transaction Signup Token Issuance**: When a new user registers via `POST /api/v1/auth/signup`, an initial 32-byte cryptographically secure random verification token (24-hour expiry, stored exclusively as a SHA-256 hash) is provisioned atomically inside `UserRepository.createWithTenantTransaction` alongside the `User`, `Organization`, `Workspace`, and `WorkspaceMember` records. The signup response strictly maintains generic HTTP 201 anti-enumeration parity.
+- **Public Verification Endpoint (`POST /api/v1/auth/verify-email`)**: Atomically consumes single-use tokens via `EmailVerificationTokenRepository.consumeToken` using conditional CAS (`WHERE consumedAt IS NULL AND expiresAt > NOW()`), transitions user to `emailVerified: true`, sets `emailVerifiedAt: NOW()`, and logs `AUTH_EMAIL_VERIFIED`. Rejects expired, consumed, or malformed tokens with a generic HTTP 400 without disclosing account existence or token state. Throttled under `RateLimitPolicies.auth`.
+- **Public Resend Endpoint (`POST /api/v1/auth/resend-verification`)**: Exposes an unauthenticated, rate-limited endpoint with strict anti-enumeration timing and response parity. Generates identical generic responses regardless of whether the account exists, is already verified, or is unverified. For unverified accounts, invalidates prior active tokens via `invalidateActiveUserTokens` (newest-token-wins semantics) and dispatches a fresh verification token.
+- **Restored 403 Enforcement Gates**:
+  - `WorkspaceGuard`: Blocks unverified users from workspace routes with HTTP 403 Forbidden (`Email verification required to access workspaces`).
+  - `OAuthController`: Blocks unverified users from completing OAuth account linking callbacks with HTTP 403 Forbidden (`Email verification required to access workspaces`).
+- **Production Email Delivery Abstraction**:
+  - `ResendEmailDeliveryService`: Integrates the live Resend REST API via native `fetch` with Bearer auth, fully env-keyed (`RESEND_API_KEY`, `EMAIL_FROM`, `FRONTEND_URL`) with zero secrets in code.
+  - `MockEmailDeliveryService`: Preserved for local/test environments; strictly throws a runtime error if initialized in production (`NODE_ENV === 'production'`).
+  - `NoopEmailDeliveryService`: Preserved as the safe no-op fallback in production environments when no provider API key is configured.
+  - Factory provider in `AuthModule` dynamically selects `ResendEmailDeliveryService` in production when configured, `NoopEmailDeliveryService` as fallback, and `MockEmailDeliveryService` in non-production.
+- **Audit Logging & Credential Safety**: Added `AUTH_EMAIL_VERIFIED`, `AUTH_EMAIL_VERIFICATION_FAILED`, and `AUTH_EMAIL_VERIFICATION_RESENT` to `AuditAction`. Raw tokens appear strictly in dispatched email messages and are strictly redacted from logs, server responses, and audit records.
+
+### 2. Technical Architecture & Modifications
+
+1. **Database Layer (`packages/database`)**:
+   - **Audit Actions (`AuditLogRepository.ts`)**: Added `AUTH_EMAIL_VERIFIED`, `AUTH_EMAIL_VERIFICATION_FAILED`, `AUTH_EMAIL_VERIFICATION_RESENT`.
+   - **Token Invalidation (`EmailVerificationTokenRepository.ts`)**: Implemented `invalidateActiveUserTokens(userId: string, tx?: Prisma.TransactionClient)` to retire prior unconsumed tokens upon resend.
+   - **Atomic Signup Provisioning (`UserRepository.ts`)**: Extended `CreateUserWithTenantInput` with optional `verificationToken?: { tokenHash: string; expiresAt: Date }`. The verification token row is created inside the tenant transaction.
+
+2. **API & Security Layer (`apps/api`)**:
+   - **DTOs (`verify-email.dto.ts`, `resend-verification.dto.ts`)**: Validated via `class-validator` (`IsNotEmpty`, `IsString`, `MinLength(32)`, `MaxLength(128)` for tokens; `IsEmail` for resend).
+   - **Email Delivery Service (`email-delivery.service.ts`)**: Implemented `ResendEmailDeliveryService` with HTML/text templates, error handling, token redaction in logs, and `AuthModule` factory injection.
+   - **Service Layer (`auth.service.ts`)**:
+     - `signup()`: Dispatches verification email resiliently; logs `AUTH_SIGNUP_SUCCEEDED` with actor/target IDs.
+     - `verifyEmail()`: Validates input format, atomically consumes token via repository, logs audit action, and returns success message.
+     - `resendVerification()`: Validates email, executes dummy Argon2 work on missing user, no-ops for already-verified users, retires prior tokens, creates new token, and dispatches email.
+   - **Controller Layer (`auth.controller.ts`)**:
+     - `POST /api/v1/auth/verify-email`: Throttled under `RateLimitPolicies.auth`, enforces HTTPS in production, returns HTTP 200.
+     - `POST /api/v1/auth/resend-verification`: Throttled under `RateLimitPolicies.auth`, enforces HTTPS in production, returns HTTP 200.
+   - **403 Gates (`workspace.guard.ts`, `oauth.controller.ts`)**:
+     - Re-enabled `if (!user.emailVerified) throw new ForbiddenException('Email verification required to access workspaces')`.
+
+### 3. Verification & Test Evidence
+
+- **Monorepo Lint (`pnpm turbo run lint`)**: 9/9 packages PASS (0 errors, 66 pre-existing warnings).
+- **Monorepo Typecheck (`pnpm turbo run typecheck`)**: 10/10 tasks PASS.
+- **Monorepo Build (`pnpm turbo run build`)**: 7/7 tasks PASS.
+- **Database Unit Tests (`packages/database`)**:
+  - `EmailVerificationTokenRepository.spec.ts`: 7/7 PASS (token creation, lookup, atomic CAS consumption, expiration check, active token invalidation).
+  - `UserRepository.spec.ts`: 6/6 PASS (tenant transaction with and without atomic verification token provisioning).
+- **API Unit Tests (`apps/api`)**:
+  - 25/25 test files, 318/318 PASS.
+  - `email-delivery.service.spec.ts`: 6/6 PASS (Resend HTTP dispatch, missing API key exception, non-2xx error handling, Mock production fail-closed exception, Noop execution).
+  - `auth.controller.spec.ts`: 22/22 PASS (signup, login, logout, password change, verifyEmail, resendVerification, HTTPS enforcement in production).
+  - `auth.service.spec.ts`: 20/20 PASS (signup token generation & dispatch, verifyEmail atomic consumption & error handling, resendVerification anti-enumeration parity & newest-token-wins).
+  - `workspace.guard.spec.ts`: 6/6 PASS (unverified user 403 Forbidden, verified user permitted, tenant isolation enforced).
+  - `oauth.controller.spec.ts`: 15/15 PASS (unverified user 403 Forbidden on callback).
+- **API E2E Tests (`apps/api/test/auth.e2e-spec.ts`)**:
+  - Full signup → verify → workspace access flow verified:
+    - Signup provisions unverified user and verification token in DB.
+    - Unverified user workspace access rejected with 403 Forbidden.
+    - Resend verification invalidates older tokens and dispatches new token.
+    - Token consumption transitions user to verified in DB.
+    - Verified user workspace access succeeds with 200 OK.
+    - Non-member cross-tenant workspace access rejected with 403 Forbidden using valid UUID via `generateId()`.
+    - Token replay rejected with 400 Bad Request.
+    - Resend for already-verified and non-existent accounts returns generic message.
+
+### 4. Release Gate & Next Steps
+
+1. **Release Gate**:
+   - **Live Deployment**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending human code review, external infrastructure provisioning, and disaster recovery rehearsals G18/G19).
+2. **Next Steps**:
+   - Submit PR #51 for independent automated review by Muse.
