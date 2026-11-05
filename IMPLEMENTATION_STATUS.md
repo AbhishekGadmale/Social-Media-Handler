@@ -2364,7 +2364,7 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
 - **Merge Status & Identity**: Successfully merged into `main` on 2026-11-05T10:25:36Z.
   - **Merge Commit SHA**: `0cfeb86087081fb64c7ffe4597a9094516650340`
   - **Approved Implementation HEAD**: `edbd12fa0c40b39be15f5c0cbbcbd8ec3cbef6ff`
-  - **Independent Review**: Approved by Muse review (no blocking findings; non-blocking M1 noted: production without RESEND_API_KEY falls back to Noop while 403 gates are active — deploy prerequisite, not a code defect).
+  - **Independent Review**: Approved by Muse review (no blocking findings; non-blocking M1 noted: production without RESEND_API_KEY originally fell back to Noop while 403 gates were active, risking new signup lockout — resolved in PR #55 via fail-fast startup validator `validateEmailDeliveryConfig()`, so production refuses to boot without the key).
   - **CI Quality Gates**: 6/6 checks passed on approved HEAD.
   - **Next Milestone**: PR #52 — Phase 7.1: Social Account Disconnect Flow.
 - **Complete Verification Lifecycle**: Implements full email verification token issuance, delivery, public consumption, and anti-enumeration resend capabilities, closing the architectural deferral from PR #49 (Option A / Muse finding B2).
@@ -2584,5 +2584,72 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
 1. **Release Gate**:
    - **Live Deployment**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending independent Muse code review, external infrastructure provisioning, and disaster recovery rehearsals G18/G19).
 2. **Milestone Completion Status**:
-   - Feature branch `feat/session-followups-m1-m5` ready for Pull Request creation against `main`: **READY**.
+   - Pull Request #54 opened against `main` and CI verified green: **COMPLETED**.
+   - Independent Muse review completed and PR merged into `main` (commit `6b448010065b2182ff3289f58e687602910468b0`): **COMPLETED**.
+   - **Next Milestone**: PR #55 — Phase 7.1, PR 4: Fail-Fast Startup Validation for RESEND_API_KEY in Production (PR #51 M1 Resolution).
+
+## 45. Phase 7.1, PR 4: Fail-Fast Startup Validation for RESEND_API_KEY in Production (PR #55)
+
+### 1. Summary & Motivation
+
+- **Status**: **IMPLEMENTED & VERIFIED LOCALLY (PR Pending Review)**
+- **Branch**: `feat/resend-startup-validation`
+- **Target Base**: `main` ([`6b448010065b2182ff3289f58e687602910468b0`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/6b448010065b2182ff3289f58e687602910468b0))
+- **Scope Discipline**: Implements fail-fast startup validator `validateEmailDeliveryConfig()` in `apps/api/src/config/email-delivery.ts`, directly resolving non-blocking review finding M1 from PR #51.
+- **The Core Invariant**: In production (`NODE_ENV === 'production'`), missing or empty/whitespace-only `RESEND_API_KEY` previously caused `AuthModule`'s factory to silently instantiate `NoopEmailDeliveryService`. Because PR #51 activated 403 email-verification gates (`WorkspaceGuard` and `OAuthController`), deploying production keyless silently dropped verification emails while enforcing gates, permanently locking out all new user signups. This change makes keyless production boot impossible.
+- **Live Deployment Release Gate**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending independent Muse code review, external infrastructure provisioning, and disaster recovery rehearsals G18/G19).
+
+### 2. Scope & Technical Architecture
+
+1. **Pure Startup Validator (`apps/api/src/config/email-delivery.ts`)**:
+   - Implemented `validateEmailDeliveryConfig(apiKey = process.env.RESEND_API_KEY, isProduction = process.env.NODE_ENV === 'production')`.
+   - **Production Enforcement**: When `isProduction === true`, missing (`undefined`), empty (`""`), or whitespace-only (`"   "`) `apiKey` throws a descriptive, fail-fast `Error` stating:
+     - The variable name: `RESEND_API_KEY`
+     - The consequence: `Verification emails cannot be delivered and new signups will be locked out by 403 email verification gates.`
+     - The fix: `Set RESEND_API_KEY to a valid Resend API key.`
+   - **Non-Production Ergonomics**: In development and test environments (`isProduction === false`), the key remains optional, allowing developers and local unit/integration tests to run using `MockEmailDeliveryService` or `NoopEmailDeliveryService` without configuring Resend credentials.
+   - **Boot Lifecycle**: Called synchronously during `bootstrap()` in `apps/api/src/main.ts` alongside `validateTokenEncryptionKey()` and `validateStoragePublicEndpoint()` before `NestFactory.create()` initializes any modules or listeners.
+   - **Zero Network Side-Effects**: Validates presence and non-emptiness only. Does not issue external HTTP requests to Resend at boot. No bypass or escape-hatch flags are introduced.
+
+2. **CI Docker Build & Smoke Test Trap Resolution**:
+   - **The Trap**: The API Docker image sets `ENV NODE_ENV=production` (`apps/api/Dockerfile:73`). During the GitHub Actions CI workflow `Docker Build & Smoke Test`, the API container boots as a production process.
+   - **The Resolution**: Added dummy environment variable `RESEND_API_KEY: dummy-resend-api-key` to:
+     - `.github/workflows/ci.yml` under `docker` job `env`, `Smoke test Compose stack` step `env`, and `Smoke test Staging Compose stack with Ingress` step `env`.
+     - `docker-compose.yml` under `services.api.environment` (`RESEND_API_KEY: ${RESEND_API_KEY}`).
+     - `docker-compose.staging.yml` under `services.api.environment` (`RESEND_API_KEY: ${RESEND_API_KEY}`).
+   - This follows the existing dummy-credential pattern already established in CI for `YOUTUBE_CLIENT_ID`, `LINKEDIN_CLIENT_ID`, and `JWT_SECRET`. Because the validator verifies presence without network dispatch, dummy values permit container smoke testing without disclosing or requiring real production secrets.
+
+3. **Scope Discipline**:
+   - Zero modifications to `EMAIL_FROM` or `FRONTEND_URL` handling (both continue using established defaults).
+   - Zero modifications to `NoopEmailDeliveryService`, `ResendEmailDeliveryService`, or the 403 verification gates.
+
+### 3. Verification & Test Evidence
+
+- **Email Delivery Configuration Unit Tests (`apps/api/src/config/email-delivery.spec.ts`)**: 9/9 PASS:
+  - Fails fast on missing (`undefined`) key in production.
+  - Fails fast on empty string (`""`) key in production.
+  - Fails fast on whitespace-only key in production.
+  - Asserts error message names variable, consequence (lockout), and fix.
+  - Passes on valid key in production and returns trimmed value.
+  - Passes without key in non-production (development/test).
+  - Passes with key in non-production.
+  - Honors `process.env` defaults for both key and environment.
+- **API Bootstrap Tests (`apps/api/src/main.spec.ts`)**: 6/6 PASS:
+  - Fails fast and prevents `NestFactory.create` in production if `RESEND_API_KEY` is missing.
+  - Fails fast and prevents `NestFactory.create` in production if `RESEND_API_KEY` is whitespace-only.
+  - Initializes Nest application successfully in production when `RESEND_API_KEY` is provided.
+- **Staging Deployment Configuration Tests (`apps/api/src/config/staging-deployment.spec.ts`)**: 24/24 PASS:
+  - NGINX ingress configuration tests pass.
+  - Staging Compose resolution and required secrets fail-fast tests pass.
+- **All API Unit Tests (`pnpm --filter @agency-os/api test`)**: 27/27 test files, 343/343 PASS.
+- **Monorepo Lint (`pnpm turbo run lint`)**: 9/9 packages PASS with 0 errors.
+- **Monorepo Typecheck (`pnpm turbo run typecheck`)**: 10/10 tasks PASS with 0 errors.
+- **Monorepo Build (`pnpm turbo run build`)**: 7/7 tasks PASS.
+
+### 4. Release Gate & Next Steps
+
+1. **Release Gate**:
+   - **Live Deployment**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending independent Muse code review, external infrastructure provisioning, and disaster recovery rehearsals G18/G19).
+2. **Milestone Completion Status**:
+   - Feature branch `feat/resend-startup-validation` ready for Pull Request creation against `main`: **READY**.
    - Independent Muse review required before any merge: **PENDING**.
