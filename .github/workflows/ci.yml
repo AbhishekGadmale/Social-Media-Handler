@@ -251,6 +251,7 @@ jobs:
     timeout-minutes: 20
     env:
       TOKEN_ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      RESEND_API_KEY: dummy-resend-api-key
     steps:
       - uses: actions/checkout@v4
 
@@ -278,6 +279,7 @@ jobs:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: password
           POSTGRES_DB: agency_os
+          RESEND_API_KEY: dummy-resend-api-key
         run: |
           docker compose up -d postgres redis
 
@@ -383,6 +385,7 @@ jobs:
           OBJECT_STORAGE_SECRET_ACCESS_KEY: minioadmin
           OBJECT_STORAGE_PUBLIC_ENDPOINT: http://127.0.0.1:9000
           OBJECT_STORAGE_BUCKET: agency-os-media
+          RESEND_API_KEY: dummy-resend-api-key
         run: |
           # Start staging backing services (postgres, redis)
           docker compose -f docker-compose.staging.yml up -d postgres redis

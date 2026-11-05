@@ -77,4 +77,43 @@ describe('API Bootstrap', () => {
     expect(createMock).toHaveBeenCalledTimes(1);
     expect(mockApp.listen).toHaveBeenCalledWith(3001);
   });
+
+  it('fails fast and does not create the Nest application in production if RESEND_API_KEY is missing', async () => {
+    process.env.NODE_ENV = 'production';
+    process.env.TOKEN_ENCRYPTION_KEY = validKey;
+    process.env.API_PUBLIC_URL = 'http://localhost:3001';
+    process.env.OBJECT_STORAGE_PUBLIC_ENDPOINT = 'http://localhost:9000';
+    delete process.env.RESEND_API_KEY;
+
+    await expect(bootstrap()).rejects.toThrow(
+      /RESEND_API_KEY environment variable is required in production/i,
+    );
+    expect(createMock).not.toHaveBeenCalled();
+  });
+
+  it('fails fast and does not create the Nest application in production if RESEND_API_KEY is whitespace-only', async () => {
+    process.env.NODE_ENV = 'production';
+    process.env.TOKEN_ENCRYPTION_KEY = validKey;
+    process.env.API_PUBLIC_URL = 'http://localhost:3001';
+    process.env.OBJECT_STORAGE_PUBLIC_ENDPOINT = 'http://localhost:9000';
+    process.env.RESEND_API_KEY = '   \t  ';
+
+    await expect(bootstrap()).rejects.toThrow(
+      /RESEND_API_KEY environment variable is required in production/i,
+    );
+    expect(createMock).not.toHaveBeenCalled();
+  });
+
+  it('initializes Nest application in production when RESEND_API_KEY is valid', async () => {
+    delete process.env.PORT;
+    process.env.NODE_ENV = 'production';
+    process.env.TOKEN_ENCRYPTION_KEY = validKey;
+    process.env.API_PUBLIC_URL = 'http://localhost:3001';
+    process.env.OBJECT_STORAGE_PUBLIC_ENDPOINT = 'http://localhost:9000';
+    process.env.RESEND_API_KEY = 're_test_key_production_123';
+
+    await expect(bootstrap()).resolves.toBeUndefined();
+    expect(createMock).toHaveBeenCalledTimes(1);
+    expect(mockApp.listen).toHaveBeenCalledWith(3001);
+  });
 });

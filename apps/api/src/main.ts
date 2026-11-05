@@ -11,6 +11,7 @@ import { Logger, PinoLogger } from 'nestjs-pino';
 import { configureTrustProxy } from './config/trust-proxy';
 import { getPublicApiUrl } from './config/public-url';
 import { validateStoragePublicEndpoint } from './config/storage-endpoint';
+import { validateEmailDeliveryConfig } from './config/email-delivery';
 import { validateTokenEncryptionKey } from '@agency-os/database';
 
 export async function bootstrap() {
@@ -24,6 +25,9 @@ export async function bootstrap() {
 
   // Fail-fast startup validation for OBJECT_STORAGE_PUBLIC_ENDPOINT in production
   validateStoragePublicEndpoint();
+
+  // Fail-fast startup validation for RESEND_API_KEY in production
+  validateEmailDeliveryConfig();
 
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
     bufferLogs: true,
