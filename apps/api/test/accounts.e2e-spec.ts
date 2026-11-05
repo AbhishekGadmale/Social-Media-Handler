@@ -7,7 +7,7 @@ const request = require('supertest');
 import { AppModule } from './../src/app.module';
 import * as _cookieParser from 'cookie-parser';
 const cookieParser = _cookieParser.default || _cookieParser;
-import { PrismaClient, generateId } from '@agency-os/database';
+import { PrismaClient, generateId, SocialAccountRepository } from '@agency-os/database';
 import { loginAndGetSession } from './helpers';
 import { AllExceptionsFilter } from '../src/filters/all-exceptions.filter';
 import { PinoLogger } from 'nestjs-pino';
@@ -31,6 +31,8 @@ describe('AccountsController (e2e)', () => {
 
   let accountWorkspaceEditor: string;
   let accountWorkspaceOther: string;
+  let testWorkspaceOwner: string = '';
+  let accountWorkspaceOwner: string = '';
 
   beforeEach(async () => {
     if (redis) {
@@ -171,6 +173,49 @@ describe('AccountsController (e2e)', () => {
       },
     });
 
+        // 4. Workspace Owner (Has accounts.disconnect because OWNER has all permissions)
+    testWorkspaceOwner = generateId();
+    await prisma.workspace.create({
+      data: {
+        id: testWorkspaceOwner,
+        organizationId: testOrg,
+        name: 'Workspace Owner',
+      },
+    });
+    await prisma.workspaceMember.create({
+      data: {
+        id: generateId(),
+        workspaceId: testWorkspaceOwner,
+        userId: testUser.id,
+        role: 'OWNER',
+      },
+    });
+
+    accountWorkspaceOwner = generateId();
+    await prisma.socialAccount.create({
+      data: {
+        id: accountWorkspaceOwner,
+        workspaceId: testWorkspaceOwner,
+        provider: 'LINKEDIN',
+        externalId: 'ext-owner-1',
+        name: 'Owner LinkedIn',
+        capabilities: ['ACCOUNT_READ'],
+        status: 'ACTIVE',
+      },
+    });
+
+    const tokenOwner = encrypt('mock-owner-token');
+    await prisma.socialConnection.create({
+      data: {
+        id: generateId(),
+        socialAccountId: accountWorkspaceOwner,
+        encryptedAccessToken: tokenOwner.encrypted,
+        accessTokenIv: tokenOwner.iv,
+        accessTokenAuthTag: tokenOwner.authTag,
+        keyVersion: tokenOwner.keyVersion,
+      },
+    });
+
     sessionData = await loginAndGetSession(
       app,
       testUser.email,
@@ -186,6 +231,7 @@ describe('AccountsController (e2e)', () => {
       await prisma.workspaceMember.deleteMany({
         where: { userId: testUser.id },
       });
+      await prisma.workspace.delete({ where: { id: testWorkspaceOwner } }).catch(() => {});
       await prisma.workspace.delete({ where: { id: testWorkspaceEditor } });
       await prisma.workspace.delete({ where: { id: testWorkspaceNone } });
       await prisma.workspace.delete({ where: { id: testWorkspaceOther } });
@@ -318,5 +364,143 @@ describe('AccountsController (e2e)', () => {
     );
 
     addSpy.mockRestore();
+  });
+  describe('POST /api/v1/workspaces/:workspaceId/accounts/:accountId/disconnect', () => {
+    it('fails with 401 if unauthenticated', async () => {
+      const res = await request(app.getHttpServer()).post(
+        `/api/v1/workspaces/${testWorkspaceOwner}/accounts/${accountWorkspaceOwner}/disconnect`,
+      );
+      expect(res.status).toBe(401);
+    });
+
+    it('fails with 403 if user is not a member of workspace', async () => {
+      const res = await request(app.getHttpServer())
+        .post(
+          `/api/v1/workspaces/${testWorkspaceNone}/accounts/${accountWorkspaceOwner}/disconnect`,
+        )
+        .set('Cookie', sessionData.combinedCookie)
+        .set('x-csrf-token', sessionData.csrfToken);
+
+      expect(res.status).toBe(403);
+      expect(res.body.error.message).toContain('User is not a member of this workspace');
+    });
+
+    it('fails with 403 if member lacks accounts.disconnect permission (EDITOR)', async () => {
+      const res = await request(app.getHttpServer())
+        .post(
+          `/api/v1/workspaces/${testWorkspaceEditor}/accounts/${accountWorkspaceEditor}/disconnect`,
+        )
+        .set('Cookie', sessionData.combinedCookie)
+        .set('x-csrf-token', sessionData.csrfToken);
+
+      expect(res.status).toBe(403);
+      expect(res.body.error.message).toContain('Lacking permission: accounts.disconnect');
+    });
+
+    it('fails with 404 for non-existent account ID', async () => {
+      const nonExistentId = generateId();
+      const res = await request(app.getHttpServer())
+        .post(
+          `/api/v1/workspaces/${testWorkspaceOwner}/accounts/${nonExistentId}/disconnect`,
+        )
+        .set('Cookie', sessionData.combinedCookie)
+        .set('x-csrf-token', sessionData.csrfToken);
+
+      expect(res.status).toBe(404);
+      expect(res.body.error.message).toContain('Account not found');
+    });
+
+    it('fails with 403 for cross-workspace account (tenant isolation)', async () => {
+      const res = await request(app.getHttpServer())
+        .post(
+          `/api/v1/workspaces/${testWorkspaceOwner}/accounts/${accountWorkspaceOther}/disconnect`,
+        )
+        .set('Cookie', sessionData.combinedCookie)
+        .set('x-csrf-token', sessionData.csrfToken);
+
+      expect(res.status).toBe(403);
+      expect(res.body.error.message).toContain('Account does not belong to this workspace');
+    });
+
+    it('succeeds for OWNER: wipes credentials atomically, marks status DISCONNECTED, and records audit log', async () => {
+      const res = await request(app.getHttpServer())
+        .post(
+          `/api/v1/workspaces/${testWorkspaceOwner}/accounts/${accountWorkspaceOwner}/disconnect`,
+        )
+        .set('Cookie', sessionData.combinedCookie)
+        .set('x-csrf-token', sessionData.csrfToken);
+
+      expect(res.status).toBe(201);
+      expect(res.body).toEqual({
+        success: true,
+        accountId: accountWorkspaceOwner,
+        status: 'DISCONNECTED',
+      });
+
+      // Verify SocialAccount status in DB
+      const accountInDb = await prisma.socialAccount.findUniqueOrThrow({
+        where: { id: accountWorkspaceOwner },
+      });
+      expect(accountInDb.status).toBe('DISCONNECTED');
+
+      // Verify SocialConnection credentials in DB are completely wiped
+      const connInDb = await prisma.socialConnection.findUniqueOrThrow({
+        where: { socialAccountId: accountWorkspaceOwner },
+      });
+      expect(connInDb.encryptedAccessToken).toBeNull();
+      expect(connInDb.accessTokenIv).toBeNull();
+      expect(connInDb.accessTokenAuthTag).toBeNull();
+      expect(connInDb.encryptedRefreshToken).toBeNull();
+      expect(connInDb.refreshTokenIv).toBeNull();
+      expect(connInDb.refreshTokenAuthTag).toBeNull();
+      expect(connInDb.expiresAt).toBeNull();
+      expect(connInDb.refreshExpiresAt).toBeNull();
+
+      // Verify AuditLog record in DB
+      const auditInDb = await prisma.auditLog.findFirst({
+        where: {
+          action: 'ACCOUNT_DISCONNECTED',
+          targetId: accountWorkspaceOwner,
+        },
+      });
+      expect(auditInDb).toBeDefined();
+      expect(auditInDb?.workspaceId).toBe(testWorkspaceOwner);
+      expect(auditInDb?.actorId).toBe(testUser.id);
+      expect(auditInDb?.targetType).toBe('SocialAccount');
+    });
+
+    it('reconnects previously disconnected account via SocialAccountRepository.upsertWithConnection to ACTIVE state', async () => {
+      // SocialAccountRepository imported at top level
+      const repo = new SocialAccountRepository(prisma);
+
+      const freshToken = encrypt('fresh-reconnected-token');
+      const { account: reconnectedAccount } = await repo.upsertWithConnection(
+        testWorkspaceOwner,
+        {
+          id: accountWorkspaceOwner,
+          provider: 'LINKEDIN',
+          externalId: 'ext-owner-1',
+          name: 'Owner LinkedIn Reconnected',
+          capabilities: ['ACCOUNT_READ'],
+          status: 'ACTIVE' as any,
+        },
+        {
+          id: generateId(),
+          encryptedAccessToken: freshToken.encrypted,
+          accessTokenIv: freshToken.iv,
+          accessTokenAuthTag: freshToken.authTag,
+          keyVersion: freshToken.keyVersion,
+          expiresAt: new Date(Date.now() + 3600000),
+        },
+      );
+
+      expect(reconnectedAccount.status).toBe('ACTIVE');
+
+      const reconnectedConn = await prisma.socialConnection.findUniqueOrThrow({
+        where: { socialAccountId: accountWorkspaceOwner },
+      });
+      expect(reconnectedConn.encryptedAccessToken).toBe(freshToken.encrypted);
+      expect(reconnectedConn.accessTokenIv).toBe(freshToken.iv);
+    });
   });
 });

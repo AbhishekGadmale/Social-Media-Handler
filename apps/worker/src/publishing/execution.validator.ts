@@ -15,14 +15,13 @@ export class ExecutionValidator {
 
   validate(variant: any): ExecutionValidationResult {
     // 1. Account Active
-    if (
-      !variant.socialAccount ||
-      variant.socialAccount.status !== SocialAccountStatus.ACTIVE
-    ) {
+    const accountStatus = variant.socialAccount?.status ?? SocialAccountStatus.ACTIVE;
+    if (!variant.socialAccount || accountStatus !== SocialAccountStatus.ACTIVE) {
+      const isDisconnected = accountStatus === SocialAccountStatus.DISCONNECTED;
       return {
         valid: false,
         failureCategory: 'AUTH_REQUIRED',
-        failureCode: 'ACCOUNT_NOT_ACTIVE',
+        failureCode: isDisconnected ? 'ACCOUNT_DISCONNECTED' : 'ACCOUNT_NOT_ACTIVE',
       };
     }
 

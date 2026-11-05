@@ -190,6 +190,24 @@ export class MetaProvider implements ISocialProvider, IPublishingProvider {
     };
   }
 
+  async revokeToken(credentials: OAuthCredentials): Promise<void> {
+    if (!credentials.accessToken) return;
+    const url = `${this.baseUrl}/${this.version}/me/permissions`;
+    const response = await this.fetchWithTimeout(url, {
+      method: "DELETE",
+      headers: {
+        Authorization: `Bearer ${credentials.accessToken}`,
+      },
+    });
+    if (!response.ok) {
+      const text = await response.text();
+      throw new ProviderApiError(
+        `Failed to revoke Meta permissions: ${this.sanitizeErrorMessage(text, credentials.accessToken)}`,
+        response.status,
+      );
+    }
+  }
+
   async getProfiles(
     credentials: OAuthCredentials,
   ): Promise<ProviderProfileResult[]> {

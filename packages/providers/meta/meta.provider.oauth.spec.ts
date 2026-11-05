@@ -510,4 +510,41 @@ describe('MetaProvider OAuth', () => {
       expect(caps).toContain('POST_PUBLISH');
     });
   });
+  describe('revokeToken', () => {
+    it('calls DELETE /me/permissions with Bearer token on Meta Graph API', async () => {
+      (global.fetch as any).mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ success: true }),
+      });
+
+      await provider.revokeToken({ accessToken: 'meta_user_token_123', scopes: [] });
+
+      expect(global.fetch).toHaveBeenCalledWith(
+        'https://graph.facebook.com/v20.0/me/permissions',
+        expect.objectContaining({
+          method: 'DELETE',
+          headers: expect.objectContaining({
+            Authorization: 'Bearer meta_user_token_123',
+          }),
+        }),
+      );
+    });
+
+    it('throws ProviderApiError with sanitized error message on failed revoke', async () => {
+      (global.fetch as any).mockResolvedValueOnce({
+        ok: false,
+        status: 400,
+        text: async () => 'Invalid token: meta_user_token_123',
+      });
+
+      await expect(
+        provider.revokeToken({ accessToken: 'meta_user_token_123', scopes: [] }),
+      ).rejects.toThrow('Failed to revoke Meta permissions: Invalid token: ***');
+    });
+
+    it('gracefully no-ops if accessToken is missing', async () => {
+      await provider.revokeToken({ accessToken: '', scopes: [] });
+      expect(global.fetch).not.toHaveBeenCalled();
+    });
+  });
 });

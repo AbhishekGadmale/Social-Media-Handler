@@ -8,7 +8,7 @@ import { PermissionGuard } from '../auth/guards/permission.guard';
 import { AuthGuard } from '../auth/guards/auth.guard';
 import { WorkspaceGuard } from '../auth/guards/workspace.guard';
 import { AuditService } from '../core/audit.service';
-import { AuditAction } from '@agency-os/database';
+import { AuditAction, SocialAccountStatus } from '@agency-os/database';
 
 describe('AccountsController', () => {
   let controller: AccountsController;
@@ -26,6 +26,11 @@ describe('AccountsController', () => {
       getWorkspaceAccount: vi
         .fn()
         .mockResolvedValue({ id: 'acc-1', workspaceId: 'ws-1' }),
+      disconnectAccount: vi.fn().mockResolvedValue({
+        success: true,
+        accountId: 'acc-1',
+        status: SocialAccountStatus.DISCONNECTED,
+      }),
     };
 
     mockAuditService = {
@@ -110,5 +115,38 @@ describe('AccountsController', () => {
       'acc-foreign',
     );
     expect(queueMock.add).not.toHaveBeenCalled();
+  });
+
+  it('Disconnect endpoint calls disconnectAccount with user and request details and returns result', async () => {
+    const res = await controller.disconnectAccount('ws-1', 'acc-1', {
+      id: 'req-disc-1',
+      user: { id: 'u-1' },
+    } as any);
+
+    expect(accountsServiceMock.disconnectAccount).toHaveBeenCalledWith(
+      'ws-1',
+      'acc-1',
+      'u-1',
+      'req-disc-1',
+    );
+    expect(res).toEqual({
+      success: true,
+      accountId: 'acc-1',
+      status: SocialAccountStatus.DISCONNECTED,
+    });
+  });
+
+  it('Disconnect endpoint propagates exceptions from accountsService', async () => {
+    const { ForbiddenException } = await import('@nestjs/common');
+    accountsServiceMock.disconnectAccount.mockRejectedValueOnce(
+      new ForbiddenException('Account does not belong to this workspace'),
+    );
+
+    await expect(
+      controller.disconnectAccount('ws-1', 'acc-foreign', {
+        id: 'req-disc-2',
+        user: { id: 'u-1' },
+      } as any),
+    ).rejects.toThrow('Account does not belong to this workspace');
   });
 });

@@ -1099,5 +1099,49 @@ describe('Publishing Worker (e2e)', () => {
 
       credSpy.mockRestore();
     });
+    it('fails fast when social account is DISCONNECTED with ACCOUNT_DISCONNECTED failureCode and zero provider calls', async () => {
+      const { variantId, wsId, accountId } = await createFixture(
+        PostStatus.QUEUED,
+      );
+
+      // Disconnect account
+      await prisma.socialAccount.update({
+        where: { id: accountId },
+        data: { status: SocialAccountStatus.DISCONNECTED },
+      });
+
+      const credSpy = jest.spyOn(tokenService, 'getExecutionCredentials');
+
+      await processor.process({
+        id: 'job-account-disconnected',
+        data: {
+          workspaceId: wsId,
+          publicationId: variantId,
+          dispatchVersion: 1,
+        },
+      } as any);
+
+      // Provider credentials must NOT be requested
+      expect(credSpy).not.toHaveBeenCalled();
+
+      // Variant must be FAILED
+      const variant = await prisma.postPlatformVariant.findUniqueOrThrow({
+        where: { id: variantId },
+      });
+      expect(variant.status).toBe(PostStatus.FAILED);
+
+      // Attempt must be marked FAILED with AUTH_REQUIRED and ACCOUNT_DISCONNECTED failureCode
+      const attempt = await prisma.publicationAttempt.findFirst({
+        where: { variantId },
+        orderBy: { attemptNumber: 'desc' },
+      });
+      expect(attempt?.failureCategory).toBe('AUTH_REQUIRED');
+      expect(attempt?.failureCode).toBe('ACCOUNT_DISCONNECTED');
+      expect((attempt?.providerResponse as any)?.reason).toBe(
+        'Social account is disconnected',
+      );
+
+      credSpy.mockRestore();
+    });
   });
 });

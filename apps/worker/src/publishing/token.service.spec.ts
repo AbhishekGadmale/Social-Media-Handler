@@ -220,9 +220,9 @@ describe('TokenService', () => {
         where: { socialAccountId: account.id },
       });
       const decrypted = decrypt({
-        encrypted: updatedConn.encryptedAccessToken,
-        iv: updatedConn.accessTokenIv,
-        authTag: updatedConn.accessTokenAuthTag,
+        encrypted: updatedConn.encryptedAccessToken!,
+        iv: updatedConn.accessTokenIv!,
+        authTag: updatedConn.accessTokenAuthTag!,
         keyVersion: updatedConn.keyVersion,
       });
       expect(decrypted).toBe('refreshed-access-token-123');

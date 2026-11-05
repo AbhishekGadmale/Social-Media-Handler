@@ -23,6 +23,7 @@ export interface ISocialProvider {
   getPostMetrics?(credentials: OAuthCredentials, post: PostRef): Promise<RawPostMetrics>;
   publishPost?(credentials: OAuthCredentials, payload: PublishPayload): Promise<PublishResult>;
   deletePost?(credentials: OAuthCredentials, externalPostId: string): Promise<void>;
+  revokeToken?(credentials: OAuthCredentials): Promise<void>;
   getCapabilities?(context: CapabilityContext): Promise<ProviderCapabilities>;
   handleWebhook?(request: WebhookRequest): Promise<NormalizedWebhookEvent>;
 }

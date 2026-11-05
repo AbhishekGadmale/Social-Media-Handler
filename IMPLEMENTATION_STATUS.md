@@ -2434,3 +2434,79 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
    - **Live Deployment**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending human code review, external infrastructure provisioning, and disaster recovery rehearsals G18/G19).
 2. **Next Steps**:
    - Next milestone TBD.
+
+
+## 43. Phase 7.1: Social Account Disconnect Flow (PR #52) — IMPLEMENTED
+
+### 1. Summary & Motivation
+- **Implementation Status**: Fully implemented, verified locally across database, providers, worker, API, and web applications.
+- **Branch**: `feat/account-disconnect`
+- **Base Commit**: `86daaba32e3c2f05c9964b3c438e1a3dc064e941` (main post-PR #50)
+- **Scope & Objectives**:
+  - Implement protected disconnect endpoint `POST /api/v1/workspaces/:workspaceId/accounts/:accountId/disconnect`.
+  - Guard endpoint with `AuthGuard`, `WorkspaceGuard`, and `PermissionGuard` (`@RequirePermission('accounts.disconnect')`), restricting disconnect permissions to `OWNER` and `MANAGER` roles.
+  - Enforce tenant isolation: accounts belonging to another workspace return HTTP 403 Forbidden (`Account does not belong to this workspace`), preventing cross-tenant existence enumeration.
+  - Execute best-effort provider token revocation before wiping local credentials (Meta, Google/YouTube, and LinkedIn graceful no-op). Any provider-side failure is logged as a warning and never aborts or blocks the disconnect.
+  - Atomically wipe credentials in a single Prisma transaction: clear all access and refresh token material on `SocialConnection`, set `SocialAccount.status = DISCONNECTED`, and persist an `ACCOUNT_DISCONNECTED` audit log event.
+  - Protect worker processors: fence publishing processor to fail fast on non-active/disconnected accounts with zero provider calls; extend sync processor to gracefully record `SyncRunStatus.SKIPPED` (`reason: 'account_disconnected'`).
+  - Support seamless account reconnection via `SocialAccountRepository.upsertWithConnection` to restore `ACTIVE` status with fresh tokens without manual database intervention.
+  - Provide complete frontend UX in `apps/web`: render Disconnect button with explicit confirmation dialog/step, display `DISCONNECTED` badge on disconnected accounts, and provide a direct Reconnect action.
+
+### 2. Technical Architecture & Modifications
+
+1. **Database Layer (`packages/database`)**:
+   - **Schema Nullability (`schema.prisma`)**: Updated `SocialConnection` to make `encryptedAccessToken`, `accessTokenIv`, and `accessTokenAuthTag` nullable (`String?`), allowing credential wipe on disconnect while preserving the connection record and historic analytics/posts.
+   - **Migration**: Added migration `20261105000000_make_social_connection_credentials_nullable`.
+   - **Audit Actions (`AuditLogRepository.ts`)**: Added `ACCOUNT_DISCONNECTED = "ACCOUNT_DISCONNECTED"` to `AuditAction` enum.
+   - **Repository (`SocialAccountRepository.ts`)**: Added `getDecryptedCredentials` (encapsulating decryption inside repository boundaries per ESLint architecture rules) and `disconnect` (executing atomic credential wipe, status update to `DISCONNECTED`, and transactional audit logging).
+
+2. **Providers Layer (`packages/providers`)**:
+   - **Interface (`ISocialProvider.ts`)**: Added optional `revokeToken?(credentials: OAuthCredentials): Promise<void>`.
+   - **Meta Provider (`meta.provider.ts`)**: Implemented `revokeToken` calling `DELETE https://graph.facebook.com/v20.0/me/permissions` with Bearer token authentication and strict credential sanitization in error logs.
+   - **YouTube Provider (`youtube.provider.ts`)**: Implemented `revokeToken` calling `POST https://oauth2.googleapis.com/revoke` with URL-encoded token payload and credential sanitization.
+   - **LinkedIn Provider (`linkedin.provider.ts`)**: Implemented `revokeToken` as a documented graceful no-op since LinkedIn OAuth 2.0 API does not expose an RFC 7009 revocation endpoint.
+   - **Unit Tests**: Added comprehensive test suites in `meta.provider.oauth.spec.ts`, `youtube.provider.spec.ts`, and `linkedin.provider.spec.ts`.
+
+3. **Worker Layer (`apps/worker`)**:
+   - **Publishing Processor (`publishing.processor.ts`)**: Added account status fencing immediately following validation and before atomic worker claim. If `variant.socialAccount.status !== SocialAccountStatus.ACTIVE`, fails fast with `PostStatus.FAILED`, creates `FAILED` `PublicationAttempt` with `failureCategory: 'AUTH_REQUIRED'` and `failureCode: 'ACCOUNT_DISCONNECTED'`, logs warning, emits audit event, and returns without provider calls or retries.
+   - **Sync Processor (`sync.processor.ts`)**: Extended non-active account check to detect `DISCONNECTED` status and complete the sync run with `SyncRunStatus.SKIPPED` and `reason: 'account_disconnected'`.
+   - **Token Service (`token.service.ts`)**: Handled nullable `encryptedAccessToken`, `accessTokenIv`, and `accessTokenAuthTag` gracefully, throwing `AuthRequiredError` if credentials are null.
+
+4. **API Layer (`apps/api`)**:
+   - **Controller (`accounts.controller.ts`)**: Added `POST :accountId/disconnect` route guarded by `AuthGuard`, `WorkspaceGuard`, and `PermissionGuard` (`@RequirePermission('accounts.disconnect')`) with `RateLimitPolicies.expensive` throttling.
+   - **Service (`accounts.service.ts`)**: Implemented `disconnectAccount(workspaceId, accountId, userId, requestId)`:
+     - Checks existence (404 Not Found if missing).
+     - Checks workspace ownership (403 Forbidden `Account does not belong to this workspace` if foreign).
+     - Executes best-effort provider token revocation catching all errors without throwing.
+     - Calls `socialAccountRepo.disconnect` to execute atomic DB wipe and write audit log.
+   - **Unit Tests (`accounts.controller.spec.ts`, `accounts.service.spec.ts`)**: Verified 401 unauthenticated, 403 non-member, 403 lack of permission, 404 missing account, 403 foreign workspace, provider revoke success & failure continuation, and atomic DB wipe.
+   - **E2E Tests (`test/accounts.e2e-spec.ts`)**: Added complete e2e test suite verifying end-to-end HTTP lifecycle, tenant isolation, DB credential wiping, audit log creation, and reconnection restoration.
+
+5. **Web Layer (`apps/web`)**:
+   - **Component (`account-card.tsx`)**:
+     - Added Disconnect button for connected accounts.
+     - Added confirmation dialog/step ("Disconnect account? Publishing and sync will stop.") with Cancel and Confirm Disconnect buttons.
+     - Added `DISCONNECTED` status badge rendering.
+     - Added Reconnect button for disconnected accounts.
+     - Handled disconnect mutation loading states and error messages.
+   - **Accounts Page (`accounts/page.tsx`)**: Passed `onDisconnect={() => refetch()}` to trigger automatic list refresh upon account disconnection; updated provider connection availability checks to allow reconnecting disconnected accounts.
+   - **Unit Tests (`account-card.spec.tsx`)**: Added 6 tests covering disconnect button rendering, confirmation toggling, cancellation, API call with status update & onDisconnect callback, error handling, and disconnected badge rendering.
+
+### 3. Verification & Test Evidence
+
+- **Monorepo Lint (`pnpm turbo run lint`)**: 9/9 packages PASS with 0 errors.
+- **Monorepo Typecheck (`pnpm turbo run typecheck`)**: 10/10 tasks PASS with 0 errors.
+- **Monorepo Build (`pnpm turbo run build`)**: 7/7 tasks PASS.
+- **Database Unit Tests (`packages/database`)**: 8/8 unit test files, 63/63 PASS.
+- **Providers Unit Tests (`packages/providers`)**: 15/15 test files, 241/241 PASS.
+- **API Unit Tests (`apps/api`)**: 26/26 test files, 325/325 PASS.
+- **Web Unit Tests (`apps/web`)**: 8/8 test files, 117/117 PASS.
+
+### 4. Release Gate & Next Steps
+
+1. **Release Gate**:
+   - **Live Deployment**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending human code review, external infrastructure provisioning, and disaster recovery rehearsals G18/G19).
+2. **Next Steps**:
+   - Open Pull Request on GitHub against `main` branch.
+   - Verify all 6 GitHub Actions quality checks pass.
+   - Await independent Muse review before any merge consideration.

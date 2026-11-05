@@ -128,4 +128,66 @@ describe('AccountCard Capabilities UI', () => {
 
     expect(api.post).toHaveBeenCalledWith('workspaces/ws-1/oauth/youtube/connect');
   });
+
+  describe('Account Disconnect Flow', () => {
+    it('renders Disconnect button for connected account', () => {
+      render(<AccountCard account={baseAccount} />);
+      expect(screen.getByRole('button', { name: /Disconnect My YouTube Channel/i })).toBeInTheDocument();
+    });
+
+    it('clicking Disconnect displays confirmation step with Cancel and Confirm buttons', () => {
+      render(<AccountCard account={baseAccount} />);
+      const disconnectBtn = screen.getByRole('button', { name: /Disconnect My YouTube Channel/i });
+      fireEvent.click(disconnectBtn);
+
+      expect(screen.getByText(/Disconnect account\? Publishing and sync will stop\./i)).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /Cancel/i })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /Confirm disconnect/i })).toBeInTheDocument();
+    });
+
+    it('clicking Cancel closes confirmation step without calling API', () => {
+      render(<AccountCard account={baseAccount} />);
+      fireEvent.click(screen.getByRole('button', { name: /Disconnect My YouTube Channel/i }));
+      fireEvent.click(screen.getByRole('button', { name: /Cancel/i }));
+
+      expect(api.post).not.toHaveBeenCalled();
+      expect(screen.queryByText(/Disconnect account\? Publishing and sync will stop\./i)).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /Disconnect My YouTube Channel/i })).toBeInTheDocument();
+    });
+
+    it('clicking Confirm calls disconnect API, updates badge to Disconnected, and triggers onDisconnect', async () => {
+      const onDisconnect = vi.fn();
+      vi.mocked(api.post).mockResolvedValueOnce({ success: true, accountId: 'acc-1', status: 'DISCONNECTED' });
+
+      render(<AccountCard account={baseAccount} onDisconnect={onDisconnect} />);
+      fireEvent.click(screen.getByRole('button', { name: /Disconnect My YouTube Channel/i }));
+      fireEvent.click(screen.getByRole('button', { name: /Confirm disconnect/i }));
+
+      expect(api.post).toHaveBeenCalledWith('workspaces/ws-1/accounts/acc-1/disconnect');
+
+      expect(await screen.findByText('Disconnected')).toBeInTheDocument();
+      expect(onDisconnect).toHaveBeenCalled();
+      expect(screen.getByRole('button', { name: /Reconnect youtube/i })).toBeInTheDocument();
+    });
+
+    it('displays error message when disconnect API fails', async () => {
+      vi.mocked(api.post).mockRejectedValueOnce(new Error('Network error'));
+
+      render(<AccountCard account={baseAccount} />);
+      fireEvent.click(screen.getByRole('button', { name: /Disconnect My YouTube Channel/i }));
+      fireEvent.click(screen.getByRole('button', { name: /Confirm disconnect/i }));
+
+      expect(await screen.findByText('Failed to disconnect account. Please try again.')).toBeInTheDocument();
+      expect(screen.queryByText('Disconnected')).not.toBeInTheDocument();
+    });
+
+    it('renders Disconnected badge and Reconnect button when account status is DISCONNECTED', () => {
+      const disconnectedAccount = { ...baseAccount, status: 'DISCONNECTED' };
+      render(<AccountCard account={disconnectedAccount} />);
+
+      expect(screen.getByText('Disconnected')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /Reconnect youtube/i })).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /Disconnect My YouTube Channel/i })).not.toBeInTheDocument();
+    });
+  });
 });

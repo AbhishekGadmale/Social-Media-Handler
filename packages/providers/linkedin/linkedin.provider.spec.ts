@@ -191,4 +191,12 @@ describe('LinkedInProvider', () => {
     // This depends on how resolveCapabilities is implemented in capability-resolver.ts
     // Let's assume the resolver maps nothing for openid, but if there's no mapping it returns [] or ACCOUNT_READ
   });
+  describe('revokeToken', () => {
+    it('gracefully no-ops without error as LinkedIn lacks server-side token revocation', async () => {
+      await expect(
+        provider.revokeToken({ accessToken: 'mock-li-token' }),
+      ).resolves.toBeUndefined();
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+  });
 });

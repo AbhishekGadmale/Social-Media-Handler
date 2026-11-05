@@ -154,9 +154,9 @@ model SocialConnection {
   id              String @id @db.Uuid
   socialAccountId String @unique @db.Uuid
 
-  encryptedAccessToken String
-  accessTokenIv        String
-  accessTokenAuthTag   String
+  encryptedAccessToken String?
+  accessTokenIv        String?
+  accessTokenAuthTag   String?
 
   encryptedRefreshToken String?
   refreshTokenIv        String?

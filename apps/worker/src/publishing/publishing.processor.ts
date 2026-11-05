@@ -206,6 +206,49 @@ export class PublishingProcessor extends WorkerHost {
       return; // Safe NO-OP
     }
 
+    // 2b. Account Status Fencing (fail fast if account is not ACTIVE)
+    const accountStatus = variant.socialAccount?.status ?? SocialAccountStatus.ACTIVE;
+    if (accountStatus !== SocialAccountStatus.ACTIVE) {
+      const isDisconnected =
+        accountStatus === SocialAccountStatus.DISCONNECTED;
+      const failureReason = isDisconnected
+        ? 'Social account is disconnected'
+        : 'Social account requires reauthorization';
+      const failureCode = isDisconnected
+        ? 'ACCOUNT_DISCONNECTED'
+        : 'ACCOUNT_REAUTH_REQUIRED';
+
+      await this.prisma.postPlatformVariant.update({
+        where: { id: publicationId },
+        data: { status: PostStatus.FAILED },
+      });
+      await this.prisma.publicationAttempt.create({
+        data: {
+          id: generateId(),
+          variantId: publicationId,
+          attemptNumber: await this.getNextAttemptNumber(publicationId),
+          status: 'FAILED',
+          failureCategory: 'AUTH_REQUIRED',
+          failureCode,
+          providerResponse: { reason: failureReason },
+          startedAt: new Date(),
+          completedAt: new Date(),
+        },
+      });
+      this.logger.warn({
+        msg: 'publication.job.account_not_active',
+        reason: failureReason,
+        accountStatus,
+        ...jobMeta,
+      });
+      await this.emitAudit(
+        workspaceId,
+        publicationId,
+        'PUBLICATION_FAILED',
+      );
+      return;
+    }
+
     // 3. Execution-time Revalidation
     const validation = this.validator.validate(variant as any);
     if (!validation.valid) {

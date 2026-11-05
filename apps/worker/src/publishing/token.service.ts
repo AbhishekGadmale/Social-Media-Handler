@@ -52,6 +52,16 @@ export class TokenService {
       );
     }
 
+    const encAccessToken = account.connection.encryptedAccessToken;
+    const accessTokenIv = account.connection.accessTokenIv;
+    const accessTokenAuthTag = account.connection.accessTokenAuthTag;
+
+    if (!encAccessToken || !accessTokenIv || !accessTokenAuthTag) {
+      throw new AuthRequiredError(
+        `Social account credentials not found or disconnected for id: ${socialAccountId}`,
+      );
+    }
+
     const now = Date.now();
     const expiresAtMs = account.connection.expiresAt
       ? account.connection.expiresAt.getTime()
@@ -63,9 +73,9 @@ export class TokenService {
       expiresAtMs > now + TokenService.REFRESH_THRESHOLD_MS
     ) {
       const decryptedToken = decrypt({
-        encrypted: account.connection.encryptedAccessToken,
-        iv: account.connection.accessTokenIv,
-        authTag: account.connection.accessTokenAuthTag,
+        encrypted: encAccessToken,
+        iv: accessTokenIv,
+        authTag: accessTokenAuthTag,
         keyVersion: account.connection.keyVersion,
       });
 
@@ -84,9 +94,9 @@ export class TokenService {
     if (!canRefresh && expiresAtMs > now) {
       // Token is in the 5-minute pre-expiry window, cannot be refreshed, but is STILL VALID
       const decryptedToken = decrypt({
-        encrypted: account.connection.encryptedAccessToken,
-        iv: account.connection.accessTokenIv,
-        authTag: account.connection.accessTokenAuthTag,
+        encrypted: encAccessToken,
+        iv: accessTokenIv,
+        authTag: accessTokenAuthTag,
         keyVersion: account.connection.keyVersion,
       });
       return {
@@ -135,7 +145,10 @@ export class TokenService {
         if (
           refreshedConnection?.expiresAt &&
           refreshedConnection.expiresAt.getTime() >
-            Date.now() + TokenService.REFRESH_THRESHOLD_MS
+            Date.now() + TokenService.REFRESH_THRESHOLD_MS &&
+          refreshedConnection.encryptedAccessToken &&
+          refreshedConnection.accessTokenIv &&
+          refreshedConnection.accessTokenAuthTag
         ) {
           const decryptedToken = decrypt({
             encrypted: refreshedConnection.encryptedAccessToken,
@@ -156,7 +169,10 @@ export class TokenService {
         if (
           refreshedConnection?.expiresAt &&
           refreshedConnection.expiresAt.getTime() >
-            Date.now() + TokenService.REFRESH_THRESHOLD_MS
+            Date.now() + TokenService.REFRESH_THRESHOLD_MS &&
+          refreshedConnection.encryptedAccessToken &&
+          refreshedConnection.accessTokenIv &&
+          refreshedConnection.accessTokenAuthTag
         ) {
           const decryptedToken = decrypt({
             encrypted: refreshedConnection.encryptedAccessToken,
@@ -188,7 +204,10 @@ export class TokenService {
       if (
         currentConnection.expiresAt &&
         currentConnection.expiresAt.getTime() >
-          Date.now() + TokenService.REFRESH_THRESHOLD_MS
+          Date.now() + TokenService.REFRESH_THRESHOLD_MS &&
+        currentConnection.encryptedAccessToken &&
+        currentConnection.accessTokenIv &&
+        currentConnection.accessTokenAuthTag
       ) {
         const decryptedToken = decrypt({
           encrypted: currentConnection.encryptedAccessToken,
@@ -211,7 +230,10 @@ export class TokenService {
         // If the token is still valid (now < expiresAt), return it!
         if (
           currentConnection.expiresAt &&
-          currentConnection.expiresAt.getTime() > Date.now()
+          currentConnection.expiresAt.getTime() > Date.now() &&
+          currentConnection.encryptedAccessToken &&
+          currentConnection.accessTokenIv &&
+          currentConnection.accessTokenAuthTag
         ) {
           const decryptedToken = decrypt({
             encrypted: currentConnection.encryptedAccessToken,
@@ -327,7 +349,12 @@ export class TokenService {
           const latest = await tx.socialConnection.findUnique({
             where: { socialAccountId },
           });
-          if (latest) {
+          if (
+            latest &&
+            latest.encryptedAccessToken &&
+            latest.accessTokenIv &&
+            latest.accessTokenAuthTag
+          ) {
             const decryptedLatest = decrypt({
               encrypted: latest.encryptedAccessToken,
               iv: latest.accessTokenIv,
@@ -363,9 +390,9 @@ export class TokenService {
     workspaceId?: string;
     accountProvider: string;
     snapshotConnection: {
-      encryptedAccessToken: string;
-      accessTokenIv: string;
-      accessTokenAuthTag: string;
+      encryptedAccessToken?: string | null;
+      accessTokenIv?: string | null;
+      accessTokenAuthTag?: string | null;
       encryptedRefreshToken?: string | null;
       refreshTokenIv?: string | null;
       refreshTokenAuthTag?: string | null;
@@ -440,7 +467,10 @@ export class TokenService {
         // If DB state changed and latest credentials are currently valid:
         if (
           latestConnection.expiresAt &&
-          latestConnection.expiresAt.getTime() > Date.now()
+          latestConnection.expiresAt.getTime() > Date.now() &&
+          latestConnection.encryptedAccessToken &&
+          latestConnection.accessTokenIv &&
+          latestConnection.accessTokenAuthTag
         ) {
           const decryptedToken = decrypt({
             encrypted: latestConnection.encryptedAccessToken,
@@ -496,7 +526,10 @@ export class TokenService {
 
         if (
           recheckAccount?.connection?.expiresAt &&
-          recheckAccount.connection.expiresAt.getTime() > Date.now()
+          recheckAccount.connection.expiresAt.getTime() > Date.now() &&
+          recheckAccount.connection.encryptedAccessToken &&
+          recheckAccount.connection.accessTokenIv &&
+          recheckAccount.connection.accessTokenAuthTag
         ) {
           const decryptedToken = decrypt({
             encrypted: recheckAccount.connection.encryptedAccessToken,
