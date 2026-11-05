@@ -7,7 +7,7 @@ const request = require('supertest');
 import { AppModule } from './../src/app.module';
 import * as _cookieParser from 'cookie-parser';
 const cookieParser = _cookieParser.default || _cookieParser;
-import { PrismaClient, generateId } from '@agency-os/database';
+import { PrismaClient, generateId, SocialAccountRepository } from '@agency-os/database';
 import { loginAndGetSession } from './helpers';
 import { AllExceptionsFilter } from '../src/filters/all-exceptions.filter';
 import { PinoLogger } from 'nestjs-pino';
@@ -170,6 +170,49 @@ describe('AccountsController (e2e)', () => {
         accessTokenIv: token2.iv,
         accessTokenAuthTag: token2.authTag,
         keyVersion: token2.keyVersion,
+      },
+    });
+
+        // 4. Workspace Owner (Has accounts.disconnect because OWNER has all permissions)
+    testWorkspaceOwner = generateId();
+    await prisma.workspace.create({
+      data: {
+        id: testWorkspaceOwner,
+        organizationId: testOrg,
+        name: 'Workspace Owner',
+      },
+    });
+    await prisma.workspaceMember.create({
+      data: {
+        id: generateId(),
+        workspaceId: testWorkspaceOwner,
+        userId: testUser.id,
+        role: 'OWNER',
+      },
+    });
+
+    accountWorkspaceOwner = generateId();
+    await prisma.socialAccount.create({
+      data: {
+        id: accountWorkspaceOwner,
+        workspaceId: testWorkspaceOwner,
+        provider: 'LINKEDIN',
+        externalId: 'ext-owner-1',
+        name: 'Owner LinkedIn',
+        capabilities: ['ACCOUNT_READ'],
+        status: 'ACTIVE',
+      },
+    });
+
+    const tokenOwner = encrypt('mock-owner-token');
+    await prisma.socialConnection.create({
+      data: {
+        id: generateId(),
+        socialAccountId: accountWorkspaceOwner,
+        encryptedAccessToken: tokenOwner.encrypted,
+        accessTokenIv: tokenOwner.iv,
+        accessTokenAuthTag: tokenOwner.authTag,
+        keyVersion: tokenOwner.keyVersion,
       },
     });
 
@@ -427,7 +470,7 @@ describe('AccountsController (e2e)', () => {
     });
 
     it('reconnects previously disconnected account via SocialAccountRepository.upsertWithConnection to ACTIVE state', async () => {
-      const { SocialAccountRepository } = await import('@agency-os/database');
+      // SocialAccountRepository imported at top level
       const repo = new SocialAccountRepository(prisma);
 
       const freshToken = encrypt('fresh-reconnected-token');

@@ -229,9 +229,10 @@ export class PublishingProcessor extends WorkerHost {
     }
 
     // 3b. Account Status Fencing (fail fast if account is not ACTIVE)
-    if (variant.socialAccount.status !== SocialAccountStatus.ACTIVE) {
+    const accountStatus = variant.socialAccount?.status ?? SocialAccountStatus.ACTIVE;
+    if (accountStatus !== SocialAccountStatus.ACTIVE) {
       const isDisconnected =
-        variant.socialAccount.status === SocialAccountStatus.DISCONNECTED;
+        accountStatus === SocialAccountStatus.DISCONNECTED;
       const failureReason = isDisconnected
         ? 'Social account is disconnected'
         : 'Social account requires reauthorization';
