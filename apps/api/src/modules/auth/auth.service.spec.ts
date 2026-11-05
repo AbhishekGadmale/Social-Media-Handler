@@ -1,7 +1,14 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { Test, TestingModule } from '@nestjs/testing';
+import { BadRequestException } from '@nestjs/common';
 import { AuthService, InvalidCredentialsException } from './auth.service';
-import { UserRepository, AuditAction, Prisma } from '@agency-os/database';
+import {
+  UserRepository,
+  EmailVerificationTokenRepository,
+  AuditAction,
+  Prisma,
+} from '@agency-os/database';
+import { EMAIL_DELIVERY_SERVICE } from './email-delivery.service';
 import { SessionManager } from '@agency-os/session';
 import { AuditService } from '../core/audit.service';
 import * as argon2 from '@node-rs/argon2';
@@ -27,6 +34,15 @@ describe('AuthService', () => {
     destroyAllUserSessions: any;
     destroyOtherUserSessions: any;
   };
+  let tokenRepoMock: {
+    createToken: any;
+    consumeToken: any;
+    findByTokenHash: any;
+    invalidateActiveUserTokens: any;
+  };
+  let emailDeliveryMock: {
+    sendVerificationEmail: any;
+  };
   let auditServiceMock: {
     logActionBestEffort: any;
   };
@@ -50,6 +66,17 @@ describe('AuthService', () => {
       destroyOtherUserSessions: vi.fn(),
     };
 
+    tokenRepoMock = {
+      createToken: vi.fn(),
+      consumeToken: vi.fn(),
+      findByTokenHash: vi.fn(),
+      invalidateActiveUserTokens: vi.fn(),
+    };
+
+    emailDeliveryMock = {
+      sendVerificationEmail: vi.fn(),
+    };
+
     auditServiceMock = {
       logActionBestEffort: vi.fn(),
     };
@@ -59,6 +86,14 @@ describe('AuthService', () => {
         AuthService,
         { provide: UserRepository, useValue: userRepoMock },
         { provide: SessionManager, useValue: sessionManagerMock },
+        {
+          provide: EmailVerificationTokenRepository,
+          useValue: tokenRepoMock,
+        },
+        {
+          provide: EMAIL_DELIVERY_SERVICE,
+          useValue: emailDeliveryMock,
+        },
         { provide: AuditService, useValue: auditServiceMock },
       ],
     }).compile();
@@ -93,10 +128,20 @@ describe('AuthService', () => {
         hashedPassword: '$argon2id$hashed',
         organizationName: 'Alice Org',
         workspaceName: 'Alice WS',
+        verificationToken: {
+          tokenHash: expect.any(String),
+          expiresAt: expect.any(Date),
+        },
       });
+      expect(emailDeliveryMock.sendVerificationEmail).toHaveBeenCalledWith(
+        'alice@example.com',
+        expect.any(String),
+      );
       expect(auditServiceMock.logActionBestEffort).toHaveBeenCalledWith({
         action: AuditAction.AUTH_SIGNUP_SUCCEEDED,
+        actorId: 'u-1',
         targetType: 'User',
+        targetId: 'u-1',
         requestId: 'req-123',
       });
       expect(result).toEqual({ message: 'Registration request received.' });
@@ -188,6 +233,140 @@ describe('AuthService', () => {
           password: 'Password123!',
         }),
       ).rejects.toThrow(p2002OtherError);
+    });
+  });
+
+  describe('verifyEmail', () => {
+    it('successfully consumes a valid verification token and records audit event', async () => {
+      const validToken = 'a'.repeat(64);
+      tokenRepoMock.consumeToken.mockResolvedValueOnce({
+        token: { id: 'evt-1', consumedAt: new Date() },
+        user: {
+          id: 'user-verified-1',
+          email: 'verified@example.com',
+          emailVerified: true,
+        },
+      });
+
+      const result = await service.verifyEmail(validToken, 'req-verify-1');
+
+      expect(tokenRepoMock.consumeToken).toHaveBeenCalledWith(validToken);
+      expect(auditServiceMock.logActionBestEffort).toHaveBeenCalledWith({
+        action: AuditAction.AUTH_EMAIL_VERIFIED,
+        actorId: 'user-verified-1',
+        targetType: 'User',
+        targetId: 'user-verified-1',
+        requestId: 'req-verify-1',
+      });
+      expect(result).toEqual({ message: 'Email verified successfully.' });
+    });
+
+    it('throws BadRequestException and logs failure when consumeToken returns null (expired or already consumed)', async () => {
+      const expiredToken = 'b'.repeat(64);
+      tokenRepoMock.consumeToken.mockResolvedValueOnce(null);
+
+      await expect(
+        service.verifyEmail(expiredToken, 'req-verify-fail'),
+      ).rejects.toThrow(BadRequestException);
+
+      expect(auditServiceMock.logActionBestEffort).toHaveBeenCalledWith({
+        action: AuditAction.AUTH_EMAIL_VERIFICATION_FAILED,
+        targetType: 'User',
+        requestId: 'req-verify-fail',
+      });
+    });
+
+    it('throws BadRequestException for malformed or short tokens without hitting token repository', async () => {
+      await expect(service.verifyEmail('')).rejects.toThrow(
+        BadRequestException,
+      );
+      await expect(service.verifyEmail('too-short')).rejects.toThrow(
+        BadRequestException,
+      );
+      expect(tokenRepoMock.consumeToken).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('resendVerification', () => {
+    it('invalidates prior tokens, creates new token, and dispatches email for unverified user', async () => {
+      userRepoMock.findByEmail.mockResolvedValueOnce({
+        id: 'user-unverified-1',
+        email: 'unverified@example.com',
+        emailVerified: false,
+      });
+
+      const result = await service.resendVerification(
+        '  Unverified@Example.com  ',
+        'req-resend-1',
+      );
+
+      expect(userRepoMock.findByEmail).toHaveBeenCalledWith(
+        'unverified@example.com',
+      );
+      expect(tokenRepoMock.invalidateActiveUserTokens).toHaveBeenCalledWith(
+        'user-unverified-1',
+      );
+      expect(tokenRepoMock.createToken).toHaveBeenCalledWith(
+        'user-unverified-1',
+        expect.any(String),
+        expect.any(Date),
+      );
+      expect(emailDeliveryMock.sendVerificationEmail).toHaveBeenCalledWith(
+        'unverified@example.com',
+        expect.any(String),
+      );
+      expect(auditServiceMock.logActionBestEffort).toHaveBeenCalledWith({
+        action: AuditAction.AUTH_EMAIL_VERIFICATION_RESENT,
+        actorId: 'user-unverified-1',
+        targetType: 'User',
+        targetId: 'user-unverified-1',
+        requestId: 'req-resend-1',
+      });
+      expect(result).toEqual({
+        message:
+          'If an unverified account exists for this email, a verification link has been sent.',
+      });
+    });
+
+    it('returns generic message and does not send email when user is already verified', async () => {
+      userRepoMock.findByEmail.mockResolvedValueOnce({
+        id: 'user-already-verified',
+        email: 'verified@example.com',
+        emailVerified: true,
+      });
+
+      const result = await service.resendVerification(
+        'verified@example.com',
+        'req-resend-verified',
+      );
+
+      expect(tokenRepoMock.invalidateActiveUserTokens).not.toHaveBeenCalled();
+      expect(tokenRepoMock.createToken).not.toHaveBeenCalled();
+      expect(emailDeliveryMock.sendVerificationEmail).not.toHaveBeenCalled();
+      expect(result).toEqual({
+        message:
+          'If an unverified account exists for this email, a verification link has been sent.',
+      });
+    });
+
+    it('runs dummy argon2 work and returns generic message when user does not exist (anti-enumeration)', async () => {
+      userRepoMock.findByEmail.mockResolvedValueOnce(null);
+      vi.mocked(argon2.hash).mockResolvedValueOnce('$argon2id$dummy');
+
+      const result = await service.resendVerification(
+        'nonexistent@example.com',
+        'req-resend-nonexistent',
+      );
+
+      expect(argon2.hash).toHaveBeenCalledWith(
+        'dummy-argon2-timing-mitigation-string',
+      );
+      expect(tokenRepoMock.createToken).not.toHaveBeenCalled();
+      expect(emailDeliveryMock.sendVerificationEmail).not.toHaveBeenCalled();
+      expect(result).toEqual({
+        message:
+          'If an unverified account exists for this email, a verification link has been sent.',
+      });
     });
   });
 

@@ -5,6 +5,7 @@ import {
   EMAIL_DELIVERY_SERVICE,
   MockEmailDeliveryService,
   NoopEmailDeliveryService,
+  ResendEmailDeliveryService,
 } from './email-delivery.service';
 
 @Module({
@@ -13,10 +14,15 @@ import {
     AuthService,
     {
       provide: EMAIL_DELIVERY_SERVICE,
-      useClass:
-        process.env.NODE_ENV === 'production'
-          ? NoopEmailDeliveryService
-          : MockEmailDeliveryService,
+      useFactory: () => {
+        if (process.env.NODE_ENV === 'production') {
+          if (process.env.RESEND_API_KEY) {
+            return new ResendEmailDeliveryService();
+          }
+          return new NoopEmailDeliveryService();
+        }
+        return new MockEmailDeliveryService();
+      },
     },
   ],
   exports: [AuthService, EMAIL_DELIVERY_SERVICE],

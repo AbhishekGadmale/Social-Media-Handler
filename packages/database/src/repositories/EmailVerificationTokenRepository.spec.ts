@@ -71,6 +71,27 @@ describe('EmailVerificationTokenRepository', () => {
     });
   });
 
+  describe('invalidateActiveUserTokens', () => {
+    it('updates all unconsumed tokens for the user with consumedAt', async () => {
+      prismaMock.emailVerificationToken.updateMany.mockResolvedValue({
+        count: 2,
+      });
+
+      const count = await repo.invalidateActiveUserTokens('user-1');
+
+      expect(prismaMock.emailVerificationToken.updateMany).toHaveBeenCalledWith({
+        where: {
+          userId: 'user-1',
+          consumedAt: null,
+        },
+        data: {
+          consumedAt: expect.any(Date),
+        },
+      });
+      expect(count).toBe(2);
+    });
+  });
+
   describe('consumeToken', () => {
     it('successfully consumes unconsumed, unexpired token and marks user verified', async () => {
       const rawToken = crypto.randomBytes(32).toString('hex');
