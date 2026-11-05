@@ -24,6 +24,7 @@ describe('AuthController', () => {
       changePassword: vi.fn(),
       verifyEmail: vi.fn(),
       resendVerification: vi.fn(),
+      revokeAllUserSessions: vi.fn(),
     };
 
     memberRepoMock = {
@@ -597,6 +598,40 @@ describe('AuthController', () => {
         metadata: { reason: 'Database connection failed' },
       });
     });
+
+    it('returns sessionCleanupDeferred: true and logs audit metadata when authService returns sessionCleanupDeferred', async () => {
+      authServiceMock.changePassword.mockResolvedValueOnce({
+        success: true,
+        sessionCleanupDeferred: true,
+        message:
+          'Password changed successfully, but terminating other active sessions failed. Stale sessions will be invalidated on their next request via security epoch enforcement.',
+      });
+
+      const result = await controller.changePassword(
+        {
+          currentPassword: 'oldPassword123',
+          newPassword: 'newSecretPassword456',
+        },
+        mockUser,
+        reqMock as Request,
+      );
+
+      expect(auditServiceMock.logActionBestEffort).toHaveBeenCalledWith({
+        action: AuditAction.AUTH_PASSWORD_CHANGED,
+        actorId: 'user-change-pw-controller',
+        targetType: 'User',
+        targetId: 'user-change-pw-controller',
+        requestId: 'req-auth-123',
+        metadata: { sessionCleanupDeferred: true },
+      });
+
+      expect(result).toEqual({
+        message: expect.stringContaining(
+          'terminating other active sessions failed',
+        ),
+        sessionCleanupDeferred: true,
+      });
+    });
   });
   describe('verifyEmail', () => {
     const validDto = { token: 'a'.repeat(64) };
@@ -676,6 +711,50 @@ describe('AuthController', () => {
           process.env.ALLOW_INSECURE_HTTP_AUTH = prevOverride;
         }
       }
+    });
+  });
+
+  describe('revokeAllSessions', () => {
+    const mockUser: any = {
+      id: 'user-revoke-all-controller',
+      email: 'revokeall@example.com',
+    };
+
+    it('successfully calls authService.revokeAllUserSessions, logs AUTH_REVOKE_ALL_SESSIONS, and clears cookies', async () => {
+      authServiceMock.revokeAllUserSessions.mockResolvedValueOnce(undefined);
+
+      const result = await controller.revokeAllSessions(
+        mockUser,
+        reqMock as Request,
+        resMock as Response,
+      );
+
+      expect(authServiceMock.revokeAllUserSessions).toHaveBeenCalledWith(
+        'user-revoke-all-controller',
+      );
+
+      expect(auditServiceMock.logActionBestEffort).toHaveBeenCalledWith({
+        action: AuditAction.AUTH_REVOKE_ALL_SESSIONS,
+        actorId: 'user-revoke-all-controller',
+        targetType: 'User',
+        targetId: 'user-revoke-all-controller',
+        requestId: 'req-auth-123',
+      });
+
+      expect(resMock.clearCookie).toHaveBeenCalledWith('session', {
+        httpOnly: true,
+        secure: false,
+        sameSite: 'lax',
+      });
+      expect(resMock.clearCookie).toHaveBeenCalledWith('csrfToken', {
+        httpOnly: false,
+        secure: false,
+        sameSite: 'lax',
+      });
+
+      expect(result).toEqual({
+        message: 'All sessions revoked successfully',
+      });
     });
   });
 });

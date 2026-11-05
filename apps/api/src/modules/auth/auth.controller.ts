@@ -102,6 +102,20 @@ export class AuthController {
     return this.authService.resendVerification(body.email, requestId);
   }
 
+  private clearSessionCookies(req: Request, res: Response): void {
+    const isSecureRequest = Boolean(req.secure);
+    res.clearCookie('session', {
+      httpOnly: true,
+      secure: isSecureRequest,
+      sameSite: 'lax',
+    });
+    res.clearCookie('csrfToken', {
+      httpOnly: false,
+      secure: isSecureRequest,
+      sameSite: 'lax',
+    });
+  }
+
   @Throttle({ default: RateLimitPolicies.auth })
   @Post('login')
   @HttpCode(HttpStatus.OK)
@@ -204,17 +218,7 @@ export class AuthController {
       });
     }
 
-    const isSecureRequest = Boolean(req.secure);
-    res.clearCookie('session', {
-      httpOnly: true,
-      secure: isSecureRequest,
-      sameSite: 'lax',
-    });
-    res.clearCookie('csrfToken', {
-      httpOnly: false,
-      secure: isSecureRequest,
-      sameSite: 'lax',
-    });
+    this.clearSessionCookies(req, res);
     return { message: 'Logged out successfully' };
   }
 
@@ -233,7 +237,7 @@ export class AuthController {
     const requestId = (req as any).id;
 
     try {
-      await this.authService.changePassword(
+      const result = await this.authService.changePassword(
         user.id,
         currentPassword,
         newPassword,
@@ -246,7 +250,19 @@ export class AuthController {
         targetType: 'User',
         targetId: user.id,
         requestId,
+        metadata: result?.sessionCleanupDeferred
+          ? { sessionCleanupDeferred: true }
+          : undefined,
       });
+
+      if (result?.sessionCleanupDeferred) {
+        return {
+          message:
+            result.message ||
+            'Password changed successfully, but terminating other active sessions failed. Stale sessions will be invalidated on their next request via security epoch enforcement.',
+          sessionCleanupDeferred: true,
+        };
+      }
 
       return { message: 'Password changed successfully' };
     } catch (e) {
@@ -267,6 +283,32 @@ export class AuthController {
       });
       throw e;
     }
+  }
+
+  @UseGuards(AuthGuard)
+  @Throttle({ default: RateLimitPolicies.auth })
+  @Post('sessions/revoke-all')
+  @HttpCode(HttpStatus.OK)
+  async revokeAllSessions(
+    @CurrentUser() user: User,
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const requestId = (req as any).id;
+
+    await this.authService.revokeAllUserSessions(user.id);
+
+    this.auditService.logActionBestEffort({
+      action: AuditAction.AUTH_REVOKE_ALL_SESSIONS,
+      actorId: user.id,
+      targetType: 'User',
+      targetId: user.id,
+      requestId,
+    });
+
+    this.clearSessionCookies(req, res);
+
+    return { message: 'All sessions revoked successfully' };
   }
 
   @UseGuards(AuthGuard)
