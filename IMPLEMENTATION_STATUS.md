@@ -2259,13 +2259,19 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
    - **Live Deployment**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending external infrastructure provisioning and disaster recovery rehearsals G18/G19).
 
 
-## 41. Phase 7.1, PR 2A: Public Signup, Workspace Provisioning & Security Epoch (PR #49)
+## 41. Phase 7.1, PR 2A: Public Signup, Workspace Provisioning & Security Epoch (PR #49) — MERGED
 
 ### 1. Summary & Motivation
+- **Merge Status & Identity**: Successfully merged into `main` on 2026-11-04T19:10:04Z.
+  - **Merge Commit SHA**: `325012d7c94702bac2656ebe1a89e74102910460`
+  - **Approved Implementation HEAD**: `9abe7a60ae03c6f756ae3edfec632c206f28881f`
+  - **Independent Review**: Approved by Muse review following resolution of B1 (GitGuardian incident #39580066 marked as a test credential in the GitGuardian dashboard, clearing the required check after test fixtures were updated at HEAD) and B2 (email verification dead end deferred to follow-up milestone PR #51 via Option A; E2E cross-tenant test UUID fixture corrected).
+  - **CI Quality Gates**: 6/6 checks passed on approved HEAD and 5/5 checks passed on merge commit.
+  - **Next Milestone**: PR #51 merged (Email Verification Lifecycle, Verification Endpoints & 403 Enforcement Restoration); next milestone TBD.
 - **Public Self-Registration**: Exposes an unauthenticated, rate-limited public signup endpoint (`POST /api/v1/auth/signup`) allowing new users to onboard without prior administrative provisioning.
 - **Atomic Multi-Tenant Provisioning**: On signup, atomically provisions `User`, personal `Organization`, default `Workspace`, and `WorkspaceMember` with `OWNER` role inside a single PostgreSQL transaction (`$transaction`). Prevents orphaned or partially provisioned tenant states.
 - **Security Epoch Invariant (Muse M1 Resolution)**: Implements database-backed `securityEpoch` on `User` and in the Redis session payload. Solves the distributed revocation race condition identified in PR #48 review: `AuthGuard` verifies exact equality (`session.securityEpoch === user.securityEpoch`), failing closed on any mismatch, staleness, or tampering with zero extra database queries.
-- **Email Verification Primitives & Deferral of Enforcement (Option A — Muse B2 Resolution)**: Establishes `emailVerified` (Boolean, default `false`), `emailVerifiedAt` (DateTime?), and `EmailVerificationToken` table with SHA-256 token hashing and atomic conditional consumption primitives. Following Muse review finding B2, 403 enforcement gating on unverified accounts has been deferred to PR #50 to prevent creating an inescapable dead end for self-registered users. Newly registered users are created with `emailVerified: false`, but are permitted to access their provisioned workspace and connect OAuth accounts while the full email delivery and verification endpoints are finalized in PR #50.
+- **Email Verification Primitives & Deferral of Enforcement (Option A — Muse B2 Resolution)**: Establishes `emailVerified` (Boolean, default `false`), `emailVerifiedAt` (DateTime?), and `EmailVerificationToken` table with SHA-256 token hashing and atomic conditional consumption primitives. Following Muse review finding B2, 403 enforcement gating on unverified accounts has been deferred to PR #51 to prevent creating an inescapable dead end for self-registered users. Newly registered users are created with `emailVerified: false`, but are permitted to access their provisioned workspace and connect OAuth accounts while the full email delivery and verification endpoints are finalized in PR #51.
 - **Anti-Enumeration Parity**: Regardless of whether an email is novel or pre-existing, `POST /api/v1/auth/signup` returns HTTP 201 with identical response body (`{"message": "Registration request received."}`), emits zero session cookies, and executes dummy Argon2id password hashing on duplicate emails to eliminate response-timing side channels.
 
 ### 2. Scope & Technical Architecture
@@ -2293,7 +2299,7 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
 3. **API & Security Layer (`apps/api`)**:
    - **Signup DTO (`signup.dto.ts`)**: Validates `email` (normalized, lowercase), `password` (min 8, max 128 chars), and optional sanitized strings for `organizationName` and `workspaceName`.
    - **Signup Endpoint & Rate Limiting (`auth.controller.ts`)**: Exposes `POST /api/v1/auth/signup` throttled under `RateLimitPolicies.auth` (5 requests per 15 minutes per IP; 1,000 in test environments). Emits zero cookies, prevents auto-login, and returns `201 Created` with a generic message.
-   - **Signup Service Flow (`auth.service.ts`)**: Checks email existence. If duplicate, executes dummy Argon2id verification for timing parity, writes `AUTH_SIGNUP_DUPLICATE_EMAIL` audit log, and returns success without error. If new, invokes `userRepository.createWithTenantTransaction()` and writes `AUTH_SIGNUP_SUCCEEDED` audit log. Per approved Option A architecture, live email provider delivery, initial verification token generation during signup, public verification endpoints (`POST /verify-email`), and resend endpoints are strictly deferred to PR #50.
+   - **Signup Service Flow (`auth.service.ts`)**: Checks email existence. If duplicate, executes dummy Argon2id verification for timing parity, writes `AUTH_SIGNUP_DUPLICATE_EMAIL` audit log, and returns success without error. If new, invokes `userRepository.createWithTenantTransaction()` and writes `AUTH_SIGNUP_SUCCEEDED` audit log. Per approved Option A architecture, live email provider delivery, initial verification token generation during signup, public verification endpoints (`POST /verify-email`), and resend endpoints are strictly deferred to PR #51.
    - **Login & Password-Change Epoch Synchronization (`auth.service.ts`)**:
      - `login()` stores authoritative `user.securityEpoch` into Redis session and performs post-session double-check of both `hashedPassword` and `securityEpoch`.
      - `changePassword()` calls `userRepository.updatePasswordAndIncrementEpoch()`, then synchronizes Redis via `sessionManager.destroyOtherUserSessions(userId, currentSessionId, newEpoch)`.
@@ -2304,13 +2310,13 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
      - Permits missing legacy session epoch if and only if authoritative DB epoch is exactly `1`.
      - On mismatch, fails closed, immediately destroys stale session in Redis, and throws `UnauthorizedException`. Reuses already loaded user entity (zero additional DB queries).
    - **Interim Access Permissions & Deferral of Enforcement (Option A — Muse B2 Resolution)**:
-     - `WorkspaceGuard.ts`: Email verification gating (`if (!user.emailVerified)`) is deferred to PR #50. Newly registered unverified users (`emailVerified: false`) are permitted to access their provisioned workspaces during this interim phase. Tenant isolation and workspace membership checks (`findByWorkspaceAndUserId`) remain 100% active and enforced with `403 Forbidden ('User is not a member of this workspace')`.
-     - `OAuthController.ts`: Email verification gating is deferred to PR #50; authenticated users can complete OAuth account linking callbacks without 403 blocks.
+     - `WorkspaceGuard.ts`: Email verification gating (`if (!user.emailVerified)`) is deferred to PR #51. Newly registered unverified users (`emailVerified: false`) are permitted to access their provisioned workspaces during this interim phase. Tenant isolation and workspace membership checks (`findByWorkspaceAndUserId`) remain 100% active and enforced with `403 Forbidden ('User is not a member of this workspace')`.
+     - `OAuthController.ts`: Email verification gating is deferred to PR #51; authenticated users can complete OAuth account linking callbacks without 403 blocks.
      - **Security Posture in the Interim**: Authentication (`AuthGuard`), CSRF protection, tenant isolation (workspace membership), RBAC, password complexity, session management, and `securityEpoch` verification remain strictly active and enforced.
-     - **Follow-up Scope for PR #50**: Production email delivery worker integration, verification token issuance during signup, public consumption endpoint (`POST /api/v1/auth/verify-email`), resend endpoint (`POST /api/v1/auth/resend-verification`), and re-enabling 403 email verification gating.
+     - **Follow-up Scope (PR #51)**: Production email delivery worker integration, verification token issuance during signup, public consumption endpoint (`POST /api/v1/auth/verify-email`), resend endpoint (`POST /api/v1/auth/resend-verification`), and re-enabling 403 email verification gating.
    - **Email Delivery Safety (`email-delivery.service.ts`)**:
      - `MockEmailDeliveryService`: Verifies provider contracts; strictly throws an error if initialized in production (`NODE_ENV === 'production'`).
-     - Live email provider and worker deferred to PR #50 per approved Option A architecture.
+     - Live email provider and worker deferred to PR #51 per approved Option A architecture.
 
 ### 3. Verification & Test Evidence
 
@@ -2327,11 +2333,11 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
 - **API Unit Tests (`apps/api`)**:
   - 25/25 test files, 304/304 PASS.
   - `auth.guard.spec.ts`: 11/11 PASS (exact epoch equality, rejection of lower epoch, rejection of higher epoch, malformed epoch rejection, legacy epoch 1 acceptance, Redis session purge on mismatch).
-  - `workspace.guard.spec.ts`: 5/5 PASS (unverified user 403 Forbidden, verified user access permitted).
+  - `workspace.guard.spec.ts`: 5/5 PASS (unverified user access permitted under Option A, tenant isolation and non-member 403 rejection verified).
   - `email-delivery.service.spec.ts`: 3/3 PASS (mock delivery logging, production environment fail-closed exception).
   - `auth.service.spec.ts`: 14/14 PASS (public signup flow, anti-enumeration timing mitigation, login epoch persistence, password change epoch increment).
   - `auth.controller.spec.ts`: 18/18 PASS (signup routing, 201 response, zero cookie issuance, rate limiting decorators).
-  - `oauth.controller.spec.ts`: 15/15 PASS (unverified user OAuth link blocking).
+  - `oauth.controller.spec.ts`: 15/15 PASS (unverified user OAuth link callback permitted under Option A).
 - **API E2E Tests (`apps/api`)**:
   - 5/5 test files, 88/88 PASS against live PostgreSQL 16, Redis 7, and MinIO:
     1. `auth.e2e-spec.ts`: 19/19 PASS (public signup 201, zero session cookies, anti-enumeration duplicate email parity, invalid email/password rejection, security epoch session invalidation).
@@ -2340,21 +2346,27 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
     4. `analytics.e2e-spec.ts`: 6/6 PASS.
     5. `media.storage.e2e-spec.ts`: 6/6 PASS.
 
-### 4. Remaining Scope & Follow-Ups (PR #50)
+### 4. Remaining Scope & Follow-Ups (PR #51 — Merged)
 
-1. **PR #50 Scope (Deferred Email Delivery Lifecycle)**:
+1. **PR #51 Scope (Deferred Email Delivery Lifecycle — Merged in PR #51)**:
    - Integrate production email delivery provider (Resend / AWS SES / SMTP) with DKIM/SPF and webhook delivery tracking.
    - Background worker queue for asynchronous email dispatch.
    - Public endpoint `POST /api/v1/auth/verify-email` with raw token verification and rate limiting.
    - Public endpoint `POST /api/v1/auth/resend-verification` with rate limiting and anti-enumeration.
    - HTML/text email templates for signup verification.
 2. **Release Gate**:
-   - **Live Deployment**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending PR #50 completion, human code review, external infrastructure provisioning, and disaster recovery rehearsals G18/G19).
+   - **Live Deployment**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending human code review, external infrastructure provisioning, and disaster recovery rehearsals G18/G19).
 
 
-## 42. Phase 7.1, PR 2B: Email Verification Lifecycle, Verification Endpoints & 403 Enforcement Restoration (PR #51)
+## 42. Phase 7.1, PR 2B: Email Verification Lifecycle, Verification Endpoints & 403 Enforcement Restoration (PR #51) — MERGED
 
 ### 1. Summary & Motivation
+- **Merge Status & Identity**: Successfully merged into `main` on 2026-11-05T10:25:36Z.
+  - **Merge Commit SHA**: `0cfeb86087081fb64c7ffe4597a9094516650340`
+  - **Approved Implementation HEAD**: `edbd12fa0c40b39be15f5c0cbbcbd8ec3cbef6ff`
+  - **Independent Review**: Approved by Muse review (no blocking findings; non-blocking M1 noted: production without RESEND_API_KEY falls back to Noop while 403 gates are active — deploy prerequisite, not a code defect).
+  - **CI Quality Gates**: 6/6 checks passed on approved HEAD.
+  - **Next Milestone**: TBD.
 - **Complete Verification Lifecycle**: Implements full email verification token issuance, delivery, public consumption, and anti-enumeration resend capabilities, closing the architectural deferral from PR #49 (Option A / Muse finding B2).
 - **Coupled Gates & Flow Invariant**: Re-enables 403 enforcement gating on unverified accounts simultaneously with the production verification and resend endpoints, preventing any unverified lockout or dead-end state.
 - **Single-Transaction Signup Token Issuance**: When a new user registers via `POST /api/v1/auth/signup`, an initial 32-byte cryptographically secure random verification token (24-hour expiry, stored exclusively as a SHA-256 hash) is provisioned atomically inside `UserRepository.createWithTenantTransaction` alongside the `User`, `Organization`, `Workspace`, and `WorkspaceMember` records. The signup response strictly maintains generic HTTP 201 anti-enumeration parity.
@@ -2421,4 +2433,4 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
 1. **Release Gate**:
    - **Live Deployment**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending human code review, external infrastructure provisioning, and disaster recovery rehearsals G18/G19).
 2. **Next Steps**:
-   - Submit PR #51 for independent automated review by Muse.
+   - Next milestone TBD.
