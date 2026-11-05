@@ -2436,12 +2436,20 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
    - Next milestone TBD.
 
 
-## 43. Phase 7.1: Social Account Disconnect Flow (PR #52) — IMPLEMENTED
+## 43. Phase 7.1: Social Account Disconnect Flow (PR #52) — MERGED
 
 ### 1. Summary & Motivation
-- **Implementation Status**: Fully implemented, verified locally across database, providers, worker, API, and web applications.
-- **Branch**: `feat/account-disconnect`
-- **Base Commit**: `86daaba32e3c2f05c9964b3c438e1a3dc064e941` (main post-PR #50)
+- **Merge Status & Identity**: Successfully merged into `main` on 2026-11-05T13:52:27Z.
+  - **PR**: PR #52 (`feat/account-disconnect`)
+  - **Merge Commit SHA**: `31f81b5a840c71c6963b4fd7215a1465b4f0eec6`
+  - **Approved Implementation HEAD**: `7a783881b5a7b2ed5972ecf75e70944e17c69ffc` (no drift)
+  - **Independent Review**: Approved by Muse independent review with zero blocking findings.
+  - **CI Quality Gates**: 6/6 CI green on the approved head (GitGuardian Security Checks, Code Quality, Tests, Application Builds, API E2E Tests, Docker Build & Smoke Test).
+  - **Next Milestone**: TBD.
+- **Review Findings (non-blocking)**:
+  - **L1**: 404-vs-403 distinguishes a missing account from a foreign-workspace account (UUIDs unguessable; established pattern — practical risk nil).
+  - **L2**: The `?? SocialAccountStatus.ACTIVE` default in the publishing fence and validator is fail-open if status were ever undefined (Prisma guarantees non-null — theoretical only).
+  - **L3**: The repository `disconnect()` relies on the service's workspace check rather than scoping its own update by workspace.
 - **Scope & Objectives**:
   - Implement protected disconnect endpoint `POST /api/v1/workspaces/:workspaceId/accounts/:accountId/disconnect`.
   - Guard endpoint with `AuthGuard`, `WorkspaceGuard`, and `PermissionGuard` (`@RequirePermission('accounts.disconnect')`), restricting disconnect permissions to `OWNER` and `MANAGER` roles.
@@ -2506,7 +2514,8 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
 
 1. **Release Gate**:
    - **Live Deployment**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending human code review, external infrastructure provisioning, and disaster recovery rehearsals G18/G19).
-2. **Next Steps**:
-   - Open Pull Request on GitHub against `main` branch.
-   - Verify all 6 GitHub Actions quality checks pass.
-   - Await independent Muse review before any merge consideration.
+2. **Milestone Completion Status**:
+   - Pull Request #52 opened against `main` branch: **COMPLETED**.
+   - All 6 GitHub Actions quality checks verified green: **COMPLETED**.
+   - Independent Muse review completed and PR merged into `main`: **COMPLETED**.
+   - **Next Milestone**: TBD.
