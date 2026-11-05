@@ -206,29 +206,7 @@ export class PublishingProcessor extends WorkerHost {
       return; // Safe NO-OP
     }
 
-    // 3. Execution-time Revalidation
-    const validation = this.validator.validate(variant as any);
-    if (!validation.valid) {
-      await this.prisma.postPlatformVariant.update({
-        where: { id: publicationId },
-        data: { status: PostStatus.FAILED },
-      });
-      await this.prisma.publicationAttempt.create({
-        data: {
-          id: generateId(),
-          variantId: publicationId,
-          attemptNumber: await this.getNextAttemptNumber(publicationId),
-          status: 'FAILED',
-          failureCategory: validation.failureCategory || 'VALIDATION',
-          failureCode: validation.failureCode,
-          startedAt: new Date(),
-          completedAt: new Date(),
-        },
-      });
-      return;
-    }
-
-    // 3b. Account Status Fencing (fail fast if account is not ACTIVE)
+    // 2b. Account Status Fencing (fail fast if account is not ACTIVE)
     const accountStatus = variant.socialAccount?.status ?? SocialAccountStatus.ACTIVE;
     if (accountStatus !== SocialAccountStatus.ACTIVE) {
       const isDisconnected =
@@ -260,14 +238,36 @@ export class PublishingProcessor extends WorkerHost {
       this.logger.warn({
         msg: 'publication.job.account_not_active',
         reason: failureReason,
-        accountStatus: variant.socialAccount.status,
+        accountStatus,
         ...jobMeta,
       });
       await this.emitAudit(
-        variant.workspaceId,
+        workspaceId,
         publicationId,
         'PUBLICATION_FAILED',
       );
+      return;
+    }
+
+    // 3. Execution-time Revalidation
+    const validation = this.validator.validate(variant as any);
+    if (!validation.valid) {
+      await this.prisma.postPlatformVariant.update({
+        where: { id: publicationId },
+        data: { status: PostStatus.FAILED },
+      });
+      await this.prisma.publicationAttempt.create({
+        data: {
+          id: generateId(),
+          variantId: publicationId,
+          attemptNumber: await this.getNextAttemptNumber(publicationId),
+          status: 'FAILED',
+          failureCategory: validation.failureCategory || 'VALIDATION',
+          failureCode: validation.failureCode,
+          startedAt: new Date(),
+          completedAt: new Date(),
+        },
+      });
       return;
     }
 
