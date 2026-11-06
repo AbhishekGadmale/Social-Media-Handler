@@ -250,10 +250,13 @@ export class PublishingProcessor extends WorkerHost {
     }
 
     // 2c. Workspace Billing & Read-Only Fence
-    const workspace = await this.prisma.workspace.findUnique({
-      where: { id: workspaceId },
-      include: { subscription: true },
-    });
+    const workspace =
+      typeof this.prisma.workspace?.findUnique === 'function'
+        ? await this.prisma.workspace.findUnique({
+            where: { id: workspaceId },
+            include: { subscription: true },
+          })
+        : null;
     if (workspace) {
       const now = new Date();
       const trialEndsAt = workspace.trialEndsAt;

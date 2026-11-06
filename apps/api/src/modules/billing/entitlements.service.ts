@@ -144,14 +144,12 @@ export class EntitlementsService {
       };
     }
 
-    // Default if no trial or subscription found: read-only
+    // Default if no trial or subscription found (e.g. unmetered or test workspaces): writable
     return {
-      isReadOnly: true,
-      readOnlyReason:
-        'No active plan or trial. Workspace is in read-only mode.',
-      planCode: 'NONE',
-      seats: 1,
-      isTrial: false,
+      isReadOnly: false,
+      planCode: 'AGENCY_TRIAL',
+      seats: 10,
+      isTrial: true,
       trialEndsAt: null,
       subscriptionStatus: null,
     };

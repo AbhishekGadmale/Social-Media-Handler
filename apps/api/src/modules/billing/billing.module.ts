@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
-import { PrismaClient, WorkspaceMemberRepository } from '@agency-os/database';
+import { PrismaClient } from '@agency-os/database';
+import { CoreModule } from '../core/core.module';
 import { AuthModule } from '../auth/auth.module';
 import { EMAIL_DELIVERY_SERVICE } from '../auth/email-delivery.service';
 import { BillingController } from './billing.controller';
@@ -10,11 +11,9 @@ import { WorkspaceWritableGuard } from './guards/workspace-writable.guard';
 import { validateBillingConfig } from './billing.config';
 
 @Module({
-  imports: [AuthModule],
+  imports: [CoreModule, AuthModule],
   controllers: [BillingController],
   providers: [
-    PrismaClient,
-    WorkspaceMemberRepository,
     WorkspaceWritableGuard,
     {
       provide: RazorpayService,
