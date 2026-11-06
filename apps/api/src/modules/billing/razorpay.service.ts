@@ -11,6 +11,18 @@ export interface CreateRazorpaySubscriptionInput {
   notes?: Record<string, string>;
 }
 
+export interface CreateRazorpayPlanInput {
+  period: 'daily' | 'weekly' | 'monthly' | 'yearly';
+  interval: number;
+  item: {
+    name: string;
+    amount: number;
+    currency: string;
+    description?: string;
+  };
+  notes?: Record<string, string>;
+}
+
 @Injectable()
 export class RazorpayService {
   private readonly logger = new Logger(RazorpayService.name);
@@ -59,6 +71,18 @@ export class RazorpayService {
       this.logger.error('Error during webhook signature verification', error);
       return false;
     }
+  }
+
+  /**
+   * Creates a recurring plan in Razorpay.
+   */
+  async createPlan(input: CreateRazorpayPlanInput): Promise<any> {
+    return this.client.plans.create({
+      period: input.period,
+      interval: input.interval,
+      item: input.item,
+      notes: input.notes,
+    });
   }
 
   /**

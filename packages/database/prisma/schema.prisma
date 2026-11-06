@@ -370,6 +370,7 @@ model Plan {
   features          Json?
   isFounding        Boolean        @default(false)
   isActive          Boolean        @default(true)
+  razorpayPlanId    String?
   createdAt         DateTime       @default(now())
   updatedAt         DateTime       @updatedAt
 

@@ -47,7 +47,23 @@ export class BillingController {
       throw new BadRequestException('Missing x-razorpay-signature header');
     }
 
-    const rawPayload = req.rawBody || req.body;
+    const rawPayload =
+      req.rawBody ||
+      (typeof req.body === 'string'
+        ? req.body
+        : Buffer.isBuffer(req.body)
+          ? req.body
+          : undefined);
+
+    if (!rawPayload) {
+      this.logger.warn(
+        'Rejected webhook: raw body missing for signature verification',
+      );
+      throw new BadRequestException(
+        'Raw body required for signature verification',
+      );
+    }
+
     const isValid = this.razorpayService.verifyWebhookSignature(
       rawPayload,
       signature,

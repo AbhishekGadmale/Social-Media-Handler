@@ -14,23 +14,12 @@ import { validateStoragePublicEndpoint } from './config/storage-endpoint';
 import { validateEmailDeliveryConfig } from './config/email-delivery';
 import { validateTokenEncryptionKey } from '@agency-os/database';
 
-export async function bootstrap() {
-  // Fail-fast startup validation for token encryption key
-  validateTokenEncryptionKey();
-
+export async function createNestApp(): Promise<NestExpressApplication> {
   const isProduction = process.env.NODE_ENV === 'production';
-
-  // Fail-fast startup validation for API_PUBLIC_URL in production
-  getPublicApiUrl();
-
-  // Fail-fast startup validation for OBJECT_STORAGE_PUBLIC_ENDPOINT in production
-  validateStoragePublicEndpoint();
-
-  // Fail-fast startup validation for RESEND_API_KEY in production
-  validateEmailDeliveryConfig();
 
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
     bufferLogs: true,
+    rawBody: true,
   });
   app.useLogger(app.get(Logger));
 
@@ -68,6 +57,24 @@ export async function bootstrap() {
       forbidNonWhitelisted: true,
     }),
   );
+
+  return app;
+}
+
+export async function bootstrap() {
+  // Fail-fast startup validation for token encryption key
+  validateTokenEncryptionKey();
+
+  // Fail-fast startup validation for API_PUBLIC_URL in production
+  getPublicApiUrl();
+
+  // Fail-fast startup validation for OBJECT_STORAGE_PUBLIC_ENDPOINT in production
+  validateStoragePublicEndpoint();
+
+  // Fail-fast startup validation for RESEND_API_KEY in production
+  validateEmailDeliveryConfig();
+
+  const app = await createNestApp();
 
   const port = process.env.PORT || 3001;
   await app.listen(port);

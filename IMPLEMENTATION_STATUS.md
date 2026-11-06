@@ -2667,10 +2667,10 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
   - Plan definition & pricing in integer paise (Solo ₹499/mo, Studio ₹999/mo, Agency ₹3,999/mo, Founding Agency ₹2,999/mo; 10x monthly price for annual billing).
   - 14-day in-app trial with full Agency entitlements (`workspaces.trialEndsAt = signup + 14 days`), zero Razorpay object creation at signup.
   - Hard trial-end & subscription halted fences via `TRIAL_END_GRACE_DAYS` (default 0), putting workspaces into read-only mode (blocking post publishing and scheduling).
-  - Razorpay subscription lifecycle management and webhook event processing (`subscription.activated`, `subscription.charged`, `subscription.halted`, `subscription.cancelled`, `payment.failed`).
+  - Razorpay subscription lifecycle management and webhook event processing (`subscription.authenticated`, `subscription.charged`, `subscription.halted`, `subscription.cancelled`, `payment.failed`).
   - Cryptographic webhook validation using HMAC-SHA256 (`crypto.timingSafeEqual`) and event deduplication via `WebhookEvent`.
   - GST invoicing compliance for Gadmale Technologies (sole proprietorship, Maharashtra, 18% GST-inclusive prices, integer paise split, sequential numbering `INV-YYYY-XXXXX`, dynamic `GSTIN` from env with production fail-fast).
-  - Atomic CAS Founding-50 lock (< 50 active/trial/past_due founding workspaces in `$transaction`), grandfathered renewals, permanent forfeit upon cancellation.
+  - PostgreSQL row-level pessimistic lock (`SELECT id FROM "Plan" WHERE code = 'AGENCY_FOUNDING' FOR UPDATE`) Founding-50 cap (< 50 active/trial/past_due founding workspaces in `$transaction`), grandfathered renewals, permanent forfeit upon cancellation.
   - Automated dunning notifications on `payment.failed` via `EmailDeliveryService`.
   - Read-only fences enforced across controllers (`WorkspaceWritableGuard`), domain validators (`PublishabilityValidator`), and worker queue processors (`publishing.processor.ts`).
   - Scheduled daily BullMQ worker job for trial expiration.
@@ -2680,13 +2680,17 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
 ### 2. Scope & Technical Architecture
 
 1. **Database Schema & Models (`packages/database`)**:
-   - Added enums `BillingInterval` (`MONTHLY`, `ANNUAL`), `SubscriptionStatus` (`ACTIVE`, `TRIAL`, `PAST_DUE`, `HALTED`, `CANCELLED`, `EXPIRED`), `InvoiceStatus` (`DRAFT`, `ISSUED`, `PAID`, `VOID`).
+   - Added enums:
+     - `BillingInterval`: `MONTHLY`, `ANNUAL`
+     - `SubscriptionStatus`: `TRIAL`, `ACTIVE`, `PAST_DUE`, `HALTED`, `CANCELLED`, `COMPLETED`, `EXPIRED`
+     - `InvoiceStatus`: `PAID`, `FAILED`
    - Extended `Workspace` with `trialEndsAt DateTime?`, relations to `Subscription?` and `Invoice[]`.
    - Added models:
-     - `Plan`: id, code, name, description, amountPaise, interval, currency, maxSeats, isFounding, isPublic, active, createdAt, updatedAt.
-     - `Subscription`: id, workspaceId, planId, status, razorpaySubscriptionId, razorpayCustomerId, currentPeriodStart, currentPeriodEnd, cancelAtPeriodEnd, cancelledAt, isFounding, createdAt, updatedAt.
-     - `Invoice`: id, invoiceNumber (unique), workspaceId, subscriptionId, amountPaise, baseAmountPaise, gstAmountPaise, gstRate, currency, status, invoiceDate, paidAt, razorpayPaymentId, razorpayInvoiceId, customerBillingDetails (JSON), createdAt, updatedAt.
-     - `InvoiceSequence`: fiscalYear, lastSequence, updatedAt.
+     - `Plan`: id, code, name, monthlyPricePaise, annualPricePaise, seats, features (JSON), isFounding, isActive, razorpayPlanId, createdAt, updatedAt.
+     - `Subscription`: id, workspaceId, planId, razorpaySubscriptionId, razorpayPlanId, status, billingInterval, isFounding, currentPeriodStart, currentPeriodEnd, cancelAtPeriodEnd, createdAt, updatedAt.
+     - `Invoice`: id, workspaceId, subscriptionId, invoiceNumber, amountPaise, baseAmountPaise, gstAmountPaise, gstRate, gstin, customerBillingDetails (JSON), razorpayPaymentId, razorpayInvoiceId, status, periodStart, periodEnd, createdAt, updatedAt.
+     - `InvoiceSequence`: year, lastSequence.
+     - `WebhookEvent`: id, eventId, provider, payload (JSON), processed, createdAt.
    - Generated idempotent Prisma migration: `20261106000000_add_billing_phase1_models`.
    - Updated `UserRepository.createWithTenantTransaction` to initialize `trialEndsAt` to `signup + 14 days` without creating Razorpay objects.
 
@@ -2699,13 +2703,16 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
    - Fail-fast dynamic GSTIN validator (`getGstin()`): in `NODE_ENV === 'production'`, throws if `process.env.GSTIN` is missing or empty; falls back to development test GSTIN otherwise.
 
 3. **Cryptographic Webhook Ingestion & Razorpay Client (`apps/api/src/modules/billing/razorpay.service.ts`)**:
+   - Application bootstrap (`apps/api/src/main.ts`) creates the Nest application with `{ bufferLogs: true, rawBody: true }` via exported `createNestApp()`, ensuring Express populates `req.rawBody` for webhook verification across production and E2E tests.
    - Initialized official `razorpay` client using `RAZORPAY_KEY_ID` and `RAZORPAY_KEY_SECRET`.
    - Webhook signature verification computes `crypto.createHmac('sha256', secret).update(rawPayload).digest('hex')` and validates with constant-time `crypto.timingSafeEqual`.
    - Webhook controller receives raw body buffer, returns HTTP 400 on missing or invalid signature.
-   - Idempotent deduplication against `WebhookEvent` table by `event.id`; duplicate events return HTTP 200 with `{ received: true, duplicate: true }`.
+   - Idempotent deduplication against `WebhookEvent` table by `event.id`; duplicate events return HTTP 200 with `{ status: 'ok', eventId, duplicate: true }`.
+   - Webhook events processed within database transaction; invoice creation is idempotent on `razorpayPaymentId`.
 
 4. **Founding-50 Lock & Lifecycle Operations (`apps/api/src/modules/billing/billing.service.ts`)**:
-   - `claimFoundingSubscription`: Atomic CAS in a Prisma `$transaction` checking `SELECT count(*) WHERE isFounding = true AND status IN ('ACTIVE', 'TRIAL', 'PAST_DUE') < 50`. Throws `ConflictException` (409) if cap reached.
+   - `claimFoundingSubscription`: Serializes concurrent requests via PostgreSQL row-level pessimistic locking (`SELECT id FROM "Plan" WHERE code = 'AGENCY_FOUNDING' FOR UPDATE`) within a Prisma `$transaction`, checking `count(*) < 50`. Throws `ConflictException` (409 `FOUNDING_PLAN_SOLD_OUT`) if cap reached.
+   - Creates Razorpay subscription before committing local state; if Razorpay fails, transaction aborts with zero DB state claimed.
    - Grandfathered renewals: status remains active, preserves founding rate.
    - Cancellation policy: `cancelAtPeriodEnd: true`, status becomes `CANCELLED` at period end; permanent forfeit of founding status.
    - Automated dunning: on `payment.failed`, sends transactional dunning email with masked details via `EmailDeliveryService.sendDunningEmail`.

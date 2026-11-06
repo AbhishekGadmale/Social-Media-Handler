@@ -98,4 +98,52 @@ describe('RazorpayService', () => {
       expect(str).not.toContain(mockWebhookSecret);
     });
   });
+
+  describe('Plan and Subscription API wrappers', () => {
+    it('calls client.plans.create with correct parameters', async () => {
+      const mockCreate = vi.fn().mockResolvedValue({ id: 'plan_123' });
+      (service as any).client.plans = { create: mockCreate };
+
+      const result = await service.createPlan({
+        period: 'monthly',
+        interval: 1,
+        item: {
+          name: 'Studio',
+          amount: 99900,
+          currency: 'INR',
+        },
+      });
+
+      expect(mockCreate).toHaveBeenCalledWith({
+        period: 'monthly',
+        interval: 1,
+        item: {
+          name: 'Studio',
+          amount: 99900,
+          currency: 'INR',
+        },
+        notes: undefined,
+      });
+      expect(result.id).toBe('plan_123');
+    });
+
+    it('calls client.subscriptions.create with correct parameters', async () => {
+      const mockCreate = vi.fn().mockResolvedValue({ id: 'sub_rzp_456' });
+      (service as any).client.subscriptions = { create: mockCreate };
+
+      const result = await service.createSubscription({
+        planId: 'plan_123',
+        totalCount: 120,
+      });
+
+      expect(mockCreate).toHaveBeenCalledWith({
+        plan_id: 'plan_123',
+        total_count: 120,
+        quantity: 1,
+        customer_notify: 1,
+        notes: {},
+      });
+      expect(result.id).toBe('sub_rzp_456');
+    });
+  });
 });
