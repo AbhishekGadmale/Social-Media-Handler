@@ -112,6 +112,9 @@ jobs:
           YOUTUBE_CLIENT_SECRET: dummy-client-secret
           LINKEDIN_CLIENT_ID: dummy-client-id
           LINKEDIN_CLIENT_SECRET: dummy-client-secret
+          RAZORPAY_KEY_ID: rzp_test_dummy_key_id
+          RAZORPAY_KEY_SECRET: dummy_key_secret_12345
+          RAZORPAY_WEBHOOK_SECRET: dummy_webhook_secret_12345
           TURBO_ENV_MODE: loose
         run: pnpm turbo run test --env-mode=loose
 
@@ -214,6 +217,9 @@ jobs:
           OBJECT_STORAGE_ACCESS_KEY_ID: minioadmin
           OBJECT_STORAGE_SECRET_ACCESS_KEY: minioadmin
           OBJECT_STORAGE_FORCE_PATH_STYLE: "true"
+          RAZORPAY_KEY_ID: rzp_test_dummy_key_id
+          RAZORPAY_KEY_SECRET: dummy_key_secret_12345
+          RAZORPAY_WEBHOOK_SECRET: dummy_webhook_secret_12345
         run: pnpm --filter @agency-os/api test:e2e
 
   build:
@@ -252,6 +258,9 @@ jobs:
     env:
       TOKEN_ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
       RESEND_API_KEY: dummy-resend-api-key
+      RAZORPAY_KEY_ID: rzp_test_dummy_key_id
+      RAZORPAY_KEY_SECRET: dummy-razorpay-key-secret
+      RAZORPAY_WEBHOOK_SECRET: dummy-razorpay-webhook-secret
     steps:
       - uses: actions/checkout@v4
 
@@ -280,6 +289,9 @@ jobs:
           POSTGRES_PASSWORD: password
           POSTGRES_DB: agency_os
           RESEND_API_KEY: dummy-resend-api-key
+          RAZORPAY_KEY_ID: rzp_test_dummy_key_id
+          RAZORPAY_KEY_SECRET: dummy-razorpay-key-secret
+          RAZORPAY_WEBHOOK_SECRET: dummy-razorpay-webhook-secret
         run: |
           docker compose up -d postgres redis
 
@@ -386,6 +398,9 @@ jobs:
           OBJECT_STORAGE_PUBLIC_ENDPOINT: http://127.0.0.1:9000
           OBJECT_STORAGE_BUCKET: agency-os-media
           RESEND_API_KEY: dummy-resend-api-key
+          RAZORPAY_KEY_ID: rzp_test_dummy_key_id
+          RAZORPAY_KEY_SECRET: dummy-razorpay-key-secret
+          RAZORPAY_WEBHOOK_SECRET: dummy-razorpay-webhook-secret
         run: |
           # Start staging backing services (postgres, redis)
           docker compose -f docker-compose.staging.yml up -d postgres redis

@@ -249,6 +249,72 @@ export class PublishingProcessor extends WorkerHost {
       return;
     }
 
+    // 2c. Workspace Billing & Read-Only Fence
+    const workspace = await this.prisma.workspace.findUnique({
+      where: { id: workspaceId },
+      include: { subscription: true },
+    });
+    if (workspace) {
+      const now = new Date();
+      const trialEndsAt = workspace.trialEndsAt;
+      const sub = workspace.subscription;
+      let isReadOnly = false;
+      let readOnlyReason = '';
+
+      if (sub) {
+        if (sub.status === 'HALTED') {
+          isReadOnly = true;
+          readOnlyReason = 'Subscription is halted';
+        } else if (
+          sub.status === 'PAST_DUE' ||
+          sub.status === 'CANCELLED' ||
+          sub.status === 'EXPIRED'
+        ) {
+          if (
+            sub.currentPeriodEnd &&
+            now.getTime() > new Date(sub.currentPeriodEnd).getTime()
+          ) {
+            isReadOnly = true;
+            readOnlyReason = 'Subscription period expired';
+          }
+        }
+      } else if (trialEndsAt) {
+        if (now.getTime() > new Date(trialEndsAt).getTime()) {
+          isReadOnly = true;
+          readOnlyReason = 'Trial expired';
+        }
+      }
+
+      if (isReadOnly) {
+        await this.prisma.postPlatformVariant.update({
+          where: { id: publicationId },
+          data: { status: PostStatus.FAILED },
+        });
+        await this.prisma.publicationAttempt.create({
+          data: {
+            id: generateId(),
+            variantId: publicationId,
+            attemptNumber: await this.getNextAttemptNumber(publicationId),
+            status: 'FAILED',
+            failureCategory: 'PERMANENT',
+            failureCode: 'WORKSPACE_READ_ONLY',
+            providerResponse: {
+              reason: `Workspace is in read-only mode: ${readOnlyReason}`,
+            },
+            startedAt: new Date(),
+            completedAt: new Date(),
+          },
+        });
+        this.logger.warn({
+          msg: 'publication.job.workspace_read_only',
+          reason: readOnlyReason,
+          ...jobMeta,
+        });
+        await this.emitAudit(workspaceId, publicationId, 'PUBLICATION_FAILED');
+        return;
+      }
+    }
+
     // 3. Execution-time Revalidation
     const validation = this.validator.validate(variant as any);
     if (!validation.valid) {

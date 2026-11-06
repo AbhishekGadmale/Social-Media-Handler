@@ -60,6 +60,26 @@ enum SyncRunStatus {
   SKIPPED
 }
 
+enum BillingInterval {
+  MONTHLY
+  ANNUAL
+}
+
+enum SubscriptionStatus {
+  TRIAL
+  ACTIVE
+  PAST_DUE
+  HALTED
+  CANCELLED
+  COMPLETED
+  EXPIRED
+}
+
+enum InvoiceStatus {
+  PAID
+  FAILED
+}
+
 model User {
   id                 String                   @id @db.Uuid
   email              String                   @unique
@@ -111,6 +131,9 @@ model Workspace {
   postPlatformVariants PostPlatformVariant[]
   auditLogs            AuditLog[]
   mediaAssets          MediaAsset[]
+  trialEndsAt          DateTime?
+  subscription         Subscription?
+  invoices             Invoice[]
 
   @@index([organizationId])
 }
@@ -335,4 +358,74 @@ model AuditLog {
   @@index([actorId, createdAt])
   @@index([action, createdAt])
   @@index([createdAt])
+}
+
+model Plan {
+  id                String         @id @db.Uuid
+  code              String         @unique
+  name              String
+  monthlyPricePaise Int
+  annualPricePaise  Int
+  seats             Int
+  features          Json?
+  isFounding        Boolean        @default(false)
+  isActive          Boolean        @default(true)
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+
+  subscriptions     Subscription[]
+}
+
+model Subscription {
+  id                     String             @id @db.Uuid
+  workspaceId            String             @unique @db.Uuid
+  planId                 String             @db.Uuid
+  razorpaySubscriptionId String?            @unique
+  razorpayPlanId         String?
+  status                 SubscriptionStatus @default(TRIAL)
+  billingInterval        BillingInterval    @default(MONTHLY)
+  isFounding             Boolean            @default(false)
+  currentPeriodStart     DateTime?
+  currentPeriodEnd       DateTime?
+  cancelAtPeriodEnd      Boolean            @default(false)
+  createdAt              DateTime           @default(now())
+  updatedAt              DateTime           @updatedAt
+
+  workspace              Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  plan                   Plan               @relation(fields: [planId], references: [id])
+  invoices               Invoice[]
+
+  @@index([status])
+  @@index([isFounding, status])
+}
+
+model Invoice {
+  id                     String        @id @db.Uuid
+  workspaceId            String        @db.Uuid
+  subscriptionId         String?       @db.Uuid
+  invoiceNumber          String        @unique
+  amountPaise            Int
+  baseAmountPaise        Int
+  gstAmountPaise         Int
+  gstRate                Int           @default(18)
+  gstin                  String
+  customerBillingDetails Json?
+  razorpayPaymentId      String?       @unique
+  razorpayInvoiceId      String?
+  status                 InvoiceStatus @default(PAID)
+  periodStart            DateTime?
+  periodEnd              DateTime?
+  createdAt              DateTime      @default(now())
+  updatedAt              DateTime      @updatedAt
+
+  workspace              Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  subscription           Subscription? @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId])
+  @@index([createdAt])
+}
+
+model InvoiceSequence {
+  year         Int @id
+  lastSequence Int @default(0)
 }

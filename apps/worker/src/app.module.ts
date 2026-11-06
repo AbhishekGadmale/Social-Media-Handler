@@ -5,6 +5,7 @@ import { CoreModule } from './core/core.module';
 import { SyncModule } from './sync/sync.module';
 import { PublishingModule } from './publishing/publishing.module';
 import { MediaWorkerModule } from './media/media.module';
+import { BillingWorkerModule } from './billing/billing.module';
 
 import { BullModule } from '@nestjs/bullmq';
 
@@ -28,6 +29,7 @@ import { loggerConfig } from './logger.config';
     SyncModule,
     PublishingModule,
     MediaWorkerModule,
+    BillingWorkerModule,
   ],
   controllers: [AppController],
   providers: [AppService],

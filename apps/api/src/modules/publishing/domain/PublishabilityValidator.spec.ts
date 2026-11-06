@@ -624,4 +624,68 @@ describe('PublishabilityValidator', () => {
       expect(result.valid).toBe(true);
     });
   });
+
+  describe('Workspace Billing & Read-Only Fence', () => {
+    it('flags WORKSPACE_READ_ONLY issue when subscription is HALTED', async () => {
+      const variant = makeMockVariant({
+        workspace: {
+          id: 'ws-1',
+          trialEndsAt: new Date('2026-10-01T00:00:00Z'),
+          subscription: {
+            status: 'HALTED',
+          },
+        },
+      });
+      mockPrisma.postPlatformVariant.findFirst.mockResolvedValueOnce(variant);
+
+      const result = await validator.validateTarget('ws-1', 'v1');
+      expect(result.valid).toBe(false);
+      expect(result.issues).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            code: 'WORKSPACE_READ_ONLY',
+            message: expect.stringContaining('halted'),
+          }),
+        ]),
+      );
+    });
+
+    it('flags WORKSPACE_READ_ONLY issue when trial is expired without subscription', async () => {
+      const now = new Date('2026-11-20T12:00:00Z');
+      const variant = makeMockVariant({
+        workspace: {
+          id: 'ws-1',
+          trialEndsAt: new Date('2026-11-19T12:00:00Z'), // expired 1 day ago
+          subscription: null,
+        },
+      });
+      mockPrisma.postPlatformVariant.findFirst.mockResolvedValueOnce(variant);
+
+      const result = await validator.validateTarget('ws-1', 'v1', false, now);
+      expect(result.valid).toBe(false);
+      expect(result.issues).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            code: 'WORKSPACE_READ_ONLY',
+            message: expect.stringContaining('Trial has expired'),
+          }),
+        ]),
+      );
+    });
+
+    it('passes when trial is active', async () => {
+      const now = new Date('2026-11-06T12:00:00Z');
+      const variant = makeMockVariant({
+        workspace: {
+          id: 'ws-1',
+          trialEndsAt: new Date('2026-11-20T12:00:00Z'), // active trial
+          subscription: null,
+        },
+      });
+      mockPrisma.postPlatformVariant.findFirst.mockResolvedValueOnce(variant);
+
+      const result = await validator.validateTarget('ws-1', 'v1', false, now);
+      expect(result.valid).toBe(true);
+    });
+  });
 });
