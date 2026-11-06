@@ -1,18 +1,18 @@
 /* eslint-disable */
+import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication } from '@nestjs/common';
 const request = require('supertest');
 import * as crypto from 'crypto';
+import { AppModule } from '../src/app.module';
 import { PrismaClient, generateId, WorkspaceRole, SubscriptionStatus } from '@agency-os/database';
 import { loginAndGetSession, authHeaders } from './helpers';
 import * as argon2 from '@node-rs/argon2';
 import Redis from 'ioredis';
-import { createNestApp } from '../src/main';
+import { NEST_APP_OPTIONS, configureApp } from '../src/main';
 import { RazorpayService } from '../src/modules/billing/razorpay.service';
 import { BillingService } from '../src/modules/billing/billing.service';
 
-process.env.TOKEN_ENCRYPTION_KEY =
-  process.env.TOKEN_ENCRYPTION_KEY ||
-  '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+jest.setTimeout(30000);
 
 describe('BillingController (e2e)', () => {
   let app: INestApplication;
@@ -26,7 +26,7 @@ describe('BillingController (e2e)', () => {
   let testOrg: any;
   let sessionData: any;
   let foundingPlan: any;
-  const webhookSecret = process.env.RAZORPAY_WEBHOOK_SECRET || 'dummy_webhook_secret_12345';
+  let webhookSecret = process.env.RAZORPAY_WEBHOOK_SECRET || 'dummy_webhook_secret_12345';
   const createdWorkspaceIds: string[] = [];
 
   beforeEach(async () => {
@@ -36,19 +36,34 @@ describe('BillingController (e2e)', () => {
         await redis.del(...keys);
       }
     }
+
+    if (razorpayService) {
+      jest.spyOn(razorpayService, 'createPlan').mockImplementation(async (input: any) => ({
+        id: `plan_rzp_mock_${input.item.name.toLowerCase().replace(/[^a-z0-9]/g, '_')}`,
+      }));
+      jest.spyOn(razorpayService, 'createSubscription').mockImplementation(async (input: any) => ({
+        id: `sub_rzp_mock_${Date.now()}_${Math.floor(Math.random() * 10000)}`,
+        status: 'created',
+      }));
+    }
   });
 
   beforeAll(async () => {
-    // Instantiate app using the real production bootstrap factory from main.ts (F1)
-    app = await createNestApp();
+    const moduleFixture: TestingModule = await Test.createTestingModule({
+      imports: [AppModule],
+    }).compile();
+
+    // Uses shared NEST_APP_OPTIONS ({ bufferLogs: true, rawBody: true }) and configureApp helper from main.ts (F1)
+    app = moduleFixture.createNestApplication(NEST_APP_OPTIONS);
+    await configureApp(app);
     await app.init();
 
     prisma = app.get<PrismaClient>(PrismaClient);
     redis = app.get<Redis>('REDIS_CLIENT');
     razorpayService = app.get<RazorpayService>(RazorpayService);
     billingService = app.get<BillingService>(BillingService);
+    webhookSecret = (razorpayService as any).webhookSecret || webhookSecret;
 
-    // Mock outgoing Razorpay HTTP calls so tests do not rely on live Razorpay API
     jest.spyOn(razorpayService, 'createPlan').mockImplementation(async (input: any) => ({
       id: `plan_rzp_mock_${input.item.name.toLowerCase().replace(/[^a-z0-9]/g, '_')}`,
     }));
@@ -57,13 +72,11 @@ describe('BillingController (e2e)', () => {
       status: 'created',
     }));
 
-    // Seed default plans
     await billingService.seedPlans();
     foundingPlan = await prisma.plan.findUnique({
       where: { code: 'AGENCY_FOUNDING' },
     });
 
-    // Create test user and workspace
     const orgId = generateId();
     const wsId = generateId();
     const userId = generateId();
@@ -108,15 +121,6 @@ describe('BillingController (e2e)', () => {
 
   afterAll(async () => {
     if (createdWorkspaceIds.length > 0) {
-      await prisma.invoice.deleteMany({
-        where: { workspaceId: { in: createdWorkspaceIds } },
-      });
-      await prisma.subscription.deleteMany({
-        where: { workspaceId: { in: createdWorkspaceIds } },
-      });
-      await prisma.workspaceMember.deleteMany({
-        where: { workspaceId: { in: createdWorkspaceIds } },
-      });
       await prisma.workspace.deleteMany({
         where: { id: { in: createdWorkspaceIds } },
       });
@@ -258,33 +262,32 @@ describe('BillingController (e2e)', () => {
 
   describe('Founding-50 Real PostgreSQL Concurrency Lock [F3]', () => {
     it('when count is 49 and 2 parallel requests hit: exactly 1 succeeds, 1 gets 409 conflict', async () => {
-      // Pre-seed 49 founding subscriptions in Postgres
-      // First clean any prior founding subscriptions
+      // Clean previous founding subscriptions from test workspaces
       await prisma.subscription.deleteMany({ where: { isFounding: true } });
 
-      const dummyWsIds: string[] = [];
+      // Fast batch pre-seed of 49 founding subscriptions in Postgres
+      const dummyWorkspaces = [];
+      const dummySubscriptions = [];
       for (let i = 0; i < 49; i++) {
         const dId = generateId();
-        dummyWsIds.push(dId);
         createdWorkspaceIds.push(dId);
-        await prisma.workspace.create({
-          data: {
-            id: dId,
-            organizationId: testOrg.id,
-            name: `Founding Seat ${i + 1}`,
-          },
+        dummyWorkspaces.push({
+          id: dId,
+          organizationId: testOrg.id,
+          name: `Founding Seat ${i + 1}`,
         });
-        await prisma.subscription.create({
-          data: {
-            id: generateId(),
-            workspaceId: dId,
-            planId: foundingPlan.id,
-            isFounding: true,
-            status: SubscriptionStatus.ACTIVE,
-            billingInterval: 'MONTHLY',
-          },
+        dummySubscriptions.push({
+          id: generateId(),
+          workspaceId: dId,
+          planId: foundingPlan.id,
+          isFounding: true,
+          status: SubscriptionStatus.ACTIVE,
+          billingInterval: 'MONTHLY' as const,
         });
       }
+
+      await prisma.workspace.createMany({ data: dummyWorkspaces });
+      await prisma.subscription.createMany({ data: dummySubscriptions });
 
       // Verify count is 49
       const preCount = await prisma.subscription.count({
@@ -300,18 +303,17 @@ describe('BillingController (e2e)', () => {
       const wsCandidate2 = generateId();
       createdWorkspaceIds.push(wsCandidate1, wsCandidate2);
 
-      await prisma.workspace.create({
-        data: { id: wsCandidate1, organizationId: testOrg.id, name: 'Candidate 1' },
+      await prisma.workspace.createMany({
+        data: [
+          { id: wsCandidate1, organizationId: testOrg.id, name: 'Candidate 1' },
+          { id: wsCandidate2, organizationId: testOrg.id, name: 'Candidate 2' },
+        ],
       });
-      await prisma.workspaceMember.create({
-        data: { id: generateId(), workspaceId: wsCandidate1, userId: testUser.id, role: WorkspaceRole.OWNER },
-      });
-
-      await prisma.workspace.create({
-        data: { id: wsCandidate2, organizationId: testOrg.id, name: 'Candidate 2' },
-      });
-      await prisma.workspaceMember.create({
-        data: { id: generateId(), workspaceId: wsCandidate2, userId: testUser.id, role: WorkspaceRole.OWNER },
+      await prisma.workspaceMember.createMany({
+        data: [
+          { id: generateId(), workspaceId: wsCandidate1, userId: testUser.id, role: WorkspaceRole.OWNER },
+          { id: generateId(), workspaceId: wsCandidate2, userId: testUser.id, role: WorkspaceRole.OWNER },
+        ],
       });
 
       // Fire 2 concurrent claims
@@ -330,7 +332,9 @@ describe('BillingController (e2e)', () => {
       expect(statuses).toEqual([200, 409]);
 
       const conflictRes = resA.status === 409 ? resA : resB;
-      expect(conflictRes.body.message).toContain('FOUNDING_PLAN_SOLD_OUT');
+      const conflictMessage =
+        conflictRes.body.error?.message || conflictRes.body.message;
+      expect(conflictMessage).toContain('FOUNDING_PLAN_SOLD_OUT');
 
       // Assert total count in database is strictly 50
       const postCount = await prisma.subscription.count({

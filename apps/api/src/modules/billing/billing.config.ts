@@ -129,6 +129,6 @@ export function validateBillingConfig(
   return {
     keyId: keyId || 'rzp_test_dummy_key_id',
     keySecret: keySecret || 'dummy_razorpay_secret',
-    webhookSecret: webhookSecret || 'dummy_webhook_secret',
+    webhookSecret: webhookSecret || 'dummy_webhook_secret_12345',
   };
 }
