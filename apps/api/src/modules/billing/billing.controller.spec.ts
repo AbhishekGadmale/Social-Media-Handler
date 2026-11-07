@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { BillingInterval } from '@agency-os/database';
 import { BillingController } from './billing.controller';
 
@@ -8,6 +8,7 @@ describe('BillingController', () => {
   let billingServiceMock: any;
   let razorpayServiceMock: any;
   let entitlementsServiceMock: any;
+  let pdfInvoiceServiceMock: any;
 
   const mockWorkspaceId = 'ws-test-123';
 
@@ -15,6 +16,9 @@ describe('BillingController', () => {
     billingServiceMock = {
       processWebhook: vi.fn(),
       getWorkspaceBilling: vi.fn(),
+      getPlansWithAvailability: vi.fn(),
+      getWorkspaceInvoices: vi.fn(),
+      getInvoiceRecord: vi.fn(),
       createSubscription: vi.fn(),
       cancelSubscription: vi.fn(),
     };
@@ -27,10 +31,15 @@ describe('BillingController', () => {
       getWorkspaceEntitlements: vi.fn(),
     };
 
+    pdfInvoiceServiceMock = {
+      generatePdf: vi.fn(),
+    };
+
     controller = new BillingController(
       billingServiceMock,
       razorpayServiceMock,
       entitlementsServiceMock,
+      pdfInvoiceServiceMock,
     );
   });
 
@@ -169,6 +178,105 @@ describe('BillingController', () => {
         true,
       );
       expect(result.isFounding).toBe(false);
+    });
+  });
+
+  describe('GET /api/v1/workspaces/:workspaceId/billing/plans', () => {
+    it('returns plans with foundingAvailable boolean', async () => {
+      const mockPlansData = {
+        plans: [
+          { code: 'SOLO', monthlyPricePaise: 49900 },
+          { code: 'STUDIO', monthlyPricePaise: 99900 },
+        ],
+        foundingAvailable: true,
+      };
+
+      billingServiceMock.getPlansWithAvailability.mockResolvedValue(
+        mockPlansData,
+      );
+
+      const result = await controller.getPlans(mockWorkspaceId);
+
+      expect(billingServiceMock.getPlansWithAvailability).toHaveBeenCalled();
+      expect(result).toEqual(mockPlansData);
+    });
+  });
+
+  describe('GET /api/v1/workspaces/:workspaceId/billing/invoices', () => {
+    it('returns invoices for workspace newest first', async () => {
+      const mockInvoices = [
+        { id: 'inv-2', invoiceNumber: 'INV-2026-00002', amountPaise: 99900 },
+        { id: 'inv-1', invoiceNumber: 'INV-2026-00001', amountPaise: 49900 },
+      ];
+
+      billingServiceMock.getWorkspaceInvoices.mockResolvedValue(mockInvoices);
+
+      const result = await controller.getWorkspaceInvoices(mockWorkspaceId);
+
+      expect(billingServiceMock.getWorkspaceInvoices).toHaveBeenCalledWith(
+        mockWorkspaceId,
+      );
+      expect(result).toEqual(mockInvoices);
+    });
+  });
+
+  describe('GET /api/v1/workspaces/:workspaceId/billing/invoices/:invoiceId/pdf', () => {
+    const mockInvoiceId = 'i0000000-0000-0000-0000-000000000001';
+
+    it('streams generated PDF with correct headers on valid invoice', async () => {
+      const mockInvoice = {
+        id: mockInvoiceId,
+        invoiceNumber: 'INV-2026-00001',
+        workspaceId: mockWorkspaceId,
+      };
+      const mockPdfBuffer = Buffer.from('%PDF-1.3 fake pdf content');
+
+      billingServiceMock.getInvoiceRecord.mockResolvedValue(mockInvoice);
+      pdfInvoiceServiceMock.generatePdf.mockResolvedValue(mockPdfBuffer);
+
+      const res = {
+        setHeader: vi.fn(),
+        end: vi.fn(),
+      } as any;
+
+      await controller.getInvoicePdf(mockWorkspaceId, mockInvoiceId, res);
+
+      expect(billingServiceMock.getInvoiceRecord).toHaveBeenCalledWith(
+        mockWorkspaceId,
+        mockInvoiceId,
+      );
+      expect(pdfInvoiceServiceMock.generatePdf).toHaveBeenCalledWith(
+        mockInvoice,
+      );
+      expect(res.setHeader).toHaveBeenCalledWith(
+        'Content-Type',
+        'application/pdf',
+      );
+      expect(res.setHeader).toHaveBeenCalledWith(
+        'Content-Disposition',
+        'inline; filename="invoice-INV-2026-00001.pdf"',
+      );
+      expect(res.setHeader).toHaveBeenCalledWith(
+        'Content-Length',
+        mockPdfBuffer.length.toString(),
+      );
+      expect(res.end).toHaveBeenCalledWith(mockPdfBuffer);
+    });
+
+    it('propagates 404 NotFoundException for missing or foreign workspace invoices', async () => {
+      billingServiceMock.getInvoiceRecord.mockRejectedValue(
+        new NotFoundException('Invoice not found'),
+      );
+
+      const res = {
+        setHeader: vi.fn(),
+        end: vi.fn(),
+      } as any;
+
+      await expect(
+        controller.getInvoicePdf(mockWorkspaceId, mockInvoiceId, res),
+      ).rejects.toThrow(NotFoundException);
+      expect(pdfInvoiceServiceMock.generatePdf).not.toHaveBeenCalled();
     });
   });
 });

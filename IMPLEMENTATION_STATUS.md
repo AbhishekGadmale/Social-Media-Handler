@@ -2795,4 +2795,60 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
    - PR #56 merged into `main` (commit `da44db87f001bb86405208be53f99e01ab7003d7`): **COMPLETED**.
    - All 6 CI checks green on approved head `938df1bdbd4641852bc91bc23a75b804df82acbc`: **COMPLETED**.
    - Independent Muse review completed and approved: **COMPLETED**.
-   - **Next Milestone**: Billing Phase 2 (checkout UI, customer portal, PDF invoices).
+   - **Next Milestone**: Billing Phase 2 (PR #58 — checkout UI, customer portal, PDF invoices & plans API).
+
+## 47. Phase 8 (Billing Phase 2): Checkout UI, Customer Portal, PDF Invoices & Plans API (PR #58) — IMPLEMENTED
+
+### 1. Summary & Motivation
+
+- **Identity**: PR #58 (`feat/billing-phase2` — Checkout UI, customer portal, PDF invoices, plans & invoices APIs).
+- **Base Commit**: `e615d6dac0a7d23cf113ae54b58b4b4d5c9b83a7` (`main`, post-PR #57 merge).
+- **Core Deliverables**:
+  - **Plans API (`GET /api/v1/workspaces/:workspaceId/billing/plans`)**: Returns the 4 active plans (Solo ₹499, Studio ₹999, Agency ₹3,999, Agency Founding 50 ₹2,999) with monthly and annual prices in integer paise, max seats, features, and dynamic `foundingAvailable: boolean` flag evaluated against the 50-workspace founding cap across `ACTIVE`, `TRIAL`, and `PAST_DUE` subscriptions.
+  - **Invoices API (`GET /api/v1/workspaces/:workspaceId/billing/invoices`)**: Returns historical workspace invoices sorted newest first, including plan code/name, billing interval, integer paise amounts (`amountPaise`, `baseAmountPaise`, `gstAmountPaise`), GSTIN, status, and PDF download metadata.
+  - **PDF Invoice Generation & Streaming (`GET /api/v1/workspaces/:workspaceId/billing/invoices/:invoiceId/pdf`)**: Pure server-side PDF generator built with `pdfkit` (no headless browser/Chromium overhead, completely serverless/container-friendly). Enforces strict tenant isolation returning 404 `NotFoundException` (never 403) for non-existent or foreign workspace invoices, parameter UUID validation via `ParseUUIDPipe`, `application/pdf` streaming headers (`Content-Disposition: inline; filename="invoice-{number}.pdf"`), and strict Indian GST tax compliance:
+    - **Header & Parties**: "TAX INVOICE", sequential invoice number, issuance date, Seller details (Gadmale Technologies, Maharashtra, GSTIN from `getGstin()`), and Buyer details (workspace name and structured `customerBillingDetails`).
+    - **Tax Regime**: Intra-state (Maharashtra or unspecified buyer state) splits into CGST (9%) and SGST (9%) with exact integer paise rounding (`cgst = Math.round(gst / 2)`, `sgst = gst - cgst`); Inter-state (explicit non-MH buyer state) applies single IGST (18%).
+  - **Customer Portal & Checkout UI (`apps/web/src/app/[workspaceId]/billing/page.tsx`)**:
+    - Complete billing dashboard within dashboard shell following standard layout, loading skeleton, and 403 access control.
+    - Added Billing navigation item (`CreditCard` icon) in sidebar navigation.
+    - Dynamic Status Banner: Trial countdown with remaining days, active subscription status with next renewal date and interval, cancelled status detailing retained access until cycle end, and past due/halted banner warning of read-only mode. Also supports `?payment=processing` notice when returning from Razorpay.
+    - 4-Plan Pricing Cards with Monthly / Annual toggle ("2 months free" discount badge):
+      - Solo ₹499/mo (₹4,990/yr, 1 seat)
+      - Studio ₹999/mo (₹9,990/yr, 3 seats)
+      - Agency ₹3,999/mo (₹39,990/yr, unlimited)
+      - Agency Founding 50 ₹2,999/mo (₹29,990/yr, first 50 seats, disabled if `foundingAvailable: false`)
+    - Subscribe flow calls `POST /api/v1/workspaces/:workspaceId/billing/subscribe` and navigates user directly to Razorpay hosted checkout `short_url`.
+    - Invoices History Table: Chronological invoice list displaying invoice number, issuance date, plan, interval, total GST-inclusive amount formatted to ₹, status badge, and one-click PDF download link.
+    - Subscription Cancellation Modal: Confirms cancellation for active paid subscriptions, clearly informing the user that service access is preserved until the end of the current billing cycle, then invokes `POST /api/v1/workspaces/:workspaceId/billing/cancel` with `{ cancelAtPeriodEnd: true }`.
+
+### 2. Architecture & Design Decisions
+
+- **Pure Server-side PDFKit Generation**: Avoided Puppeteer/Playwright or external rendering microservices; `pdfkit` delivers lightweight, predictable, sub-50ms PDF streaming directly to the client.
+- **Tenant Isolation**: Direct lookup verifies `workspaceId` matching the authenticated context. Any foreign or unowned invoice returns standard 404 to avoid information disclosure.
+- **Strict Integer Paise Invariant**: All amounts in the API and database remain strictly integer paise; formatting to rupees (e.g. `₹499`) is strictly isolated to presentation components.
+- **Cancellation Grace Period**: Subscriptions cancelled with `cancelAtPeriodEnd: true` maintain full write access and non-read-only entitlement status until `currentPeriodEnd` is reached, while permanently releasing their founding lock.
+
+### 3. Verification & Test Evidence
+
+- **PDF Invoice Service Unit Tests (`apps/api/src/modules/billing/pdf-invoice.service.spec.ts`)**: 5/5 PASS.
+  - Verifies PDF buffer generation, intra-state CGST/SGST split, inter-state IGST application, and tax breakdown accuracy.
+- **Billing Service Unit Tests (`apps/api/src/modules/billing/billing.service.spec.ts`)**: 23/23 PASS.
+  - Verifies `getPlansWithAvailability` founding cap check, `getWorkspaceInvoices` reverse chronological ordering, and `getInvoiceRecord` 404 tenant isolation.
+- **Billing Controller Unit Tests (`apps/api/src/modules/billing/billing.controller.spec.ts`)**: 10/10 PASS.
+  - Verifies `/plans`, `/invoices`, and `/invoices/:invoiceId/pdf` streaming response headers, pipe handling, and 404 error bubbling.
+- **Billing Page Web Tests (`apps/web/src/app/[workspaceId]/billing/page.spec.tsx`)**: 7/7 PASS.
+  - Verifies plan cards rendering with paise formatting, monthly/annual toggle, disabled state for exhausted founding plan, status banners, invoice history with PDF download links, subscribe redirection, and cancellation modal confirmation.
+- **Full Web Unit Suite (`pnpm --filter @agency-os/web test`)**: 9/9 test files, 124/124 tests PASS.
+- **Full API Unit Suite (`pnpm --filter @agency-os/api test`)**: 35/35 test files, 433/433 tests PASS.
+- **API E2E Tests (`apps/api/test/billing.e2e-spec.ts`)**: 19/19 PASS.
+  - Covers Webhook HMAC rawBody validation & deduplication, Subscription lifecycle & Razorpay plan routing, Founding-50 concurrency locking, Webhook concurrency & idempotent invoicing, Workspace entitlements, Subscription cancellation, Plans API with founding cap, Invoices API newest first, and PDF streaming with tenant isolation & UUID validation.
+- **Monorepo Lint & Typecheck (`pnpm turbo run lint typecheck`)**: 10/10 tasks PASS with 0 errors.
+- **Monorepo Build (`pnpm turbo run build`)**: 7/7 tasks PASS.
+
+### 4. Release Gate & Next Steps
+
+1. **Release Gate**:
+   - **Live Deployment**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending external infrastructure provisioning, live Razorpay credentials, and disaster recovery rehearsals G18/G19).
+2. **Review Requirements**:
+   - PR must be independently reviewed by Muse prior to any merge.

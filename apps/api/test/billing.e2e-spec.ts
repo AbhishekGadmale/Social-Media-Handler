@@ -46,6 +46,10 @@ describe('BillingController (e2e)', () => {
         status: 'created',
         short_url: 'https://rzp.io/i/sub_mock_url',
       }));
+      jest.spyOn(razorpayService, 'cancelSubscription').mockImplementation(async (subId: string, atCycleEnd: boolean) => ({
+        id: subId,
+        status: 'cancelled',
+      }));
     }
   });
 
@@ -72,6 +76,10 @@ describe('BillingController (e2e)', () => {
       id: `sub_rzp_mock_${Date.now()}_${Math.floor(Math.random() * 10000)}`,
       status: 'created',
       short_url: 'https://rzp.io/i/sub_mock_url',
+    }));
+    jest.spyOn(razorpayService, 'cancelSubscription').mockImplementation(async (subId: string, atCycleEnd: boolean) => ({
+      id: subId,
+      status: 'cancelled',
     }));
 
     await billingService.seedPlans();
@@ -594,6 +602,295 @@ describe('BillingController (e2e)', () => {
 
       expect(res.body.workspaceId).toBe(testWorkspace.id);
       expect(res.body.entitlements.isReadOnly).toBe(false);
+    });
+  });
+
+  describe('Subscription Cancellation (/api/v1/workspaces/:workspaceId/billing/cancel)', () => {
+    it('cancels subscription at period end and retains access until cycle ends', async () => {
+      const cancelSpy = jest.spyOn(razorpayService, 'cancelSubscription');
+
+      const subId = `sub_cancel_${Date.now()}`;
+      await prisma.subscription.upsert({
+        where: { workspaceId: testWorkspace.id },
+        update: {
+          razorpaySubscriptionId: subId,
+          status: SubscriptionStatus.ACTIVE,
+          isFounding: true,
+          cancelAtPeriodEnd: false,
+        },
+        create: {
+          id: generateId(),
+          workspaceId: testWorkspace.id,
+          planId: foundingPlan.id,
+          razorpaySubscriptionId: subId,
+          status: SubscriptionStatus.ACTIVE,
+          isFounding: true,
+          cancelAtPeriodEnd: false,
+        },
+      });
+
+      const res = await request(app.getHttpServer())
+        .post(`/api/v1/workspaces/${testWorkspace.id}/billing/cancel`)
+        .set(authHeaders(sessionData))
+        .send({ cancelAtPeriodEnd: true })
+        .expect(200);
+
+      expect(res.body.cancelAtPeriodEnd).toBe(true);
+      expect(res.body.isFounding).toBe(false);
+      expect(res.body.status).toBe(SubscriptionStatus.ACTIVE);
+      expect(cancelSpy).toHaveBeenCalledWith(subId, true);
+
+      const billingStatusRes = await request(app.getHttpServer())
+        .get(`/api/v1/workspaces/${testWorkspace.id}/billing`)
+        .set(authHeaders(sessionData))
+        .expect(200);
+
+      expect(billingStatusRes.body.entitlements.isReadOnly).toBe(false);
+      expect(billingStatusRes.body.subscription.cancelAtPeriodEnd).toBe(true);
+    });
+  });
+
+  describe('Plans API (/api/v1/workspaces/:workspaceId/billing/plans)', () => {
+    it('returns 401 when unauthenticated', async () => {
+      await request(app.getHttpServer())
+        .get(`/api/v1/workspaces/${testWorkspace.id}/billing/plans`)
+        .expect(401);
+    });
+
+    it('returns 4 plans with integer paise prices and foundingAvailable flag', async () => {
+      // Clean all founding subscriptions to ensure availability
+      await prisma.subscription.deleteMany({ where: { isFounding: true } });
+
+      const res = await request(app.getHttpServer())
+        .get(`/api/v1/workspaces/${testWorkspace.id}/billing/plans`)
+        .set(authHeaders(sessionData))
+        .expect(200);
+
+      expect(Array.isArray(res.body.plans)).toBe(true);
+      expect(res.body.plans.length).toBe(4);
+      expect(res.body.foundingAvailable).toBe(true);
+
+      const solo = res.body.plans.find((p: any) => p.code === 'SOLO');
+      expect(solo).toBeDefined();
+      expect(solo.monthlyPricePaise).toBe(49900);
+      expect(solo.annualPricePaise).toBe(499000);
+      expect(solo.seats).toBe(1);
+
+      const studio = res.body.plans.find((p: any) => p.code === 'STUDIO');
+      expect(studio).toBeDefined();
+      expect(studio.monthlyPricePaise).toBe(99900);
+      expect(studio.annualPricePaise).toBe(999000);
+      expect(studio.seats).toBe(3);
+
+      const agency = res.body.plans.find((p: any) => p.code === 'AGENCY');
+      expect(agency).toBeDefined();
+      expect(agency.monthlyPricePaise).toBe(399900);
+      expect(agency.annualPricePaise).toBe(3999000);
+
+      const founding = res.body.plans.find((p: any) => p.code === 'AGENCY_FOUNDING');
+      expect(founding).toBeDefined();
+      expect(founding.monthlyPricePaise).toBe(299900);
+      expect(founding.annualPricePaise).toBe(2999000);
+    });
+
+    it('marks foundingAvailable as false when 50 active founding seats exist', async () => {
+      const dummyWorkspaces = [];
+      const dummySubs = [];
+      for (let i = 0; i < 50; i++) {
+        const id = generateId();
+        createdWorkspaceIds.push(id);
+        dummyWorkspaces.push({
+          id,
+          organizationId: testOrg.id,
+          name: `Founding Holder ${i}`,
+        });
+        dummySubs.push({
+          id: generateId(),
+          workspaceId: id,
+          planId: foundingPlan.id,
+          isFounding: true,
+          status: SubscriptionStatus.ACTIVE,
+        });
+      }
+      await prisma.workspace.createMany({ data: dummyWorkspaces });
+      await prisma.subscription.createMany({ data: dummySubs });
+
+      const res = await request(app.getHttpServer())
+        .get(`/api/v1/workspaces/${testWorkspace.id}/billing/plans`)
+        .set(authHeaders(sessionData))
+        .expect(200);
+
+      expect(res.body.foundingAvailable).toBe(false);
+
+      await prisma.subscription.deleteMany({
+        where: { workspaceId: { in: dummyWorkspaces.map((w) => w.id) } },
+      });
+      await prisma.workspace.deleteMany({
+        where: { id: { in: dummyWorkspaces.map((w) => w.id) } },
+      });
+    });
+  });
+
+  describe('Invoices API (/api/v1/workspaces/:workspaceId/billing/invoices)', () => {
+    it('returns workspace invoices newest first with subscription/plan details in paise', async () => {
+      const invoiceWsId = generateId();
+      createdWorkspaceIds.push(invoiceWsId);
+
+      await prisma.workspace.create({
+        data: {
+          id: invoiceWsId,
+          organizationId: testOrg.id,
+          name: 'Invoices Test Workspace',
+        },
+      });
+      await prisma.workspaceMember.create({
+        data: {
+          id: generateId(),
+          workspaceId: invoiceWsId,
+          userId: testUser.id,
+          role: WorkspaceRole.OWNER,
+        },
+      });
+
+      const now = Date.now();
+      const inv1 = await prisma.invoice.create({
+        data: {
+          id: generateId(),
+          workspaceId: invoiceWsId,
+          invoiceNumber: `INV-E2E-OLD-${now}`,
+          amountPaise: 49900,
+          baseAmountPaise: 42288,
+          gstAmountPaise: 7612,
+          gstRate: 18,
+          gstin: '27TESTGSTIN0001',
+          razorpayPaymentId: `pay_old_${now}`,
+          status: 'PAID',
+          createdAt: new Date(now - 10000),
+        },
+      });
+
+      const inv2 = await prisma.invoice.create({
+        data: {
+          id: generateId(),
+          workspaceId: invoiceWsId,
+          invoiceNumber: `INV-E2E-NEW-${now}`,
+          amountPaise: 99900,
+          baseAmountPaise: 84661,
+          gstAmountPaise: 15239,
+          gstRate: 18,
+          gstin: '27TESTGSTIN0001',
+          razorpayPaymentId: `pay_new_${now}`,
+          status: 'PAID',
+          createdAt: new Date(now),
+        },
+      });
+
+      const res = await request(app.getHttpServer())
+        .get(`/api/v1/workspaces/${invoiceWsId}/billing/invoices`)
+        .set(authHeaders(sessionData))
+        .expect(200);
+
+      expect(Array.isArray(res.body)).toBe(true);
+      expect(res.body.length).toBe(2);
+      expect(res.body[0].id).toBe(inv2.id);
+      expect(res.body[1].id).toBe(inv1.id);
+      expect(res.body[0].amountPaise).toBe(99900);
+      expect(res.body[0].invoiceNumber).toBe(`INV-E2E-NEW-${now}`);
+    });
+  });
+
+  describe('PDF Invoice Generation & Tenant Isolation (/api/v1/workspaces/:workspaceId/billing/invoices/:invoiceId/pdf)', () => {
+    let testInvoice: any;
+    let otherWorkspace: any;
+    let otherInvoice: any;
+
+    beforeAll(async () => {
+      const otherWsId = generateId();
+      createdWorkspaceIds.push(otherWsId);
+
+      otherWorkspace = await prisma.workspace.create({
+        data: {
+          id: otherWsId,
+          organizationId: testOrg.id,
+          name: 'Other Tenant Workspace',
+        },
+      });
+
+      testInvoice = await prisma.invoice.create({
+        data: {
+          id: generateId(),
+          workspaceId: testWorkspace.id,
+          invoiceNumber: `INV-PDF-${Date.now()}`,
+          amountPaise: 299900,
+          baseAmountPaise: 254153,
+          gstAmountPaise: 45747,
+          gstRate: 18,
+          gstin: '27AABCU9603R1ZM',
+          razorpayPaymentId: `pay_pdf_${Date.now()}`,
+          status: 'PAID',
+        },
+      });
+
+      otherInvoice = await prisma.invoice.create({
+        data: {
+          id: generateId(),
+          workspaceId: otherWorkspace.id,
+          invoiceNumber: `INV-OTHER-${Date.now()}`,
+          amountPaise: 99900,
+          baseAmountPaise: 84661,
+          gstAmountPaise: 15239,
+          gstRate: 18,
+          gstin: '27AABCU9603R1ZM',
+          razorpayPaymentId: `pay_other_${Date.now()}`,
+          status: 'PAID',
+        },
+      });
+    });
+
+    it('streams generated PDF with correct headers and content', async () => {
+      const res = await request(app.getHttpServer())
+        .get(`/api/v1/workspaces/${testWorkspace.id}/billing/invoices/${testInvoice.id}/pdf`)
+        .set(authHeaders(sessionData))
+        .buffer(true)
+        .parse((response: any, callback: any) => {
+          const chunks: Buffer[] = [];
+          response.on('data', (chunk: Buffer) => chunks.push(chunk));
+          response.on('end', () => callback(null, Buffer.concat(chunks)));
+        })
+        .expect(200);
+
+      expect(res.headers['content-type']).toBe('application/pdf');
+      expect(res.headers['content-disposition']).toBe(
+        `inline; filename="invoice-${testInvoice.invoiceNumber}.pdf"`,
+      );
+      expect(Number(res.headers['content-length'])).toBeGreaterThan(0);
+
+      const buffer: Buffer = res.body;
+      expect(buffer.subarray(0, 5).toString('utf-8')).toBe('%PDF-');
+    });
+
+    it('returns 400 when invoiceId is not a valid UUID', async () => {
+      await request(app.getHttpServer())
+        .get(`/api/v1/workspaces/${testWorkspace.id}/billing/invoices/not-a-valid-uuid/pdf`)
+        .set(authHeaders(sessionData))
+        .expect(400);
+    });
+
+    it('returns 404 when invoice does not exist', async () => {
+      const nonExistentUuid = generateId();
+      await request(app.getHttpServer())
+        .get(`/api/v1/workspaces/${testWorkspace.id}/billing/invoices/${nonExistentUuid}/pdf`)
+        .set(authHeaders(sessionData))
+        .expect(404);
+    });
+
+    it('returns 404 (NOT 403) for tenant isolation when accessing another workspace invoice', async () => {
+      const res = await request(app.getHttpServer())
+        .get(`/api/v1/workspaces/${testWorkspace.id}/billing/invoices/${otherInvoice.id}/pdf`)
+        .set(authHeaders(sessionData))
+        .expect(404);
+
+      expect(res.body.message || res.body.error?.message).toContain('not found');
     });
   });
 });
