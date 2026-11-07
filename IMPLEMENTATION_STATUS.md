@@ -3002,8 +3002,8 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
 
 ### 3. Verification & Test Evidence
 
-- **Web Unit Tests (`pnpm --filter @agency-os/web test`)**: 13/13 test files passed, 153/153 tests passed.
-  - `src/components/auth-guard.spec.tsx`: 10/10 PASS.
+- **Web Unit Tests (`pnpm --filter @agency-os/web test`)**: 13/13 test files passed, 155/155 tests passed.
+  - `src/components/auth-guard.spec.tsx`: 12/12 PASS.
 - **Monorepo Code Quality**:
   - `pnpm turbo run lint typecheck`: 15/15 tasks passed, 0 errors.
   - `pnpm turbo run build`: 7/7 tasks passed.
