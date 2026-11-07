@@ -2657,12 +2657,38 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
 
 ---
 
-## 46. Phase 8 (Billing Phase 1): Plans, 14-Day Trial, Razorpay Subscriptions, Webhooks, GST Invoices & Entitlement Fences (PR #56)
+## 46. Phase 8 (Billing Phase 1): Plans, 14-Day Trial, Razorpay Subscriptions, Webhooks, GST Invoices & Entitlement Fences (PR #56) — MERGED
 
 ### 1. Summary & Motivation
 
-- **Status**: **READY FOR REVIEW** (Branch `feat/billing-phase1`)
-- **Base Commit**: [`e73d44393c72182821ab60287419f02a527e063e`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/e73d44393c72182821ab60287419f02a527e063e) (`main`, post-PR #55 merge)
+- **Merge Status & Identity**: Successfully merged into `main` on 2026-11-07T06:05:18Z.
+  - **PR**: PR #56 (`feat/billing-phase1` — Billing Phase 1: plans, 14-day trial, Razorpay subscriptions, webhooks, GST invoices, entitlement fences)
+  - **Merge Commit SHA**: `da44db87f001bb86405208be53f99e01ab7003d7`
+  - **Approved Implementation HEAD**: `938df1bdbd4641852bc91bc23a75b804df82acbc` (merged with no drift)
+  - **Base Commit**: `e73d44393c72182821ab60287419f02a527e063e` (`main`, post-PR #55 merge)
+  - **CI Quality Gates**: 6/6 checks green on the approved head (`GitGuardian Security Checks`, `Code Quality`, `Tests`, `Application Builds`, `API E2E Tests`, `Docker Build & Smoke Test`).
+  - **Next Milestone**: Billing Phase 2 (checkout UI, customer portal, PDF invoices).
+- **Review History (three rounds)**:
+  - **Round 1 (REQUEST CHANGES at `4f6e16680be3f1cf710630ecb370c4f460c2b29b`)**:
+    - **F1 (HIGH)**: `main.ts` never enabled `rawBody`, so production webhook verification always failed (`req.rawBody` was undefined; HMAC calculation threw or verified against parsed JSON object).
+    - **F2 (HIGH)**: No Razorpay subscription was ever created and no Razorpay plans were seeded (`BillingService.createSubscription` only updated local Prisma state; `seedPlans()` only wrote local rows).
+    - **F3 (MEDIUM)**: Founding-50 claim was a plain `count()` without locking, vulnerable to concurrency race conditions exceeding the 50-workspace cap.
+    - **F4 (MEDIUM)**: Webhook idempotency was check-then-act outside a transaction, risking concurrent double-processing of identical webhook events.
+  - **Round 2 (REQUEST CHANGES at `e7d4ab1f667debbe59ce134dfef457ac14ec483a`)**:
+    - F1–F4 resolved (`NEST_APP_OPTIONS` with `rawBody: true`, plan seeding and real subscription creation, `FOR UPDATE` pessimistic locking on `Plan`, and transactional webhook deduplication).
+    - **F5 (HIGH)** (new finding): Only monthly Razorpay plans existed (`period: 'monthly'`); an `ANNUAL` subscribe reused that monthly plan with `totalCount: 10`, causing the customer to be billed monthly 10 times over 10 months instead of renewing annually.
+  - **Round 3 (APPROVE at `938df1bdbd4641852bc91bc23a75b804df82acbc`)**:
+    - Resolved F5: Dual-interval plan seeding creates yearly Razorpay plans (`period: 'yearly'`, `amount: annualPricePaise`) alongside monthly plans, stored on `Plan` as `razorpayAnnualPlanId` and `razorpayPlanId`.
+    - Interval routing: `MONTHLY` maps to `razorpayPlanId` with `totalCount: 120`; `ANNUAL` maps to `razorpayAnnualPlanId` with `totalCount: 10` across `createSubscription` and `claimFoundingSubscription`.
+    - Exposed checkout `short_url` / `shortUrl` in subscription creation response.
+    - Zero regressions to F1–F4; all unit and E2E tests verified.
+- **Final State on Main**:
+  - Plans seeded in Razorpay (monthly + yearly per plan code).
+  - Subscribe creates a real Razorpay subscription with the right plan and billing frequency.
+  - Webhooks verify against the raw body (`rawBody: true` via shared `NEST_APP_OPTIONS` across `main.ts` and test apps).
+  - Founding-50 claim serialized with a `FOR UPDATE` pessimistic lock on the `Plan` row inside `$transaction`.
+  - Webhook processing idempotent (atomic event-row claim, processing + marking in one transaction).
+  - GST math strictly in integer paise.
 - **Scope Discipline**: Implements the server-side foundation for monetization under Kyosys Agency OS:
   - Plan definition & pricing in integer paise (Solo ₹499/mo, Studio ₹999/mo, Agency ₹3,999/mo, Founding Agency ₹2,999/mo; 10x monthly price for annual billing).
   - 14-day in-app trial with full Agency entitlements (`workspaces.trialEndsAt = signup + 14 days`), zero Razorpay object creation at signup.
@@ -2675,7 +2701,7 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
   - Read-only fences enforced across controllers (`WorkspaceWritableGuard`), domain validators (`PublishabilityValidator`), and worker queue processors (`publishing.processor.ts`).
   - Scheduled daily BullMQ worker job for trial expiration.
 - **Out of Scope (Phase 2 Follow-Up)**: Checkout UI, customer billing portal, PDF invoice generation.
-- **Live Deployment Release Gate**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending independent Muse code review, external infrastructure provisioning, and disaster recovery rehearsals G18/G19).
+- **Live Deployment Release Gate**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending external infrastructure provisioning, live Razorpay credentials, and disaster recovery rehearsals G18/G19).
 
 ### 2. Scope & Technical Architecture
 
@@ -2738,10 +2764,10 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
   - Verifies CGST + SGST exact sum = total GST paise.
 - **Billing Config Unit Tests (`apps/api/src/modules/billing/billing.config.spec.ts`)**: 15/15 PASS.
   - Verifies plan matrix, annual pricing (10x monthly), dynamic GSTIN fail-fast in production, and grace days parsing.
-- **Razorpay Service Unit Tests (`apps/api/src/modules/billing/razorpay.service.spec.ts`)**: 7/7 PASS.
+- **Razorpay Service Unit Tests (`apps/api/src/modules/billing/razorpay.service.spec.ts`)**: 9/9 PASS.
   - Verifies HMAC-SHA256 signature verification, timing safe comparison, payload rejection, subscription creation options, and log masking.
-- **Billing Service Unit Tests (`apps/api/src/modules/billing/billing.service.spec.ts`)**: 9/9 PASS.
-  - Verifies plan seeding, subscription creation, Founding-50 cap enforcement (409 Conflict), grandfathered renewals, permanent forfeit on cancellation, sequential invoice generation, and dunning email dispatch.
+- **Billing Service Unit Tests (`apps/api/src/modules/billing/billing.service.spec.ts`)**: 18/18 PASS.
+  - Verifies dual plan seeding (monthly + yearly), interval plan routing (`totalCount: 120` vs `10`), Founding-50 cap enforcement (409 Conflict) with `FOR UPDATE` locking, grandfathered renewals, permanent forfeit on cancellation, sequential invoice generation, dunning email dispatch, and checkout `short_url` exposure.
 - **Entitlements Service & Guard Tests**:
   - `entitlements.service.spec.ts`: 9/9 PASS.
   - `workspace-writable.guard.spec.ts`: 3/3 PASS.
@@ -2753,15 +2779,20 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
 - **Email Delivery Service Dunning Tests (`apps/api/src/modules/auth/email-delivery.service.spec.ts`)**: 6/6 PASS.
 - **Staging Deployment Configuration Tests (`apps/api/src/config/staging-deployment.spec.ts`)**: 24/24 PASS.
 - **User Repository Signup Tests (`packages/database/src/repositories/UserRepository.spec.ts`)**: 6/6 PASS.
-- **All API Unit Tests (`pnpm --filter @agency-os/api test`)**: 34/34 test files, 408/408 PASS.
+- **API E2E Tests (`apps/api/test/billing.e2e-spec.ts`)**:
+  - Full subscription lifecycle, dual-interval plan selection, webhook HMAC verification against raw body, idempotent deduplication, invoice creation, and read-only fence enforcement verified.
+- **All API Unit Tests (`pnpm --filter @agency-os/api test`)**: 34/34 test files, 419/419 PASS.
 - **Monorepo Lint (`pnpm turbo run lint`)**: 9/9 packages PASS with 0 errors.
 - **Monorepo Typecheck (`pnpm turbo run typecheck`)**: 10/10 tasks PASS with 0 errors.
 - **Monorepo Build (`pnpm turbo run build`)**: 7/7 tasks PASS.
+- **GitHub Actions CI (Approved Head `938df1bdbd4641852bc91bc23a75b804df82acbc`)**: 6/6 checks PASS (`GitGuardian Security Checks`, `Code Quality`, `Tests`, `Application Builds`, `API E2E Tests`, `Docker Build & Smoke Test`).
 
 ### 4. Release Gate & Next Steps
 
 1. **Release Gate**:
-   - **Live Deployment**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending independent Muse code review, external infrastructure provisioning, and disaster recovery rehearsals G18/G19).
+   - **Live Deployment**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending external infrastructure provisioning, live Razorpay credentials, and disaster recovery rehearsals G18/G19).
 2. **Milestone Completion Status**:
-   - Feature branch `feat/billing-phase1` ready for Pull Request creation against `main`: **READY**.
-   - Independent Muse review required before any merge: **PENDING**.
+   - PR #56 merged into `main` (commit `da44db87f001bb86405208be53f99e01ab7003d7`): **COMPLETED**.
+   - All 6 CI checks green on approved head `938df1bdbd4641852bc91bc23a75b804df82acbc`: **COMPLETED**.
+   - Independent Muse review completed and approved: **COMPLETED**.
+   - **Next Milestone**: Billing Phase 2 (checkout UI, customer portal, PDF invoices).
