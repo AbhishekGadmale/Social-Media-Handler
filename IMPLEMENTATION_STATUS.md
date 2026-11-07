@@ -2671,7 +2671,7 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
 - **Review History (three rounds)**:
   - **Round 1 (REQUEST CHANGES at `4f6e16680be3f1cf710630ecb370c4f460c2b29b`)**:
     - **F1 (HIGH)**: `main.ts` never enabled `rawBody`, so production webhook verification always failed (`req.rawBody` was undefined; HMAC calculation threw or verified against parsed JSON object).
-    - **F2 (HIGH)**: No Razorpay subscription was ever created and no Razorpay plans were seeded (`BillingService.createSubscription` only updated local Prisma state; `seedPlans()` was never called during startup or execution).
+    - **F2 (HIGH)**: No Razorpay subscription was ever created and no Razorpay plans were seeded (`BillingService.createSubscription` only updated local Prisma state; `seedPlans()` only wrote local rows).
     - **F3 (MEDIUM)**: Founding-50 claim was a plain `count()` without locking, vulnerable to concurrency race conditions exceeding the 50-workspace cap.
     - **F4 (MEDIUM)**: Webhook idempotency was check-then-act outside a transaction, risking concurrent double-processing of identical webhook events.
   - **Round 2 (REQUEST CHANGES at `e7d4ab1f667debbe59ce134dfef457ac14ec483a`)**:
