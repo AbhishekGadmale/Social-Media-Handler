@@ -2949,3 +2949,70 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
 2. **Next Steps**:
    - Submit PR #60 (`feat/signup-onboarding-ui`) targeting `main`.
    - Independent Muse review before any merge. Do not call merge-ready.
+
+
+---
+
+## 49. AuthGuard Fix: Make /signup and /verify-email Public Routes (Branch `fix/auth-guard-public-routes` — PR #61)
+
+### 1. Summary & Motivation
+
+- **Status**: **IN REVIEW** (Branch `fix/auth-guard-public-routes`, PR #61 pending independent Muse review)
+- **Branch**: `fix/auth-guard-public-routes`
+- **Base Commit**: `18d2d0404cf81696d191c2f1b3eb86b18c6c984a` (`main`, post-PR #60 merge)
+- **Reviewer**: Muse (Independent review required; do not call merge-ready)
+- **Live Deployment Release Gate**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending external infrastructure provisioning, live email delivery verification, live payment credentials, and disaster recovery rehearsals G18/G19).
+- **Next Milestone**: TBD
+- **Problem & Root Cause**:
+  - `apps/web/src/components/auth-guard.tsx` previously used a single boolean check: `const isLoginPage = pathname === '/login'`.
+  - Any logged-out visitor on any route other than `/login` was bounced with `router.replace('/login?redirect=' + encodeURIComponent(pathname))` and the page's children were not rendered (`return null`).
+  - Observed live evidence:
+    1. Clicking "Create one" on `/login` navigated to `/signup`, but the guard bounced the user to `/login?redirect=%2Fsignup`. As a result, the signup page was completely unreachable for logged-out users.
+    2. Clicking a verification link from email (`/verify-email?token=...`) while logged out bounced the visitor to `/login`, dropping the query string (`?token=...` lost). Upon signing in and redirecting back to `/verify-email`, the user was presented with "Invalid or expired verification token" due to the missing token.
+
+### 2. Scope & Implementation Details
+
+1. **Exact-Match Public Route Definition (`apps/web/src/components/auth-guard.tsx`)**:
+   - Defined `const PUBLIC_ROUTES = ['/login', '/signup', '/verify-email'];` at the top of the file.
+   - Evaluated route membership via `const isPublicRoute = PUBLIC_ROUTES.includes(pathname);` using exact match only (no prefix matching, no wildcards).
+   - Maintained `const isLoginPage = pathname === '/login';` for authenticated redirect handling.
+
+2. **Unauthenticated Access Control**:
+   - Replaced `isLoginPage` with `isPublicRoute` in the unauthenticated bounce effect and render guard:
+     - When unauthenticated (`isError`) on a public route (`isPublicRoute`), children render normally with zero redirect (`router.replace` never called).
+     - When unauthenticated (`isError`) on a protected route (`!isPublicRoute`), user is bounced to `/login?redirect=${encodeURIComponent(pathname)}` and children do not render (`return null`).
+
+3. **Authenticated Access Control**:
+   - Kept authenticated user redirect solely for `/login` (`isLoginPage = pathname === '/login'`): redirects to `/${membership.workspaceId}/analytics` (or `/dashboard` if no memberships) and suppresses children (`return null`).
+   - Authenticated users on `/signup` or `/verify-email` are NOT redirected; pages render normally without interference (e.g., users registering an additional account or verifying an email from another session).
+
+4. **Preserved Existing Architecture**:
+   - Preserved `useQuery({ ...authQueries.me(), retry: false })`, loading spinner indicator, and redirect target structure (`/login?redirect=...`).
+
+5. **Unit Test Suite (`apps/web/src/components/auth-guard.spec.tsx`)**:
+   - Logged-out visit on `/signup`: children render, `router.replace` never called.
+   - Logged-out visit on `/verify-email`: children render, `router.replace` never called.
+   - Logged-out visit on `/login`: children render, `router.replace` never called.
+   - Logged-out visit on protected routes (`/dashboard`, `/ws-123/analytics`): `router.replace` called with redirect parameter, children do not render.
+   - Logged-in visit on `/login`: redirects to workspace analytics with memberships, redirects to `/dashboard` without memberships, children suppressed.
+   - Logged-in visit on `/signup`: no redirect, children render.
+   - Logged-in visit on `/verify-email`: no redirect, children render.
+   - Logged-in visit on protected routes: renders children.
+   - Loading state: renders loading indicator and suppresses children.
+
+### 3. Verification & Test Evidence
+
+- **Web Unit Tests (`pnpm --filter @agency-os/web test`)**: 13/13 test files passed, 153/153 tests passed.
+  - `src/components/auth-guard.spec.tsx`: 10/10 PASS.
+- **Monorepo Code Quality**:
+  - `pnpm turbo run lint typecheck`: 15/15 tasks passed, 0 errors.
+  - `pnpm turbo run build`: 7/7 tasks passed.
+
+### 4. Release Gate & Next Steps
+
+1. **Release Gate**:
+   - **Live Deployment**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending external infrastructure provisioning, live email delivery verification, live payment credentials, and disaster recovery rehearsals G18/G19).
+2. **Next Steps**:
+   - Submit PR #61 (`fix/auth-guard-public-routes`) targeting `main`.
+   - Independent Muse review before any merge. Do not call merge-ready.
+   - Next Milestone: TBD.

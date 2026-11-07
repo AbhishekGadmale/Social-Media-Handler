@@ -5,9 +5,12 @@ import { useRouter, usePathname } from 'next/navigation';
 import { useEffect } from 'react';
 import { authQueries } from '../lib/query/auth';
 
+export const PUBLIC_ROUTES = ['/login', '/signup', '/verify-email'];
+
 export function AuthGuard({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
+  const isPublicRoute = PUBLIC_ROUTES.includes(pathname);
   const isLoginPage = pathname === '/login';
 
   const { data: authData, isLoading, isError } = useQuery({
@@ -19,7 +22,7 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
     if (isLoading) return;
 
     if (isError) {
-      if (!isLoginPage) {
+      if (!isPublicRoute) {
         router.replace(`/login?redirect=${encodeURIComponent(pathname)}`);
       }
     } else if (authData && isLoginPage) {
@@ -30,7 +33,7 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
         router.replace('/dashboard');
       }
     }
-  }, [isLoading, isError, authData, isLoginPage, pathname, router]);
+  }, [isLoading, isError, authData, isPublicRoute, isLoginPage, pathname, router]);
 
   if (isLoading) {
     return (
@@ -41,7 +44,7 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
   }
 
   // If on a protected route and not authenticated, don't render children
-  if (isError && !isLoginPage) {
+  if (isError && !isPublicRoute) {
     return null;
   }
 
