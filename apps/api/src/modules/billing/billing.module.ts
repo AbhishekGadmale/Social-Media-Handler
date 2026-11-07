@@ -7,6 +7,7 @@ import { BillingController } from './billing.controller';
 import { BillingService } from './billing.service';
 import { EntitlementsService } from './entitlements.service';
 import { RazorpayService } from './razorpay.service';
+import { PdfInvoiceGeneratorService } from './pdf-invoice.service';
 import { WorkspaceWritableGuard } from './guards/workspace-writable.guard';
 import { validateBillingConfig } from './billing.config';
 
@@ -15,6 +16,7 @@ import { validateBillingConfig } from './billing.config';
   controllers: [BillingController],
   providers: [
     WorkspaceWritableGuard,
+    PdfInvoiceGeneratorService,
     {
       provide: RazorpayService,
       useFactory: () => {
@@ -43,6 +45,7 @@ import { validateBillingConfig } from './billing.config';
     BillingService,
     EntitlementsService,
     RazorpayService,
+    PdfInvoiceGeneratorService,
     WorkspaceWritableGuard,
   ],
 })

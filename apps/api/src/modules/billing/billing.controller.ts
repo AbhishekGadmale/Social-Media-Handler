@@ -6,12 +6,14 @@ import {
   Param,
   Headers,
   Req,
+  Res,
   UseGuards,
   HttpCode,
   BadRequestException,
+  ParseUUIDPipe,
   Logger,
 } from '@nestjs/common';
-import { Request } from 'express';
+import type { Request, Response } from 'express';
 import { AuthGuard } from '../auth/guards/auth.guard';
 import { WorkspaceGuard } from '../auth/guards/workspace.guard';
 import { PermissionGuard } from '../auth/guards/permission.guard';
@@ -19,6 +21,7 @@ import { RequirePermission } from '../auth/decorators/permission.decorator';
 import { BillingService } from './billing.service';
 import { RazorpayService } from './razorpay.service';
 import { EntitlementsService } from './entitlements.service';
+import { PdfInvoiceGeneratorService } from './pdf-invoice.service';
 import { SubscribeDto, CancelSubscriptionDto } from './dto/subscribe.dto';
 
 @Controller('v1')
@@ -29,6 +32,7 @@ export class BillingController {
     private readonly billingService: BillingService,
     private readonly razorpayService: RazorpayService,
     private readonly entitlementsService: EntitlementsService,
+    private readonly pdfInvoiceService: PdfInvoiceGeneratorService,
   ) {}
 
   /**
@@ -100,6 +104,53 @@ export class BillingController {
       ...billing,
       entitlements,
     };
+  }
+
+  /**
+   * Retrieves all active plans with founding availability flag.
+   */
+  @Get('workspaces/:workspaceId/billing/plans')
+  @UseGuards(AuthGuard, WorkspaceGuard, PermissionGuard)
+  @RequirePermission('billing.view')
+  async getPlans(@Param('workspaceId') _workspaceId: string) {
+    return this.billingService.getPlansWithAvailability();
+  }
+
+  /**
+   * Retrieves workspace invoices newest first.
+   */
+  @Get('workspaces/:workspaceId/billing/invoices')
+  @UseGuards(AuthGuard, WorkspaceGuard, PermissionGuard)
+  @RequirePermission('billing.view')
+  async getWorkspaceInvoices(@Param('workspaceId') workspaceId: string) {
+    return this.billingService.getWorkspaceInvoices(workspaceId);
+  }
+
+  /**
+   * Generates and streams a tax invoice PDF.
+   * Scoped to workspace; returns 404 for missing or foreign workspace invoices.
+   */
+  @Get('workspaces/:workspaceId/billing/invoices/:invoiceId/pdf')
+  @UseGuards(AuthGuard, WorkspaceGuard, PermissionGuard)
+  @RequirePermission('billing.view')
+  async getInvoicePdf(
+    @Param('workspaceId') workspaceId: string,
+    @Param('invoiceId', new ParseUUIDPipe()) invoiceId: string,
+    @Res() res: Response,
+  ) {
+    const invoice = await this.billingService.getInvoiceRecord(
+      workspaceId,
+      invoiceId,
+    );
+    const pdfBuffer = await this.pdfInvoiceService.generatePdf(invoice);
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader(
+      'Content-Disposition',
+      `inline; filename="invoice-${invoice.invoiceNumber}.pdf"`,
+    );
+    res.setHeader('Content-Length', pdfBuffer.length.toString());
+    res.end(pdfBuffer);
   }
 
   /**

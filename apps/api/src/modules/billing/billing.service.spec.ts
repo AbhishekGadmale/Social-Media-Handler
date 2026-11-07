@@ -57,6 +57,7 @@ describe('BillingService', () => {
       },
       invoice: {
         findUnique: vi.fn(),
+        findFirst: vi.fn(),
         findMany: vi.fn(),
         create: vi.fn(),
       },
@@ -701,6 +702,103 @@ describe('BillingService', () => {
           reason: 'Card declined by issuing bank',
         }),
       );
+    });
+  });
+
+  describe('getPlansWithAvailability', () => {
+    it('returns plans and foundingAvailable: true when count < 50', async () => {
+      prismaMock.plan.findMany.mockResolvedValue([
+        { code: 'SOLO', monthlyPricePaise: 49900 },
+        { code: 'STUDIO', monthlyPricePaise: 99900 },
+      ]);
+      prismaMock.subscription.count.mockResolvedValue(15);
+
+      const result = await service.getPlansWithAvailability();
+
+      expect(result.foundingAvailable).toBe(true);
+      expect(result.plans).toHaveLength(2);
+      expect(prismaMock.subscription.count).toHaveBeenCalledWith({
+        where: {
+          isFounding: true,
+          status: {
+            in: [
+              SubscriptionStatus.ACTIVE,
+              SubscriptionStatus.TRIAL,
+              SubscriptionStatus.PAST_DUE,
+            ],
+          },
+        },
+      });
+    });
+
+    it('returns foundingAvailable: false when count >= 50', async () => {
+      prismaMock.plan.findMany.mockResolvedValue([]);
+      prismaMock.subscription.count.mockResolvedValue(50);
+
+      const result = await service.getPlansWithAvailability();
+
+      expect(result.foundingAvailable).toBe(false);
+    });
+  });
+
+  describe('getWorkspaceInvoices', () => {
+    it('fetches invoices ordered by createdAt desc with plan included', async () => {
+      const mockInvoices = [
+        { id: 'inv-1', invoiceNumber: 'INV-2026-00001', createdAt: new Date() },
+      ];
+      prismaMock.invoice.findMany.mockResolvedValue(mockInvoices);
+
+      const result = await service.getWorkspaceInvoices(mockWorkspaceId);
+
+      expect(prismaMock.invoice.findMany).toHaveBeenCalledWith({
+        where: { workspaceId: mockWorkspaceId },
+        orderBy: { createdAt: 'desc' },
+        include: {
+          subscription: {
+            include: {
+              plan: true,
+            },
+          },
+        },
+      });
+      expect(result).toEqual(mockInvoices);
+    });
+  });
+
+  describe('getInvoiceRecord', () => {
+    it('returns invoice when found for workspace', async () => {
+      const mockInvoice = {
+        id: 'inv-1',
+        workspaceId: mockWorkspaceId,
+        invoiceNumber: 'INV-2026-00001',
+      };
+      prismaMock.invoice.findFirst.mockResolvedValue(mockInvoice);
+
+      const result = await service.getInvoiceRecord(mockWorkspaceId, 'inv-1');
+
+      expect(prismaMock.invoice.findFirst).toHaveBeenCalledWith({
+        where: {
+          id: 'inv-1',
+          workspaceId: mockWorkspaceId,
+        },
+        include: {
+          workspace: true,
+          subscription: {
+            include: {
+              plan: true,
+            },
+          },
+        },
+      });
+      expect(result).toEqual(mockInvoice);
+    });
+
+    it('throws 404 NotFoundException when invoice does not exist or belongs to another workspace', async () => {
+      prismaMock.invoice.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.getInvoiceRecord(mockWorkspaceId, 'inv-foreign'),
+      ).rejects.toThrow(NotFoundException);
     });
   });
 });

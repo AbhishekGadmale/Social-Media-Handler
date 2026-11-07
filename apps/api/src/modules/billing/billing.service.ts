@@ -838,4 +838,80 @@ export class BillingService {
       subscription: workspace.subscription,
     };
   }
+
+  /**
+   * Retrieves all active plans with founding availability flag.
+   */
+  async getPlansWithAvailability() {
+    await this.seedPlans();
+
+    const plans = await this.prisma.plan.findMany({
+      where: { isActive: true },
+      orderBy: { monthlyPricePaise: 'asc' },
+    });
+
+    const claimedCount = await this.prisma.subscription.count({
+      where: {
+        isFounding: true,
+        status: {
+          in: [
+            SubscriptionStatus.ACTIVE,
+            SubscriptionStatus.TRIAL,
+            SubscriptionStatus.PAST_DUE,
+          ],
+        },
+      },
+    });
+
+    const foundingAvailable = claimedCount < FOUNDING_PLAN_MAX_SEATS;
+
+    return {
+      plans,
+      foundingAvailable,
+    };
+  }
+
+  /**
+   * Retrieves workspace invoices newest first, with subscription and plan details.
+   */
+  async getWorkspaceInvoices(workspaceId: string) {
+    return this.prisma.invoice.findMany({
+      where: { workspaceId },
+      orderBy: { createdAt: 'desc' },
+      include: {
+        subscription: {
+          include: {
+            plan: true,
+          },
+        },
+      },
+    });
+  }
+
+  /**
+   * Retrieves an invoice by ID scoped strictly to workspaceId.
+   * Throws 404 NotFoundException for missing or foreign workspace invoices.
+   */
+  async getInvoiceRecord(workspaceId: string, invoiceId: string) {
+    const invoice = await this.prisma.invoice.findFirst({
+      where: {
+        id: invoiceId,
+        workspaceId,
+      },
+      include: {
+        workspace: true,
+        subscription: {
+          include: {
+            plan: true,
+          },
+        },
+      },
+    });
+
+    if (!invoice) {
+      throw new NotFoundException('Invoice not found');
+    }
+
+    return invoice;
+  }
 }
