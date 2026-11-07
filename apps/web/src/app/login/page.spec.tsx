@@ -186,4 +186,13 @@ describe('LoginPage post-login redirects', () => {
       });
     });
   });
+
+  describe('Signup link', () => {
+    it('renders a link to /signup', () => {
+      renderLogin();
+      const signupLink = screen.getByRole('link', { name: /create one/i });
+      expect(signupLink).toBeInTheDocument();
+      expect(signupLink).toHaveAttribute('href', '/signup');
+    });
+  });
 });

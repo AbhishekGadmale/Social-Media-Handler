@@ -2875,3 +2875,77 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
    - All 6 CI checks green on approved head `535fd8dfc3a5872f92bb01a77762989c25c0e08e`: **COMPLETED**.
    - Independent Muse review completed and approved: **COMPLETED**.
    - **Next Milestone**: TBD (billing is complete as specified; the next milestone is to be decided).
+
+---
+
+## 48. Self-Serve Signup & Email Verification Onboarding Frontend (Branch `feat/signup-onboarding-ui` — PR #60)
+
+### 1. Summary & Motivation
+
+- **Status**: **IN REVIEW** (Branch `feat/signup-onboarding-ui`, PR #60 pending independent Muse review)
+- **Branch**: `feat/signup-onboarding-ui`
+- **Base Commit**: `be3441998658bb00dd6a8035b9438f79f9ec4761` (`main`)
+- **Reviewer**: Muse (Independent review required; do not call merge-ready)
+- **Live Deployment Release Gate**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending external infrastructure provisioning, live email delivery verification, live payment credentials, and disaster recovery rehearsals G18/G19).
+- **Next Milestone**: TBD
+- **Problem & Motivation**:
+  - The backend signup and email verification infrastructure existed (`SignupDto`, `AuthService.signup`, `AuthService.verifyEmail`, `AuthService.resendVerification`), but no browser UI invoked it.
+  - `/` was a redirect to `/dashboard`, `/login` only supported existing credentials with zero links to create an account, and no `/signup` or `/verify-email` pages existed in `apps/web`.
+  - Transactional verification emails linked to `{FRONTEND_URL}/verify-email?token=...`, resolving to a 404 in production.
+  - This deliverable introduces the complete client onboarding UI: self-serve registration, anti-enumeration security, honest trial communication, single-use token verification with React StrictMode guard, and unverified account notification banners on the dashboard.
+
+### 2. Scope & Implementation Details
+
+1. **Self-Serve Registration Flow (`apps/web/src/app/signup/page.tsx` + `page.spec.tsx`)**:
+   - Form fields matching `SignupDto`: `email`, `password`, `confirmPassword` (client-only match check, never transmitted over the wire), `organizationName` (optional, max 100 chars), and `workspaceName` (optional, max 100 chars). User name field omitted as `User.name` is not set at signup.
+   - Client validation: valid email pattern, password length 8–128 characters, matching password confirmation.
+   - Submits payload to `POST /api/v1/auth/signup` via `api.post`. Does not set session cookies or auto-login.
+   - Anti-enumeration UX: generic 201 response switches to the "Check your email" view unconditionally, preventing email enumeration or account probing.
+   - Honest copy: "Your workspace is created with a 14-day trial. Verify your email to enter it.", clearly establishing that the 14-day trial clock begins at signup.
+   - Inline resend verification form on check-email screen submitting to `POST /api/v1/auth/resend-verification`, always displaying generic success message: `"If an unverified account exists for this email, a verification link has been sent."`
+   - Complete error mapping for 400 validation errors, 429 rate limit retry durations, and 500/0 network/server failures.
+
+2. **Email Verification Flow (`apps/web/src/app/verify-email/page.tsx` + `page.spec.tsx`)**:
+   - Wrapped search parameter consumption in React `<Suspense>` boundary to guarantee static prerendering support under Next.js App Router.
+   - Reads `?token=` parameter: if missing or whitespace-only, immediately transitions to invalid state without issuing backend API requests.
+   - Single-use token CAS protection: uses `useRef(false)` to prevent duplicate verification requests caused by React 18/StrictMode double-mount lifecycles.
+   - Three distinct lifecycle states:
+     - `verifying`: Loading spinner and status description.
+     - `success`: "Email verified successfully." with a prominent "Sign in" CTA link to `/login`.
+     - `invalid`: "Invalid or expired verification token" with an inline resend form.
+   - Resend form in invalid state calls `POST /api/v1/auth/resend-verification` with generic success notice and rate-limit error mapping.
+   - Strict Security: verification token is never rendered in DOM text, attributes, or console logs.
+
+3. **Login Navigation Integration (`apps/web/src/app/login/page.tsx` + `page.spec.tsx`)**:
+   - Added registration link under the sign-in form: "Don't have an account? Create one" linking directly to `/signup`.
+   - Preserved all existing redirect, rate limiting, and session behavior.
+
+4. **Minimal API Update & Session Type Alignment**:
+   - `apps/api/src/modules/auth/auth.controller.ts`: Explicitly ensured `emailVerified: Boolean(user.emailVerified)` is returned in `GET /api/v1/auth/me`.
+   - `apps/web/src/lib/query/auth.ts`: Added `emailVerified: boolean` to `User` interface.
+   - `apps/api/src/modules/auth/auth.controller.spec.ts`: Added unit tests asserting `emailVerified: boolean` is returned on `/me` while `hashedPassword` is omitted.
+
+5. **Dashboard Unverified Notification Banner (`apps/web/src/app/dashboard/page.tsx` + `page.spec.tsx`)**:
+   - When authenticated user has `emailVerified === false`, renders an amber notification banner: "Verify your email to unlock your workspace".
+   - Includes inline resend form with prefilled email, submit action to `POST /api/v1/auth/resend-verification`, generic success feedback, and rate limit handling.
+
+### 3. Verification & Test Evidence
+
+- **Web Unit Test Suite (`pnpm --filter @agency-os/web test`)**: 12/12 test files passed, 143/143 tests passed.
+  - `src/app/signup/page.spec.tsx` (10/10 PASS): form rendering, client validation, payload delivery, honest trial copy, anti-enumeration identical response, resend flow, and error states.
+  - `src/app/verify-email/page.spec.tsx` (6/6 PASS): missing/empty token rejection without API calls, successful token verification, 400 rejection handling, StrictMode CAS double-invocation prevention, and token redaction from DOM.
+  - `src/app/dashboard/page.spec.tsx` (2/2 PASS): banner suppression when verified, banner presentation and inline resend execution when unverified.
+  - `src/app/login/page.spec.tsx` (17/17 PASS): signup link presence and redirect integrity.
+- **API Unit Test Suite (`pnpm --filter @agency-os/api test`)**: 35/35 test files passed, 435/435 tests passed.
+  - `src/modules/auth/auth.controller.spec.ts` (26/26 PASS): verified explicit `emailVerified: boolean` propagation and password exclusion in `getMe`.
+- **Monorepo Code Quality**:
+  - `pnpm turbo run lint typecheck`: 15/15 tasks passed, 0 errors.
+  - `pnpm turbo run build`: 7/7 tasks passed, with `/login`, `/signup`, and `/verify-email` statically prerendered.
+
+### 4. Release Gate & Next Steps
+
+1. **Release Gate**:
+   - **Live Deployment**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending external infrastructure provisioning, live email delivery verification, live payment credentials, and disaster recovery rehearsals G18/G19).
+2. **Next Steps**:
+   - Submit PR #60 (`feat/signup-onboarding-ui`) targeting `main`.
+   - Independent Muse review before any merge. Do not call merge-ready.
