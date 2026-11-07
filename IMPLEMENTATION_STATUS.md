@@ -2797,12 +2797,32 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
    - Independent Muse review completed and approved: **COMPLETED**.
    - **Next Milestone**: Billing Phase 2 (PR #58 — checkout UI, customer portal, PDF invoices & plans API).
 
-## 47. Phase 8 (Billing Phase 2): Checkout UI, Customer Portal, PDF Invoices & Plans API (PR #58) — IMPLEMENTED
+## 47. Phase 8 (Billing Phase 2): Checkout UI, Customer Portal, PDF Invoices & Plans API (PR #58) — MERGED
 
 ### 1. Summary & Motivation
 
-- **Identity**: PR #58 (`feat/billing-phase2` — Checkout UI, customer portal, PDF invoices, plans & invoices APIs).
-- **Base Commit**: `e615d6dac0a7d23cf113ae54b58b4b4d5c9b83a7` (`main`, post-PR #57 merge).
+- **Merge Status & Identity**: Successfully merged into `main` on 2026-11-07T13:33:44Z.
+  - **PR**: PR #58 (`feat/billing-phase2` — Billing Phase 2: checkout UI, customer portal, PDF invoices, plans API)
+  - **Merge Commit SHA**: `834cfae194f9bfa0de7ee266a71f61489c4b0b1c`
+  - **Approved Implementation HEAD**: `535fd8dfc3a5872f92bb01a77762989c25c0e08e` (merged with no drift)
+  - **Base Commit**: `e615d6dac0a7d23cf113ae54b58b4b4d5c9b83a7` (`main`, post-PR #57 merge)
+  - **CI Quality Gates**: 6/6 checks green on the approved head (`GitGuardian Security Checks`, `Code Quality`, `Tests`, `Application Builds`, `API E2E Tests`, `Docker Build & Smoke Test`).
+  - **Next Milestone**: TBD
+- **Review History (single round)**:
+  - **Round 1 (APPROVE at `535fd8dfc3a5872f92bb01a77762989c25c0e08e`)**:
+    - Single-round approval — no REQUEST CHANGES rounds.
+    - **Verified in review**:
+      - Plans endpoint with `foundingAvailable` (counted the same way as Phase 1: active count < 50 across `ACTIVE`, `TRIAL`, `PAST_DUE` founding subscriptions).
+      - Invoices list newest-first (`orderBy: { createdAt: 'desc' }`).
+      - PDF endpoint (guards + `ParseUUIDPipe` + 404 for foreign workspace invoices, inline headers).
+      - PDF GST regime rule exactly as specified: IGST 18% for known non-Maharashtra state, CGST + SGST otherwise, split `cgst = Math.round(gstAmountPaise / 2)` and `sgst = gstAmountPaise - cgst`, regime labelled, no invented fields.
+      - Checkout UI (4 plans at exact prices, founding disabled when sold out, `short_url` redirect, trial countdown + payment-processing + retained-access banners, cancel with `cancelAtPeriodEnd: true`).
+      - Tests (pdf spec 5/5 incl. odd-paise split + IGST path, controller 10/10, page 7/7, billing service 23/23, E2E 19/19 — all counts verified by counting `it()` blocks).
+    - **Non-blocking notes recorded in review**:
+      - §47 claims "sub-50ms PDF streaming" with no measurement cited.
+      - `billing.config` carries an unused tradeName `'Kyosys Agency OS'` (filed trade name is Gadmale Technologies).
+- **Final State on Main**:
+  - The full money path is built and proven: plan picker → Razorpay checkout (`short_url`) → GST invoice PDF, plus the customer portal (plan status, invoice list, cancel at period end).
 - **Core Deliverables**:
   - **Plans API (`GET /api/v1/workspaces/:workspaceId/billing/plans`)**: Returns the 4 active plans (Solo ₹499, Studio ₹999, Agency ₹3,999, Agency Founding 50 ₹2,999) with monthly and annual prices in integer paise, max seats, features, and dynamic `foundingAvailable: boolean` flag evaluated against the 50-workspace founding cap across `ACTIVE`, `TRIAL`, and `PAST_DUE` subscriptions.
   - **Invoices API (`GET /api/v1/workspaces/:workspaceId/billing/invoices`)**: Returns historical workspace invoices sorted newest first, including plan code/name, billing interval, integer paise amounts (`amountPaise`, `baseAmountPaise`, `gstAmountPaise`), GSTIN, status, and PDF download metadata.
@@ -2824,7 +2844,7 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
 
 ### 2. Architecture & Design Decisions
 
-- **Pure Server-side PDFKit Generation**: Avoided Puppeteer/Playwright or external rendering microservices; `pdfkit` delivers lightweight, predictable, sub-50ms PDF streaming directly to the client.
+- **Pure Server-side PDFKit Generation**: Avoided Puppeteer/Playwright or external rendering microservices; `pdfkit` delivers lightweight, predictable PDF streaming directly to the client.
 - **Tenant Isolation**: Direct lookup verifies `workspaceId` matching the authenticated context. Any foreign or unowned invoice returns standard 404 to avoid information disclosure.
 - **Strict Integer Paise Invariant**: All amounts in the API and database remain strictly integer paise; formatting to rupees (e.g. `₹499`) is strictly isolated to presentation components.
 - **Cancellation Grace Period**: Subscriptions cancelled with `cancelAtPeriodEnd: true` maintain full write access and non-read-only entitlement status until `currentPeriodEnd` is reached, while permanently releasing their founding lock.
@@ -2832,7 +2852,7 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
 ### 3. Verification & Test Evidence
 
 - **PDF Invoice Service Unit Tests (`apps/api/src/modules/billing/pdf-invoice.service.spec.ts`)**: 5/5 PASS.
-  - Verifies PDF buffer generation, intra-state CGST/SGST split, inter-state IGST application, and tax breakdown accuracy.
+  - Verifies PDF buffer generation, intra-state CGST/SGST split, inter-state IGST application, odd-paise rounding, and tax breakdown accuracy.
 - **Billing Service Unit Tests (`apps/api/src/modules/billing/billing.service.spec.ts`)**: 23/23 PASS.
   - Verifies `getPlansWithAvailability` founding cap check, `getWorkspaceInvoices` reverse chronological ordering, and `getInvoiceRecord` 404 tenant isolation.
 - **Billing Controller Unit Tests (`apps/api/src/modules/billing/billing.controller.spec.ts`)**: 10/10 PASS.
@@ -2843,12 +2863,15 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
 - **Full API Unit Suite (`pnpm --filter @agency-os/api test`)**: 35/35 test files, 433/433 tests PASS.
 - **API E2E Tests (`apps/api/test/billing.e2e-spec.ts`)**: 19/19 PASS.
   - Covers Webhook HMAC rawBody validation & deduplication, Subscription lifecycle & Razorpay plan routing, Founding-50 concurrency locking, Webhook concurrency & idempotent invoicing, Workspace entitlements, Subscription cancellation, Plans API with founding cap, Invoices API newest first, and PDF streaming with tenant isolation & UUID validation.
-- **Monorepo Lint & Typecheck (`pnpm turbo run lint typecheck`)**: 10/10 tasks PASS with 0 errors.
+- **Monorepo Lint & Typecheck (`pnpm turbo run lint typecheck`)**: 15/15 tasks PASS with 0 errors.
 - **Monorepo Build (`pnpm turbo run build`)**: 7/7 tasks PASS.
 
-### 4. Release Gate & Next Steps
+### 4. Release Gate & Milestone Completion
 
 1. **Release Gate**:
    - **Live Deployment**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending external infrastructure provisioning, live Razorpay credentials, and disaster recovery rehearsals G18/G19).
-2. **Review Requirements**:
-   - PR must be independently reviewed by Muse prior to any merge.
+2. **Milestone Completion Status**:
+   - PR #58 merged into `main` (commit `834cfae194f9bfa0de7ee266a71f61489c4b0b1c`): **COMPLETED**.
+   - All 6 CI checks green on approved head `535fd8dfc3a5872f92bb01a77762989c25c0e08e`: **COMPLETED**.
+   - Independent Muse review completed and approved: **COMPLETED**.
+   - **Next Milestone**: TBD (billing is complete as specified; the next milestone is to be decided).
