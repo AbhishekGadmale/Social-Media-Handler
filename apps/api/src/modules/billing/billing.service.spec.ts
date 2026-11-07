@@ -24,6 +24,8 @@ describe('BillingService', () => {
     annualPricePaise: 2999000,
     seats: 10,
     isFounding: true,
+    razorpayPlanId: 'plan_founding_monthly_123',
+    razorpayAnnualPlanId: 'plan_founding_annual_456',
   };
   const mockAgencyPlan = {
     id: 'plan-agency-id',
@@ -75,16 +77,17 @@ describe('BillingService', () => {
     };
 
     razorpayServiceMock = {
-      createPlan: vi
-        .fn()
-        .mockImplementation((p: any) =>
-          Promise.resolve({ id: `plan_${p.item.name.toLowerCase()}_123` }),
-        ),
-      createSubscription: vi
-        .fn()
-        .mockImplementation((s: any) =>
-          Promise.resolve({ id: 'sub_rzp_mock_123' }),
-        ),
+      createPlan: vi.fn().mockImplementation((p: any) =>
+        Promise.resolve({
+          id: `plan_${p.item.name.toLowerCase().replace(/[^a-z0-9]/g, '_')}_123`,
+        }),
+      ),
+      createSubscription: vi.fn().mockImplementation((s: any) =>
+        Promise.resolve({
+          id: 'sub_rzp_mock_123',
+          short_url: 'https://rzp.io/i/sub_mock_123',
+        }),
+      ),
       cancelSubscription: vi.fn(),
       verifyWebhookSignature: vi.fn(),
     };
@@ -102,7 +105,7 @@ describe('BillingService', () => {
   });
 
   describe('Plan Seeding', () => {
-    it('seeds missing plans into the database and creates them in Razorpay', async () => {
+    it('seeds missing plans into the database and creates both monthly and yearly plans in Razorpay', async () => {
       prismaMock.plan.findUnique.mockResolvedValue(null);
       prismaMock.plan.create.mockImplementation(({ data }: any) =>
         Promise.resolve({ id: 'new-id', ...data }),
@@ -110,15 +113,70 @@ describe('BillingService', () => {
 
       await service.seedPlans();
 
-      expect(razorpayServiceMock.createPlan).toHaveBeenCalledTimes(4);
+      // 4 plans * 2 intervals (monthly + yearly) = 8 Razorpay plans
+      expect(razorpayServiceMock.createPlan).toHaveBeenCalledTimes(8);
       expect(prismaMock.plan.create).toHaveBeenCalledTimes(4);
+
+      // Verify monthly and annual creation for Studio plan
+      expect(razorpayServiceMock.createPlan).toHaveBeenCalledWith(
+        expect.objectContaining({
+          period: 'monthly',
+          interval: 1,
+          item: expect.objectContaining({
+            name: 'Studio (Monthly)',
+            amount: 99900,
+          }),
+        }),
+      );
+      expect(razorpayServiceMock.createPlan).toHaveBeenCalledWith(
+        expect.objectContaining({
+          period: 'yearly',
+          interval: 1,
+          item: expect.objectContaining({
+            name: 'Studio (Annual)',
+            amount: 999000,
+          }),
+        }),
+      );
+
+      // Verify monthly and annual creation for Founding plan
+      expect(razorpayServiceMock.createPlan).toHaveBeenCalledWith(
+        expect.objectContaining({
+          period: 'monthly',
+          interval: 1,
+          item: expect.objectContaining({
+            name: 'Agency (Founding 50) (Monthly)',
+            amount: 299900,
+          }),
+        }),
+      );
+      expect(razorpayServiceMock.createPlan).toHaveBeenCalledWith(
+        expect.objectContaining({
+          period: 'yearly',
+          interval: 1,
+          item: expect.objectContaining({
+            name: 'Agency (Founding 50) (Annual)',
+            amount: 2999000,
+          }),
+        }),
+      );
+
+      // Assert both plan IDs are stored on creation
+      expect(prismaMock.plan.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          code: 'STUDIO',
+          razorpayPlanId: expect.stringContaining('monthly'),
+          razorpayAnnualPlanId: expect.stringContaining('annual'),
+        }),
+      });
     });
 
-    it('idempotency: does not call Razorpay if plan already has razorpayPlanId', async () => {
+    it('idempotency: does not call Razorpay if plan already has both razorpayPlanId and razorpayAnnualPlanId', async () => {
       prismaMock.plan.findUnique.mockResolvedValue({
         id: 'existing-id',
         code: 'STUDIO',
         razorpayPlanId: 'plan_studio_existing',
+        razorpayAnnualPlanId: 'plan_studio_annual_existing',
       });
 
       await service.seedPlans();
@@ -126,14 +184,55 @@ describe('BillingService', () => {
       expect(razorpayServiceMock.createPlan).not.toHaveBeenCalled();
       expect(prismaMock.plan.create).not.toHaveBeenCalled();
     });
+
+    it('partial idempotency: creates missing annual plan if only monthly plan exists', async () => {
+      prismaMock.plan.findUnique.mockImplementation(({ where }: any) => {
+        if (where.code === 'STUDIO') {
+          return Promise.resolve({
+            id: 'existing-studio-id',
+            code: 'STUDIO',
+            razorpayPlanId: 'plan_studio_existing',
+            razorpayAnnualPlanId: null,
+          });
+        }
+        return Promise.resolve({
+          id: 'existing-other-id',
+          code: where.code,
+          razorpayPlanId: 'plan_other_monthly',
+          razorpayAnnualPlanId: 'plan_other_annual',
+        });
+      });
+
+      await service.seedPlans();
+
+      expect(razorpayServiceMock.createPlan).toHaveBeenCalledTimes(1);
+      expect(razorpayServiceMock.createPlan).toHaveBeenCalledWith(
+        expect.objectContaining({
+          period: 'yearly',
+          item: expect.objectContaining({
+            name: 'Studio (Annual)',
+            amount: 999000,
+          }),
+        }),
+      );
+      expect(prismaMock.plan.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'existing-studio-id' },
+          data: expect.objectContaining({
+            razorpayAnnualPlanId: expect.any(String),
+          }),
+        }),
+      );
+    });
   });
 
   describe('Subscription Creation with Razorpay', () => {
-    it('calls Razorpay createSubscription and stores razorpaySubscriptionId on local Subscription', async () => {
+    it('calls Razorpay createSubscription for MONTHLY interval with monthly plan and totalCount 120, exposing short_url', async () => {
       prismaMock.plan.findUnique.mockResolvedValue({
         id: 'plan-studio-id',
         code: 'STUDIO',
-        razorpayPlanId: 'plan_studio_123',
+        razorpayPlanId: 'plan_studio_monthly_123',
+        razorpayAnnualPlanId: 'plan_studio_annual_456',
       });
       prismaMock.subscription.findUnique.mockResolvedValue(null);
       prismaMock.subscription.create.mockImplementation(({ data }: any) =>
@@ -147,7 +246,7 @@ describe('BillingService', () => {
       );
 
       expect(razorpayServiceMock.createSubscription).toHaveBeenCalledWith({
-        planId: 'plan_studio_123',
+        planId: 'plan_studio_monthly_123',
         totalCount: 120,
         notes: {
           workspaceId: mockWorkspaceId,
@@ -156,15 +255,78 @@ describe('BillingService', () => {
         },
       });
       expect(sub.razorpaySubscriptionId).toBe('sub_rzp_mock_123');
-      expect(sub.razorpayPlanId).toBe('plan_studio_123');
+      expect(sub.razorpayPlanId).toBe('plan_studio_monthly_123');
       expect(sub.status).toBe(SubscriptionStatus.TRIAL);
+      expect(sub.short_url).toBe('https://rzp.io/i/sub_mock_123');
+      expect(sub.shortUrl).toBe('https://rzp.io/i/sub_mock_123');
+    });
+
+    it('calls Razorpay createSubscription for ANNUAL interval with yearly plan and totalCount 10, exposing short_url', async () => {
+      prismaMock.plan.findUnique.mockResolvedValue({
+        id: 'plan-studio-id',
+        code: 'STUDIO',
+        razorpayPlanId: 'plan_studio_monthly_123',
+        razorpayAnnualPlanId: 'plan_studio_annual_456',
+      });
+      prismaMock.subscription.findUnique.mockResolvedValue(null);
+      prismaMock.subscription.create.mockImplementation(({ data }: any) =>
+        Promise.resolve({ id: 'sub-local-2', ...data }),
+      );
+
+      const sub = await service.createSubscription(
+        mockWorkspaceId,
+        'STUDIO',
+        BillingInterval.ANNUAL,
+      );
+
+      expect(razorpayServiceMock.createSubscription).toHaveBeenCalledWith({
+        planId: 'plan_studio_annual_456',
+        totalCount: 10,
+        notes: {
+          workspaceId: mockWorkspaceId,
+          planCode: 'STUDIO',
+          interval: BillingInterval.ANNUAL,
+        },
+      });
+      expect(sub.razorpaySubscriptionId).toBe('sub_rzp_mock_123');
+      expect(sub.razorpayPlanId).toBe('plan_studio_annual_456');
+      expect(sub.status).toBe(SubscriptionStatus.TRIAL);
+      expect(sub.short_url).toBe('https://rzp.io/i/sub_mock_123');
+      expect(sub.shortUrl).toBe('https://rzp.io/i/sub_mock_123');
+    });
+
+    it('returns local subscription without short_url if Razorpay response has no short_url', async () => {
+      prismaMock.plan.findUnique.mockResolvedValue({
+        id: 'plan-studio-id',
+        code: 'STUDIO',
+        razorpayPlanId: 'plan_studio_monthly_123',
+        razorpayAnnualPlanId: 'plan_studio_annual_456',
+      });
+      razorpayServiceMock.createSubscription.mockResolvedValue({
+        id: 'sub_rzp_mock_no_url',
+      });
+      prismaMock.subscription.findUnique.mockResolvedValue(null);
+      prismaMock.subscription.create.mockImplementation(({ data }: any) =>
+        Promise.resolve({ id: 'sub-local-3', ...data }),
+      );
+
+      const sub = await service.createSubscription(
+        mockWorkspaceId,
+        'STUDIO',
+        BillingInterval.MONTHLY,
+      );
+
+      expect(sub.razorpaySubscriptionId).toBe('sub_rzp_mock_no_url');
+      expect(sub.short_url).toBeUndefined();
+      expect(sub.shortUrl).toBeUndefined();
     });
 
     it('fails fast and commits NO local subscription state if Razorpay createSubscription fails', async () => {
       prismaMock.plan.findUnique.mockResolvedValue({
         id: 'plan-studio-id',
         code: 'STUDIO',
-        razorpayPlanId: 'plan_studio_123',
+        razorpayPlanId: 'plan_studio_monthly_123',
+        razorpayAnnualPlanId: 'plan_studio_annual_456',
       });
       razorpayServiceMock.createSubscription.mockRejectedValue(
         new Error('Razorpay API error 500'),
@@ -184,12 +346,13 @@ describe('BillingService', () => {
   });
 
   describe('Founding-50 Lock & Concurrency', () => {
-    it('successfully claims a founding subscription when count < 50 with row-level lock', async () => {
+    it('successfully claims a founding subscription when count < 50 with row-level lock (MONTHLY)', async () => {
       prismaMock.subscription.findUnique.mockResolvedValue(null);
       prismaMock.subscription.count.mockResolvedValue(49);
       prismaMock.plan.findUnique.mockResolvedValue({
         ...mockFoundingPlan,
-        razorpayPlanId: 'plan_founding_123',
+        razorpayPlanId: 'plan_founding_monthly_123',
+        razorpayAnnualPlanId: 'plan_founding_annual_456',
       });
       prismaMock.subscription.create.mockImplementation(({ data }: any) =>
         Promise.resolve({ id: 'sub-new', ...data }),
@@ -213,10 +376,53 @@ describe('BillingService', () => {
           },
         },
       });
-      expect(razorpayServiceMock.createSubscription).toHaveBeenCalled();
+      expect(razorpayServiceMock.createSubscription).toHaveBeenCalledWith({
+        planId: 'plan_founding_monthly_123',
+        totalCount: 120,
+        notes: {
+          workspaceId: mockWorkspaceId,
+          planCode: 'AGENCY_FOUNDING',
+          interval: BillingInterval.MONTHLY,
+        },
+      });
       expect(result.isFounding).toBe(true);
       expect(result.planId).toBe(mockFoundingPlan.id);
       expect(result.razorpaySubscriptionId).toBe('sub_rzp_mock_123');
+      expect(result.razorpayPlanId).toBe('plan_founding_monthly_123');
+      expect(result.short_url).toBe('https://rzp.io/i/sub_mock_123');
+    });
+
+    it('successfully claims a founding subscription for ANNUAL interval with annual plan and totalCount 10', async () => {
+      prismaMock.subscription.findUnique.mockResolvedValue(null);
+      prismaMock.subscription.count.mockResolvedValue(49);
+      prismaMock.plan.findUnique.mockResolvedValue({
+        ...mockFoundingPlan,
+        razorpayPlanId: 'plan_founding_monthly_123',
+        razorpayAnnualPlanId: 'plan_founding_annual_456',
+      });
+      prismaMock.subscription.create.mockImplementation(({ data }: any) =>
+        Promise.resolve({ id: 'sub-new-annual', ...data }),
+      );
+
+      const result = await service.claimFoundingSubscription(
+        mockWorkspaceId,
+        BillingInterval.ANNUAL,
+      );
+
+      expect(razorpayServiceMock.createSubscription).toHaveBeenCalledWith({
+        planId: 'plan_founding_annual_456',
+        totalCount: 10,
+        notes: {
+          workspaceId: mockWorkspaceId,
+          planCode: 'AGENCY_FOUNDING',
+          interval: BillingInterval.ANNUAL,
+        },
+      });
+      expect(result.isFounding).toBe(true);
+      expect(result.razorpaySubscriptionId).toBe('sub_rzp_mock_123');
+      expect(result.razorpayPlanId).toBe('plan_founding_annual_456');
+      expect(result.billingInterval).toBe(BillingInterval.ANNUAL);
+      expect(result.short_url).toBe('https://rzp.io/i/sub_mock_123');
     });
 
     it('rejects claim with ConflictException (FOUNDING_PLAN_SOLD_OUT) when founding count is >= 50', async () => {

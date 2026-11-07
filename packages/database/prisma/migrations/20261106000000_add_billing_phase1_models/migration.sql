@@ -22,6 +22,7 @@ CREATE TABLE "Plan" (
     "isFounding" BOOLEAN NOT NULL DEFAULT false,
     "isActive" BOOLEAN NOT NULL DEFAULT true,
     "razorpayPlanId" TEXT,
+    "razorpayAnnualPlanId" TEXT,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
 

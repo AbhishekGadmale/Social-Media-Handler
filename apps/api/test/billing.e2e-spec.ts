@@ -44,6 +44,7 @@ describe('BillingController (e2e)', () => {
       jest.spyOn(razorpayService, 'createSubscription').mockImplementation(async (input: any) => ({
         id: `sub_rzp_mock_${Date.now()}_${Math.floor(Math.random() * 10000)}`,
         status: 'created',
+        short_url: 'https://rzp.io/i/sub_mock_url',
       }));
     }
   });
@@ -70,6 +71,7 @@ describe('BillingController (e2e)', () => {
     jest.spyOn(razorpayService, 'createSubscription').mockImplementation(async (input: any) => ({
       id: `sub_rzp_mock_${Date.now()}_${Math.floor(Math.random() * 10000)}`,
       status: 'created',
+      short_url: 'https://rzp.io/i/sub_mock_url',
     }));
 
     await billingService.seedPlans();
@@ -205,9 +207,13 @@ describe('BillingController (e2e)', () => {
     });
   });
 
-  describe('Subscription Lifecycle & Razorpay Integration [F2]', () => {
-    it('proves subscribe calls Razorpay, stores razorpaySubscriptionId, and webhook activates it', async () => {
-      // 1. Subscribe to Studio plan
+  describe('Subscription Lifecycle & Razorpay Integration [F2, F5]', () => {
+    it('proves MONTHLY subscribe calls Razorpay with monthly plan, returns short_url, and webhook activates it', async () => {
+      const studioPlan = await prisma.plan.findUnique({ where: { code: 'STUDIO' } });
+      expect(studioPlan?.razorpayPlanId).toBeDefined();
+      expect(studioPlan?.razorpayAnnualPlanId).toBeDefined();
+
+      // 1. Subscribe to Studio plan (MONTHLY)
       const res = await request(app.getHttpServer())
         .post(`/api/v1/workspaces/${testWorkspace.id}/billing/subscribe`)
         .set(authHeaders(sessionData))
@@ -217,7 +223,11 @@ describe('BillingController (e2e)', () => {
       expect(res.body.workspaceId).toBe(testWorkspace.id);
       expect(res.body.razorpaySubscriptionId).toBeDefined();
       expect(res.body.razorpaySubscriptionId).toContain('sub_rzp_mock');
+      expect(res.body.razorpayPlanId).toBe(studioPlan!.razorpayPlanId);
+      expect(res.body.billingInterval).toBe('MONTHLY');
       expect(res.body.status).toBe(SubscriptionStatus.TRIAL);
+      expect(res.body.short_url).toBe('https://rzp.io/i/sub_mock_url');
+      expect(res.body.shortUrl).toBe('https://rzp.io/i/sub_mock_url');
 
       const rzpSubId = res.body.razorpaySubscriptionId;
 
@@ -257,6 +267,61 @@ describe('BillingController (e2e)', () => {
       });
       expect(updatedSub?.status).toBe(SubscriptionStatus.ACTIVE);
       expect(updatedSub?.razorpaySubscriptionId).toBe(rzpSubId);
+      expect(updatedSub?.razorpayPlanId).toBe(studioPlan!.razorpayPlanId);
+    });
+
+    it('proves ANNUAL subscribe calls Razorpay with yearly plan, totalCount 10, and returns short_url [F5]', async () => {
+      const studioPlan = await prisma.plan.findUnique({ where: { code: 'STUDIO' } });
+      const annualWsId = generateId();
+      createdWorkspaceIds.push(annualWsId);
+
+      await prisma.workspace.create({
+        data: {
+          id: annualWsId,
+          organizationId: testOrg.id,
+          name: 'Annual Billing Test Workspace',
+        },
+      });
+      await prisma.workspaceMember.create({
+        data: {
+          id: generateId(),
+          workspaceId: annualWsId,
+          userId: testUser.id,
+          role: WorkspaceRole.OWNER,
+        },
+      });
+
+      const createSubSpy = jest.spyOn(razorpayService, 'createSubscription');
+
+      const res = await request(app.getHttpServer())
+        .post(`/api/v1/workspaces/${annualWsId}/billing/subscribe`)
+        .set(authHeaders(sessionData))
+        .send({ planCode: 'STUDIO', interval: 'ANNUAL' })
+        .expect(200);
+
+      expect(res.body.workspaceId).toBe(annualWsId);
+      expect(res.body.billingInterval).toBe('ANNUAL');
+      expect(res.body.razorpayPlanId).toBe(studioPlan!.razorpayAnnualPlanId);
+      expect(res.body.short_url).toBe('https://rzp.io/i/sub_mock_url');
+      expect(res.body.shortUrl).toBe('https://rzp.io/i/sub_mock_url');
+
+      expect(createSubSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          planId: studioPlan!.razorpayAnnualPlanId,
+          totalCount: 10,
+          notes: expect.objectContaining({
+            workspaceId: annualWsId,
+            planCode: 'STUDIO',
+            interval: 'ANNUAL',
+          }),
+        }),
+      );
+
+      const savedSub = await prisma.subscription.findUnique({
+        where: { workspaceId: annualWsId },
+      });
+      expect(savedSub?.billingInterval).toBe('ANNUAL');
+      expect(savedSub?.razorpayPlanId).toBe(studioPlan!.razorpayAnnualPlanId);
     });
   });
 
@@ -335,6 +400,10 @@ describe('BillingController (e2e)', () => {
       const conflictMessage =
         conflictRes.body.error?.message || conflictRes.body.message;
       expect(conflictMessage).toContain('FOUNDING_PLAN_SOLD_OUT');
+
+      const successRes = resA.status === 200 ? resA : resB;
+      expect(successRes.body.short_url).toBe('https://rzp.io/i/sub_mock_url');
+      expect(successRes.body.shortUrl).toBe('https://rzp.io/i/sub_mock_url');
 
       // Assert total count in database is strictly 50
       const postCount = await prisma.subscription.count({

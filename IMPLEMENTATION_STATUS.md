@@ -2686,7 +2686,7 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
      - `InvoiceStatus`: `PAID`, `FAILED`
    - Extended `Workspace` with `trialEndsAt DateTime?`, relations to `Subscription?` and `Invoice[]`.
    - Added models:
-     - `Plan`: id, code, name, monthlyPricePaise, annualPricePaise, seats, features (JSON), isFounding, isActive, razorpayPlanId, createdAt, updatedAt.
+     - `Plan`: id, code, name, monthlyPricePaise, annualPricePaise, seats, features (JSON), isFounding, isActive, razorpayPlanId, razorpayAnnualPlanId, createdAt, updatedAt.
      - `Subscription`: id, workspaceId, planId, razorpaySubscriptionId, razorpayPlanId, status, billingInterval, isFounding, currentPeriodStart, currentPeriodEnd, cancelAtPeriodEnd, createdAt, updatedAt.
      - `Invoice`: id, workspaceId, subscriptionId, invoiceNumber, amountPaise, baseAmountPaise, gstAmountPaise, gstRate, gstin, customerBillingDetails (JSON), razorpayPaymentId, razorpayInvoiceId, status, periodStart, periodEnd, createdAt, updatedAt.
      - `InvoiceSequence`: year, lastSequence.
@@ -2712,6 +2712,9 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
 
 4. **Founding-50 Lock & Lifecycle Operations (`apps/api/src/modules/billing/billing.service.ts`)**:
    - `claimFoundingSubscription`: Serializes concurrent requests via PostgreSQL row-level pessimistic locking (`SELECT id FROM "Plan" WHERE code = 'AGENCY_FOUNDING' FOR UPDATE`) within a Prisma `$transaction`, checking `count(*) < 50`. Throws `ConflictException` (409 `FOUNDING_PLAN_SOLD_OUT`) if cap reached.
+   - Dual-interval Razorpay plan seeding: seeds both monthly (`period: 'monthly'`) and annual (`period: 'yearly'`) Razorpay plans idempotently for all tiers, storing `razorpayPlanId` and `razorpayAnnualPlanId` on `Plan`.
+   - Interval-based plan selection: `MONTHLY` maps to `razorpayPlanId` with `totalCount: 120`; `ANNUAL` maps to `razorpayAnnualPlanId` with `totalCount: 10` across both `createSubscription` and `claimFoundingSubscription`.
+   - Checkout URL exposure: subscribe responses include Razorpay checkout `short_url` / `shortUrl` alongside local subscription state when available.
    - Creates Razorpay subscription before committing local state; if Razorpay fails, transaction aborts with zero DB state claimed.
    - Grandfathered renewals: status remains active, preserves founding rate.
    - Cancellation policy: `cancelAtPeriodEnd: true`, status becomes `CANCELLED` at period end; permanent forfeit of founding status.

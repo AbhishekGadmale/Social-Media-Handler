@@ -78,7 +78,7 @@ export class BillingService {
 
   /**
    * Seeds default plans into the database if not present.
-   * Idempotently creates plans in Razorpay and stores razorpayPlanId.
+   * Idempotently creates plans in Razorpay (both monthly and annual) and stores razorpayPlanId and razorpayAnnualPlanId.
    */
   async seedPlans(): Promise<void> {
     for (const planConfig of Object.values(PLANS)) {
@@ -87,6 +87,7 @@ export class BillingService {
       });
 
       let razorpayPlanId = existing?.razorpayPlanId;
+      let razorpayAnnualPlanId = existing?.razorpayAnnualPlanId;
 
       if (!razorpayPlanId) {
         try {
@@ -94,22 +95,50 @@ export class BillingService {
             period: 'monthly',
             interval: 1,
             item: {
-              name: planConfig.name,
+              name: `${planConfig.name} (Monthly)`,
               amount: planConfig.monthlyPricePaise,
               currency: 'INR',
-              description: `${planConfig.name} Plan`,
+              description: `${planConfig.name} Monthly Plan`,
             },
             notes: {
               planCode: planConfig.code,
+              interval: 'MONTHLY',
             },
           });
           razorpayPlanId = rzpPlan?.id;
           this.logger.log(
-            `Created Razorpay plan for ${planConfig.code}: ${razorpayPlanId}`,
+            `Created Razorpay monthly plan for ${planConfig.code}: ${razorpayPlanId}`,
           );
         } catch (err) {
           this.logger.warn(
-            `Could not create Razorpay plan for ${planConfig.code}: ${err}`,
+            `Could not create Razorpay monthly plan for ${planConfig.code}: ${err}`,
+          );
+        }
+      }
+
+      if (!razorpayAnnualPlanId) {
+        try {
+          const rzpAnnualPlan = await this.razorpayService.createPlan({
+            period: 'yearly',
+            interval: 1,
+            item: {
+              name: `${planConfig.name} (Annual)`,
+              amount: planConfig.annualPricePaise,
+              currency: 'INR',
+              description: `${planConfig.name} Annual Plan`,
+            },
+            notes: {
+              planCode: planConfig.code,
+              interval: 'ANNUAL',
+            },
+          });
+          razorpayAnnualPlanId = rzpAnnualPlan?.id;
+          this.logger.log(
+            `Created Razorpay annual plan for ${planConfig.code}: ${razorpayAnnualPlanId}`,
+          );
+        } catch (err) {
+          this.logger.warn(
+            `Could not create Razorpay annual plan for ${planConfig.code}: ${err}`,
           );
         }
       }
@@ -126,13 +155,21 @@ export class BillingService {
             isFounding: planConfig.isFounding,
             isActive: true,
             razorpayPlanId: razorpayPlanId || null,
+            razorpayAnnualPlanId: razorpayAnnualPlanId || null,
           },
         });
         this.logger.log(`Seeded plan: ${planConfig.code} (${planConfig.name})`);
-      } else if (razorpayPlanId && !existing.razorpayPlanId) {
+      } else if (
+        (razorpayPlanId && !existing.razorpayPlanId) ||
+        (razorpayAnnualPlanId && !existing.razorpayAnnualPlanId)
+      ) {
         await this.prisma.plan.update({
           where: { id: existing.id },
-          data: { razorpayPlanId },
+          data: {
+            razorpayPlanId: razorpayPlanId || existing.razorpayPlanId,
+            razorpayAnnualPlanId:
+              razorpayAnnualPlanId || existing.razorpayAnnualPlanId,
+          },
         });
       }
     }
@@ -145,7 +182,7 @@ export class BillingService {
     let plan = await this.prisma.plan.findUnique({
       where: { code },
     });
-    if (!plan || !plan.razorpayPlanId) {
+    if (!plan || !plan.razorpayPlanId || !plan.razorpayAnnualPlanId) {
       await this.seedPlans();
       plan = await this.prisma.plan.findUnique({
         where: { code },
@@ -184,27 +221,59 @@ export class BillingService {
       let foundingPlan = await tx.plan.findUnique({
         where: { code: 'AGENCY_FOUNDING' },
       });
-      if (!foundingPlan) {
-        let razorpayPlanId: string | null = null;
+
+      let razorpayPlanId = foundingPlan?.razorpayPlanId || null;
+      let razorpayAnnualPlanId = foundingPlan?.razorpayAnnualPlanId || null;
+
+      if (!razorpayPlanId) {
         try {
           const rzpPlan = await this.razorpayService.createPlan({
             period: 'monthly',
             interval: 1,
             item: {
-              name: PLANS.AGENCY_FOUNDING.name,
+              name: `${PLANS.AGENCY_FOUNDING.name} (Monthly)`,
               amount: PLANS.AGENCY_FOUNDING.monthlyPricePaise,
               currency: 'INR',
-              description: `${PLANS.AGENCY_FOUNDING.name} Plan`,
+              description: `${PLANS.AGENCY_FOUNDING.name} Monthly Plan`,
             },
-            notes: { planCode: PLANS.AGENCY_FOUNDING.code },
+            notes: {
+              planCode: PLANS.AGENCY_FOUNDING.code,
+              interval: 'MONTHLY',
+            },
           });
           razorpayPlanId = rzpPlan?.id || null;
         } catch (err) {
           this.logger.warn(
-            `Could not seed Razorpay plan for founding tier: ${err}`,
+            `Could not seed monthly Razorpay plan for founding tier: ${err}`,
           );
         }
+      }
 
+      if (!razorpayAnnualPlanId) {
+        try {
+          const rzpAnnualPlan = await this.razorpayService.createPlan({
+            period: 'yearly',
+            interval: 1,
+            item: {
+              name: `${PLANS.AGENCY_FOUNDING.name} (Annual)`,
+              amount: PLANS.AGENCY_FOUNDING.annualPricePaise,
+              currency: 'INR',
+              description: `${PLANS.AGENCY_FOUNDING.name} Annual Plan`,
+            },
+            notes: {
+              planCode: PLANS.AGENCY_FOUNDING.code,
+              interval: 'ANNUAL',
+            },
+          });
+          razorpayAnnualPlanId = rzpAnnualPlan?.id || null;
+        } catch (err) {
+          this.logger.warn(
+            `Could not seed annual Razorpay plan for founding tier: ${err}`,
+          );
+        }
+      }
+
+      if (!foundingPlan) {
         foundingPlan = await tx.plan.create({
           data: {
             id: generateId(),
@@ -216,6 +285,19 @@ export class BillingService {
             isFounding: true,
             isActive: true,
             razorpayPlanId,
+            razorpayAnnualPlanId,
+          },
+        });
+      } else if (
+        (razorpayPlanId && !foundingPlan.razorpayPlanId) ||
+        (razorpayAnnualPlanId && !foundingPlan.razorpayAnnualPlanId)
+      ) {
+        foundingPlan = await tx.plan.update({
+          where: { id: foundingPlan.id },
+          data: {
+            razorpayPlanId: razorpayPlanId || foundingPlan.razorpayPlanId,
+            razorpayAnnualPlanId:
+              razorpayAnnualPlanId || foundingPlan.razorpayAnnualPlanId,
           },
         });
       }
@@ -249,15 +331,17 @@ export class BillingService {
         );
       }
 
-      const razorpayPlanId =
-        foundingPlan.razorpayPlanId || 'plan_founding_fallback';
-      const totalCount = interval === BillingInterval.ANNUAL ? 10 : 120;
+      const isAnnual = interval === BillingInterval.ANNUAL;
+      const selectedPlanId = isAnnual
+        ? foundingPlan.razorpayAnnualPlanId || 'plan_founding_annual_fallback'
+        : foundingPlan.razorpayPlanId || 'plan_founding_fallback';
+      const totalCount = isAnnual ? 10 : 120;
 
       // 5. Create Razorpay subscription - failure here aborts transaction with no local state claimed
       let rzpSub: any;
       try {
         rzpSub = await this.razorpayService.createSubscription({
-          planId: razorpayPlanId,
+          planId: selectedPlanId,
           totalCount,
           notes: {
             workspaceId,
@@ -274,14 +358,29 @@ export class BillingService {
 
       const razorpaySubscriptionId = rzpSub?.id || null;
 
+      let savedSubscription: any;
       // 6. Create or update subscription
       if (existing) {
-        return tx.subscription.update({
+        savedSubscription = await tx.subscription.update({
           where: { id: existing.id },
           data: {
             planId: foundingPlan.id,
             razorpaySubscriptionId,
-            razorpayPlanId,
+            razorpayPlanId: selectedPlanId,
+            isFounding: true,
+            billingInterval: interval,
+            status: SubscriptionStatus.TRIAL,
+            cancelAtPeriodEnd: false,
+          },
+        });
+      } else {
+        savedSubscription = await tx.subscription.create({
+          data: {
+            id: generateId(),
+            workspaceId,
+            planId: foundingPlan.id,
+            razorpaySubscriptionId,
+            razorpayPlanId: selectedPlanId,
             isFounding: true,
             billingInterval: interval,
             status: SubscriptionStatus.TRIAL,
@@ -290,19 +389,12 @@ export class BillingService {
         });
       }
 
-      return tx.subscription.create({
-        data: {
-          id: generateId(),
-          workspaceId,
-          planId: foundingPlan.id,
-          razorpaySubscriptionId,
-          razorpayPlanId,
-          isFounding: true,
-          billingInterval: interval,
-          status: SubscriptionStatus.TRIAL,
-          cancelAtPeriodEnd: false,
-        },
-      });
+      return {
+        ...savedSubscription,
+        ...(rzpSub?.short_url
+          ? { shortUrl: rzpSub.short_url, short_url: rzpSub.short_url }
+          : {}),
+      };
     });
   }
 
@@ -320,14 +412,17 @@ export class BillingService {
     }
 
     const plan = await this.getPlanByCode(planCode);
-    const razorpayPlanId =
-      plan.razorpayPlanId || `plan_${planCode.toLowerCase()}_fallback`;
-    const totalCount = interval === BillingInterval.ANNUAL ? 10 : 120;
+    const isAnnual = interval === BillingInterval.ANNUAL;
+    const selectedPlanId = isAnnual
+      ? plan.razorpayAnnualPlanId ||
+        `plan_${planCode.toLowerCase()}_annual_fallback`
+      : plan.razorpayPlanId || `plan_${planCode.toLowerCase()}_fallback`;
+    const totalCount = isAnnual ? 10 : 120;
 
     let rzpSub: any;
     try {
       rzpSub = await this.razorpayService.createSubscription({
-        planId: razorpayPlanId,
+        planId: selectedPlanId,
         totalCount,
         notes: {
           workspaceId,
@@ -344,7 +439,7 @@ export class BillingService {
 
     const razorpaySubscriptionId = rzpSub?.id || null;
 
-    return this.prisma.$transaction(async (tx) => {
+    const savedSub = await this.prisma.$transaction(async (tx) => {
       const existing = await tx.subscription.findUnique({
         where: { workspaceId },
       });
@@ -355,7 +450,7 @@ export class BillingService {
           data: {
             planId: plan.id,
             razorpaySubscriptionId,
-            razorpayPlanId,
+            razorpayPlanId: selectedPlanId,
             isFounding: false,
             billingInterval: interval,
             status: SubscriptionStatus.TRIAL,
@@ -370,7 +465,7 @@ export class BillingService {
           workspaceId,
           planId: plan.id,
           razorpaySubscriptionId,
-          razorpayPlanId,
+          razorpayPlanId: selectedPlanId,
           isFounding: false,
           billingInterval: interval,
           status: SubscriptionStatus.TRIAL,
@@ -378,6 +473,13 @@ export class BillingService {
         },
       });
     });
+
+    return {
+      ...savedSub,
+      ...(rzpSub?.short_url
+        ? { shortUrl: rzpSub.short_url, short_url: rzpSub.short_url }
+        : {}),
+    };
   }
 
   /**
