@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
+import Link from 'next/link';
 import { useQueryClient } from '@tanstack/react-query';
 import { api, ApiError } from '../../lib/api/client';
 import { authQueries } from '../../lib/query/auth';
@@ -131,6 +132,13 @@ export default function LoginPage() {
             >
               {loading ? 'Signing in...' : 'Sign in'}
             </button>
+          </div>
+
+          <div className="text-center text-sm text-gray-600">
+            Don&apos;t have an account?{' '}
+            <Link href="/signup" className="font-medium text-blue-600 hover:text-blue-500">
+              Create one
+            </Link>
           </div>
         </form>
       </div>

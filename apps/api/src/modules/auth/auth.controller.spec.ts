@@ -757,4 +757,59 @@ describe('AuthController', () => {
       });
     });
   });
+
+  describe('getMe', () => {
+    it('returns user with explicit emailVerified boolean and memberships, excluding hashedPassword', async () => {
+      const mockUser: any = {
+        id: 'user-me-1',
+        email: 'me@example.com',
+        name: 'Test User',
+        hashedPassword: 'super-secret-hash',
+        emailVerified: true,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+
+      const mockMemberships: any[] = [
+        {
+          id: 'member-1',
+          userId: 'user-me-1',
+          workspaceId: 'ws-1',
+          role: 'OWNER',
+        },
+      ];
+
+      memberRepoMock.findMembershipsByUserId.mockResolvedValueOnce(
+        mockMemberships,
+      );
+
+      const result = await controller.getMe(mockUser);
+
+      expect(memberRepoMock.findMembershipsByUserId).toHaveBeenCalledWith(
+        'user-me-1',
+      );
+      expect(result.user).toBeDefined();
+      expect(result.user.id).toBe('user-me-1');
+      expect(result.user.email).toBe('me@example.com');
+      expect(result.user.emailVerified).toBe(true);
+      expect((result.user as any).hashedPassword).toBeUndefined();
+      expect(result.memberships).toEqual(mockMemberships);
+    });
+
+    it('returns emailVerified: false when user has emailVerified = false', async () => {
+      const mockUser: any = {
+        id: 'user-me-2',
+        email: 'unverified@example.com',
+        hashedPassword: 'hash',
+        emailVerified: false,
+      };
+
+      memberRepoMock.findMembershipsByUserId.mockResolvedValueOnce([]);
+
+      const result = await controller.getMe(mockUser);
+
+      expect(result.user.emailVerified).toBe(false);
+      expect((result.user as any).hashedPassword).toBeUndefined();
+    });
+  });
 });

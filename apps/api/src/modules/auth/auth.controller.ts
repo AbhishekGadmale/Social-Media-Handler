@@ -322,7 +322,10 @@ export class AuthController {
     const { hashedPassword: _hashedPassword, ...userWithoutPassword } = user;
 
     return {
-      user: userWithoutPassword,
+      user: {
+        ...userWithoutPassword,
+        emailVerified: Boolean(user.emailVerified),
+      },
       memberships,
     };
   }
