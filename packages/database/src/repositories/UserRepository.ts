@@ -101,11 +101,14 @@ export class UserRepository {
         },
       });
 
+      const trialEndsAt = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000);
+
       const workspace = await tx.workspace.create({
         data: {
           id: workspaceId,
           organizationId: orgId,
           name: input.workspaceName?.trim() || "Default Workspace",
+          trialEndsAt,
         },
       });
 

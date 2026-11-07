@@ -1,4 +1,4 @@
-﻿import {
+import {
   Controller,
   Get,
   Post,
@@ -16,6 +16,7 @@ import { RequirePermission } from '../../auth/decorators/permission.decorator';
 import { AuthGuard } from '../../auth/guards/auth.guard';
 import { WorkspaceGuard } from '../../auth/guards/workspace.guard';
 import { PermissionGuard } from '../../auth/guards/permission.guard';
+import { WorkspaceWritableGuard } from '../../billing/guards/workspace-writable.guard';
 
 import { CurrentUser } from '../../auth/decorators/user.decorator';
 
@@ -27,6 +28,7 @@ export class PostsController {
   ) {}
 
   @Post()
+  @UseGuards(WorkspaceWritableGuard)
   @RequirePermission('posts.create')
   @HttpCode(201)
   async createDraft(
@@ -61,6 +63,7 @@ export class PostsController {
   }
 
   @Patch(':postId')
+  @UseGuards(WorkspaceWritableGuard)
   @RequirePermission('posts.update')
   async updateDraft(
     @Param('workspaceId') workspaceId: string,

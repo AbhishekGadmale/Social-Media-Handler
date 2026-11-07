@@ -76,12 +76,13 @@ describe('UserRepository', () => {
         },
       });
 
-      // Verify Workspace creation linked to Org
+      // Verify Workspace creation linked to Org with 14-day trial
       expect(txMock.workspace.create).toHaveBeenCalledWith({
         data: {
           id: expect.any(String),
           organizationId: expect.any(String),
           name: 'Alice Main',
+          trialEndsAt: expect.any(Date),
         },
       });
 

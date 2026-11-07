@@ -75,6 +75,10 @@ describe('API Bootstrap', () => {
 
     await expect(bootstrap()).resolves.toBeUndefined();
     expect(createMock).toHaveBeenCalledTimes(1);
+    expect(createMock).toHaveBeenCalledWith(expect.anything(), {
+      bufferLogs: true,
+      rawBody: true,
+    });
     expect(mockApp.listen).toHaveBeenCalledWith(3001);
   });
 

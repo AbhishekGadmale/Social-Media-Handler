@@ -24,7 +24,8 @@ export type PublishabilityIssueCode =
   | 'MEDIA_NOT_READY'
   | 'PROVIDER_OPTION_INVALID'
   | 'SCHEDULE_REQUIRED'
-  | 'SCHEDULE_IN_PAST';
+  | 'SCHEDULE_IN_PAST'
+  | 'WORKSPACE_READ_ONLY';
 
 export interface PublishabilityIssue {
   code: PublishabilityIssueCode;
@@ -67,6 +68,11 @@ export class PublishabilityValidator {
           },
         },
         socialAccount: true,
+        workspace: {
+          include: {
+            subscription: true,
+          },
+        },
       },
     });
 
@@ -81,6 +87,46 @@ export class PublishabilityValidator {
           },
         ],
       };
+    }
+
+    // 2. Workspace Billing & Read-Only Fence
+    if (variant.workspace) {
+      const trialEndsAt = variant.workspace.trialEndsAt;
+      const sub = variant.workspace.subscription;
+      let isReadOnly = false;
+      let reason = '';
+
+      if (sub) {
+        if (sub.status === 'HALTED') {
+          isReadOnly = true;
+          reason = 'Workspace subscription is halted';
+        } else if (
+          sub.status === 'PAST_DUE' ||
+          sub.status === 'CANCELLED' ||
+          sub.status === 'EXPIRED'
+        ) {
+          if (
+            sub.currentPeriodEnd &&
+            now.getTime() > new Date(sub.currentPeriodEnd).getTime()
+          ) {
+            isReadOnly = true;
+            reason = 'Subscription is past due or expired';
+          }
+        }
+      } else if (trialEndsAt) {
+        if (now.getTime() > new Date(trialEndsAt).getTime()) {
+          isReadOnly = true;
+          reason = 'Trial has expired';
+        }
+      }
+
+      if (isReadOnly) {
+        issues.push({
+          code: 'WORKSPACE_READ_ONLY',
+          targetId: variantId,
+          message: `Workspace is in read-only mode: ${reason}`,
+        });
+      }
     }
 
     // 2. Publication State Eligibility

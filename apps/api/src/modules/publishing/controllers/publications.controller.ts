@@ -20,6 +20,7 @@ import { RequirePermission } from '../../auth/decorators/permission.decorator';
 import { AuthGuard } from '../../auth/guards/auth.guard';
 import { WorkspaceGuard } from '../../auth/guards/workspace.guard';
 import { PermissionGuard } from '../../auth/guards/permission.guard';
+import { WorkspaceWritableGuard } from '../../billing/guards/workspace-writable.guard';
 
 import { CurrentUser } from '../../auth/decorators/user.decorator';
 
@@ -31,6 +32,7 @@ export class PublicationsController {
   ) {}
 
   @Post('posts/:postId/publications')
+  @UseGuards(WorkspaceWritableGuard)
   @RequirePermission('posts.update')
   @HttpCode(201)
   async addTarget(
@@ -43,6 +45,7 @@ export class PublicationsController {
   }
 
   @Patch('publications/:publicationId')
+  @UseGuards(WorkspaceWritableGuard)
   @RequirePermission('posts.update')
   async updateTarget(
     @Param('workspaceId') workspaceId: string,
@@ -98,6 +101,7 @@ export class PublicationsController {
   }
 
   @Post('publications/:publicationId/publish')
+  @UseGuards(WorkspaceWritableGuard)
   @RequirePermission('publishing.publish')
   @HttpCode(202)
   async publishTarget(
@@ -113,6 +117,7 @@ export class PublicationsController {
   }
 
   @Post('publications/:publicationId/retry')
+  @UseGuards(WorkspaceWritableGuard)
   @RequirePermission('publishing.retry')
   @HttpCode(202)
   async retryTarget(
@@ -128,6 +133,7 @@ export class PublicationsController {
   }
 
   @Post('publications/:publicationId/schedule')
+  @UseGuards(WorkspaceWritableGuard)
   @RequirePermission('publishing.schedule')
   @HttpCode(202)
   async scheduleTarget(
@@ -145,6 +151,7 @@ export class PublicationsController {
   }
 
   @Post('publications/:publicationId/reschedule')
+  @UseGuards(WorkspaceWritableGuard)
   @RequirePermission('publishing.schedule')
   @HttpCode(200)
   async rescheduleTarget(

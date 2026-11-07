@@ -4,7 +4,7 @@ import { AppModule } from './app.module';
 import * as _cookieParser from 'cookie-parser';
 const cookieParser = _cookieParser.default || _cookieParser;
 import { AllExceptionsFilter } from './filters/all-exceptions.filter';
-import { ValidationPipe } from '@nestjs/common';
+import { INestApplication, ValidationPipe } from '@nestjs/common';
 import helmet from 'helmet';
 
 import { Logger, PinoLogger } from 'nestjs-pino';
@@ -14,28 +14,27 @@ import { validateStoragePublicEndpoint } from './config/storage-endpoint';
 import { validateEmailDeliveryConfig } from './config/email-delivery';
 import { validateTokenEncryptionKey } from '@agency-os/database';
 
-export async function bootstrap() {
-  // Fail-fast startup validation for token encryption key
-  validateTokenEncryptionKey();
+export const NEST_APP_OPTIONS = {
+  bufferLogs: true,
+  rawBody: true,
+};
 
+export async function configureApp(
+  app: INestApplication,
+): Promise<INestApplication> {
   const isProduction = process.env.NODE_ENV === 'production';
 
-  // Fail-fast startup validation for API_PUBLIC_URL in production
-  getPublicApiUrl();
-
-  // Fail-fast startup validation for OBJECT_STORAGE_PUBLIC_ENDPOINT in production
-  validateStoragePublicEndpoint();
-
-  // Fail-fast startup validation for RESEND_API_KEY in production
-  validateEmailDeliveryConfig();
-
-  const app = await NestFactory.create<NestExpressApplication>(AppModule, {
-    bufferLogs: true,
-  });
-  app.useLogger(app.get(Logger));
-
   // Configure Express Trust Proxy
-  configureTrustProxy(app, process.env.TRUST_PROXY, isProduction);
+  if (
+    'set' in app &&
+    typeof (app as unknown as { set: unknown }).set === 'function'
+  ) {
+    configureTrustProxy(
+      app as unknown as { set(setting: string, val: unknown): unknown },
+      process.env.TRUST_PROXY,
+      isProduction,
+    );
+  }
 
   app.enableCors({
     origin: process.env.FRONTEND_URL || 'http://localhost:3000',
@@ -68,6 +67,34 @@ export async function bootstrap() {
       forbidNonWhitelisted: true,
     }),
   );
+
+  return app;
+}
+
+export async function createNestApp(): Promise<NestExpressApplication> {
+  const app = await NestFactory.create<NestExpressApplication>(
+    AppModule,
+    NEST_APP_OPTIONS,
+  );
+  app.useLogger(app.get(Logger));
+  await configureApp(app);
+  return app;
+}
+
+export async function bootstrap() {
+  // Fail-fast startup validation for token encryption key
+  validateTokenEncryptionKey();
+
+  // Fail-fast startup validation for API_PUBLIC_URL in production
+  getPublicApiUrl();
+
+  // Fail-fast startup validation for OBJECT_STORAGE_PUBLIC_ENDPOINT in production
+  validateStoragePublicEndpoint();
+
+  // Fail-fast startup validation for RESEND_API_KEY in production
+  validateEmailDeliveryConfig();
+
+  const app = await createNestApp();
 
   const port = process.env.PORT || 3001;
   await app.listen(port);

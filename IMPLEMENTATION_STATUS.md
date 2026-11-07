@@ -2653,3 +2653,115 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
 2. **Milestone Completion Status**:
    - Feature branch `feat/resend-startup-validation` ready for Pull Request creation against `main`: **READY**.
    - Independent Muse review required before any merge: **PENDING**.
+
+
+---
+
+## 46. Phase 8 (Billing Phase 1): Plans, 14-Day Trial, Razorpay Subscriptions, Webhooks, GST Invoices & Entitlement Fences (PR #56)
+
+### 1. Summary & Motivation
+
+- **Status**: **READY FOR REVIEW** (Branch `feat/billing-phase1`)
+- **Base Commit**: [`e73d44393c72182821ab60287419f02a527e063e`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/e73d44393c72182821ab60287419f02a527e063e) (`main`, post-PR #55 merge)
+- **Scope Discipline**: Implements the server-side foundation for monetization under Kyosys Agency OS:
+  - Plan definition & pricing in integer paise (Solo ₹499/mo, Studio ₹999/mo, Agency ₹3,999/mo, Founding Agency ₹2,999/mo; 10x monthly price for annual billing).
+  - 14-day in-app trial with full Agency entitlements (`workspaces.trialEndsAt = signup + 14 days`), zero Razorpay object creation at signup.
+  - Hard trial-end & subscription halted fences via `TRIAL_END_GRACE_DAYS` (default 0), putting workspaces into read-only mode (blocking post publishing and scheduling).
+  - Razorpay subscription lifecycle management and webhook event processing (`subscription.authenticated`, `subscription.charged`, `subscription.halted`, `subscription.cancelled`, `payment.failed`).
+  - Cryptographic webhook validation using HMAC-SHA256 (`crypto.timingSafeEqual`) and event deduplication via `WebhookEvent`.
+  - GST invoicing compliance for Gadmale Technologies (sole proprietorship, Maharashtra, 18% GST-inclusive prices, integer paise split, sequential numbering `INV-YYYY-XXXXX`, dynamic `GSTIN` from env with production fail-fast).
+  - PostgreSQL row-level pessimistic lock (`SELECT id FROM "Plan" WHERE code = 'AGENCY_FOUNDING' FOR UPDATE`) Founding-50 cap (< 50 active/trial/past_due founding workspaces in `$transaction`), grandfathered renewals, permanent forfeit upon cancellation.
+  - Automated dunning notifications on `payment.failed` via `EmailDeliveryService`.
+  - Read-only fences enforced across controllers (`WorkspaceWritableGuard`), domain validators (`PublishabilityValidator`), and worker queue processors (`publishing.processor.ts`).
+  - Scheduled daily BullMQ worker job for trial expiration.
+- **Out of Scope (Phase 2 Follow-Up)**: Checkout UI, customer billing portal, PDF invoice generation.
+- **Live Deployment Release Gate**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending independent Muse code review, external infrastructure provisioning, and disaster recovery rehearsals G18/G19).
+
+### 2. Scope & Technical Architecture
+
+1. **Database Schema & Models (`packages/database`)**:
+   - Added enums:
+     - `BillingInterval`: `MONTHLY`, `ANNUAL`
+     - `SubscriptionStatus`: `TRIAL`, `ACTIVE`, `PAST_DUE`, `HALTED`, `CANCELLED`, `COMPLETED`, `EXPIRED`
+     - `InvoiceStatus`: `PAID`, `FAILED`
+   - Extended `Workspace` with `trialEndsAt DateTime?`, relations to `Subscription?` and `Invoice[]`.
+   - Added models:
+     - `Plan`: id, code, name, monthlyPricePaise, annualPricePaise, seats, features (JSON), isFounding, isActive, razorpayPlanId, razorpayAnnualPlanId, createdAt, updatedAt.
+     - `Subscription`: id, workspaceId, planId, razorpaySubscriptionId, razorpayPlanId, status, billingInterval, isFounding, currentPeriodStart, currentPeriodEnd, cancelAtPeriodEnd, createdAt, updatedAt.
+     - `Invoice`: id, workspaceId, subscriptionId, invoiceNumber, amountPaise, baseAmountPaise, gstAmountPaise, gstRate, gstin, customerBillingDetails (JSON), razorpayPaymentId, razorpayInvoiceId, status, periodStart, periodEnd, createdAt, updatedAt.
+     - `InvoiceSequence`: year, lastSequence.
+     - `WebhookEvent`: id, eventId, provider, payload (JSON), processed, createdAt.
+   - Generated idempotent Prisma migration: `20261106000000_add_billing_phase1_models`.
+   - Updated `UserRepository.createWithTenantTransaction` to initialize `trialEndsAt` to `signup + 14 days` without creating Razorpay objects.
+
+2. **GST Math & Invoicing Engine (`apps/api/src/modules/billing/gst.util.ts`)**:
+   - Sole proprietorship: Gadmale Technologies (Maharashtra).
+   - All prices GST-inclusive at 18%.
+   - Mathematics strictly integer paise: `baseAmountPaise = Math.round(totalAmountPaise / 1.18)`, `gstAmountPaise = totalAmountPaise - baseAmountPaise`.
+   - Split: CGST 9% (`Math.floor(gst/2)`), SGST 9% (`gst - floor(gst/2)`), or IGST 18% for out-of-state.
+   - Sequential numbering format `INV-YYYY-XXXXX` managed atomically with `InvoiceSequence`.
+   - Fail-fast dynamic GSTIN validator (`getGstin()`): in `NODE_ENV === 'production'`, throws if `process.env.GSTIN` is missing or empty; falls back to development test GSTIN otherwise.
+
+3. **Cryptographic Webhook Ingestion & Razorpay Client (`apps/api/src/modules/billing/razorpay.service.ts`)**:
+   - Application bootstrap (`apps/api/src/main.ts`) creates the Nest application with `{ bufferLogs: true, rawBody: true }` via exported `createNestApp()`, ensuring Express populates `req.rawBody` for webhook verification across production and E2E tests.
+   - Initialized official `razorpay` client using `RAZORPAY_KEY_ID` and `RAZORPAY_KEY_SECRET`.
+   - Webhook signature verification computes `crypto.createHmac('sha256', secret).update(rawPayload).digest('hex')` and validates with constant-time `crypto.timingSafeEqual`.
+   - Webhook controller receives raw body buffer, returns HTTP 400 on missing or invalid signature.
+   - Idempotent deduplication against `WebhookEvent` table by `event.id`; duplicate events return HTTP 200 with `{ status: 'ok', eventId, duplicate: true }`.
+   - Webhook events processed within database transaction; invoice creation is idempotent on `razorpayPaymentId`.
+
+4. **Founding-50 Lock & Lifecycle Operations (`apps/api/src/modules/billing/billing.service.ts`)**:
+   - `claimFoundingSubscription`: Serializes concurrent requests via PostgreSQL row-level pessimistic locking (`SELECT id FROM "Plan" WHERE code = 'AGENCY_FOUNDING' FOR UPDATE`) within a Prisma `$transaction`, checking `count(*) < 50`. Throws `ConflictException` (409 `FOUNDING_PLAN_SOLD_OUT`) if cap reached.
+   - Dual-interval Razorpay plan seeding: seeds both monthly (`period: 'monthly'`) and annual (`period: 'yearly'`) Razorpay plans idempotently for all tiers, storing `razorpayPlanId` and `razorpayAnnualPlanId` on `Plan`.
+   - Interval-based plan selection: `MONTHLY` maps to `razorpayPlanId` with `totalCount: 120`; `ANNUAL` maps to `razorpayAnnualPlanId` with `totalCount: 10` across both `createSubscription` and `claimFoundingSubscription`.
+   - Checkout URL exposure: subscribe responses include Razorpay checkout `short_url` / `shortUrl` alongside local subscription state when available.
+   - Creates Razorpay subscription before committing local state; if Razorpay fails, transaction aborts with zero DB state claimed.
+   - Grandfathered renewals: status remains active, preserves founding rate.
+   - Cancellation policy: `cancelAtPeriodEnd: true`, status becomes `CANCELLED` at period end; permanent forfeit of founding status.
+   - Automated dunning: on `payment.failed`, sends transactional dunning email with masked details via `EmailDeliveryService.sendDunningEmail`.
+
+5. **Entitlement Fences & Read-Only Walls**:
+   - `EntitlementsService`: computes workspace status (`TRIAL`, `ACTIVE`, `HALTED`, `PAST_DUE`, `EXPIRED`, `READ_ONLY`) and effective features (Agency tier during trial, plan-specific tier when paid).
+   - `WorkspaceWritableGuard`: applied to mutating endpoints (`posts.controller.ts`, `publications.controller.ts`), rejects with HTTP 403 `WORKSPACE_READ_ONLY` when trial has expired beyond grace period or subscription is halted.
+   - `PublishabilityValidator`: checks `workspace.trialEndsAt` and subscription status, rejecting publication dispatch with `WORKSPACE_READ_ONLY`.
+   - `apps/worker/src/publishing/publishing.processor.ts`: re-checks workspace read-only status in worker prior to social network dispatch, moving publications to `FAILED` with non-retryable reason `WORKSPACE_READ_ONLY`.
+   - `TrialExpiryProcessor` & `TrialExpiryScheduler`: daily BullMQ cron job (`0 0 * * *`) using `upsertJobScheduler` that flags expired trials past grace days.
+
+6. **CI & Docker Staging Hardening**:
+   - Added test dummy credentials `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `RAZORPAY_WEBHOOK_SECRET` across CI jobs (`test`, `e2e`, `docker`), `docker-compose.yml`, and `docker-compose.staging.yml`.
+   - Verified Staging Compose configuration and required secrets fail-fast tests.
+
+### 3. Verification & Test Evidence
+
+- **GST Calculation Unit Tests (`apps/api/src/modules/billing/gst.util.spec.ts`)**: 13/13 PASS.
+  - Verifies exact paise rounding: ₹499 (42,288 base + 7,612 GST = 49,900), ₹999 (84,661 base + 15,239 GST = 99,900), ₹2,999 (254,153 base + 45,747 GST = 299,900), ₹3,999 (338,898 base + 61,002 GST = 399,900).
+  - Verifies CGST + SGST exact sum = total GST paise.
+- **Billing Config Unit Tests (`apps/api/src/modules/billing/billing.config.spec.ts`)**: 15/15 PASS.
+  - Verifies plan matrix, annual pricing (10x monthly), dynamic GSTIN fail-fast in production, and grace days parsing.
+- **Razorpay Service Unit Tests (`apps/api/src/modules/billing/razorpay.service.spec.ts`)**: 7/7 PASS.
+  - Verifies HMAC-SHA256 signature verification, timing safe comparison, payload rejection, subscription creation options, and log masking.
+- **Billing Service Unit Tests (`apps/api/src/modules/billing/billing.service.spec.ts`)**: 9/9 PASS.
+  - Verifies plan seeding, subscription creation, Founding-50 cap enforcement (409 Conflict), grandfathered renewals, permanent forfeit on cancellation, sequential invoice generation, and dunning email dispatch.
+- **Entitlements Service & Guard Tests**:
+  - `entitlements.service.spec.ts`: 9/9 PASS.
+  - `workspace-writable.guard.spec.ts`: 3/3 PASS.
+  - `PublishabilityValidator.spec.ts`: 29/29 PASS.
+- **Billing Controller Unit Tests (`apps/api/src/modules/billing/billing.controller.spec.ts`)**: 6/6 PASS.
+  - Verifies webhook 400 rejection on missing/invalid signature, 200 on valid signature, idempotent duplicate handling, workspace billing queries, and subscription endpoints.
+- **Worker Trial Expiry Processor Tests (`apps/worker/src/billing/trial-expiry.processor.spec.ts`)**: 3/3 PASS.
+  - Verifies detection of expired trials past grace days, preservation of active trials, and subscription override.
+- **Email Delivery Service Dunning Tests (`apps/api/src/modules/auth/email-delivery.service.spec.ts`)**: 6/6 PASS.
+- **Staging Deployment Configuration Tests (`apps/api/src/config/staging-deployment.spec.ts`)**: 24/24 PASS.
+- **User Repository Signup Tests (`packages/database/src/repositories/UserRepository.spec.ts`)**: 6/6 PASS.
+- **All API Unit Tests (`pnpm --filter @agency-os/api test`)**: 34/34 test files, 408/408 PASS.
+- **Monorepo Lint (`pnpm turbo run lint`)**: 9/9 packages PASS with 0 errors.
+- **Monorepo Typecheck (`pnpm turbo run typecheck`)**: 10/10 tasks PASS with 0 errors.
+- **Monorepo Build (`pnpm turbo run build`)**: 7/7 tasks PASS.
+
+### 4. Release Gate & Next Steps
+
+1. **Release Gate**:
+   - **Live Deployment**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending independent Muse code review, external infrastructure provisioning, and disaster recovery rehearsals G18/G19).
+2. **Milestone Completion Status**:
+   - Feature branch `feat/billing-phase1` ready for Pull Request creation against `main`: **READY**.
+   - Independent Muse review required before any merge: **PENDING**.
