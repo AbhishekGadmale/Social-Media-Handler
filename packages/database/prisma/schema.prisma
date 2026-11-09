@@ -91,10 +91,25 @@ model User {
   updatedAt          DateTime                 @updatedAt
   memberships        WorkspaceMember[]
   posts              Post[]                   @relation("PostAuthor")
-  verificationTokens EmailVerificationToken[]
+  verificationTokens  EmailVerificationToken[]
+  passwordResetTokens PasswordResetToken[]
 }
 
 model EmailVerificationToken {
+  id         String    @id @db.Uuid
+  userId     String    @db.Uuid
+  tokenHash  String    @unique
+  expiresAt  DateTime
+  consumedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model PasswordResetToken {
   id         String    @id @db.Uuid
   userId     String    @db.Uuid
   tokenHash  String    @unique

@@ -60,6 +60,35 @@ describe('EmailDeliveryService (Safety & Environment Controls)', () => {
         rawToken: 'raw-test-token',
       });
     });
+
+    it('Scenario 16: throws error if sendPasswordResetEmail is called in production', async () => {
+      process.env.NODE_ENV = 'production';
+      const service = new MockEmailDeliveryService();
+
+      await expect(
+        service.sendPasswordResetEmail('victim@example.com', 'raw-reset-token'),
+      ).rejects.toThrow(
+        'MockEmailDeliveryService must NEVER be used in production.',
+      );
+
+      expect(service.sentPasswordResetEmails).toHaveLength(0);
+    });
+
+    it('records simulated password reset email in memory during test/development', async () => {
+      process.env.NODE_ENV = 'test';
+      const service = new MockEmailDeliveryService();
+
+      await service.sendPasswordResetEmail(
+        'test@example.com',
+        'raw-reset-token',
+      );
+
+      expect(service.sentPasswordResetEmails).toHaveLength(1);
+      expect(service.sentPasswordResetEmails[0]).toEqual({
+        toEmail: 'test@example.com',
+        rawToken: 'raw-reset-token',
+      });
+    });
   });
 
   describe('NoopEmailDeliveryService', () => {
@@ -69,6 +98,9 @@ describe('EmailDeliveryService (Safety & Environment Controls)', () => {
 
       await expect(
         service.sendVerificationEmail('prod@example.com', 'raw-token'),
+      ).resolves.toBeUndefined();
+      await expect(
+        service.sendPasswordResetEmail('prod@example.com', 'raw-token'),
       ).resolves.toBeUndefined();
     });
   });
@@ -138,6 +170,49 @@ describe('EmailDeliveryService (Safety & Environment Controls)', () => {
       await expect(
         service.sendVerificationEmail('bob@example.com', 'raw-token'),
       ).rejects.toThrow('Failed to send verification email via Resend (403)');
+      await expect(
+        service.sendPasswordResetEmail('bob@example.com', 'raw-token'),
+      ).rejects.toThrow('Failed to send password reset email via Resend (403)');
+    });
+
+    it('successfully sends password reset email via Resend API', async () => {
+      process.env.RESEND_API_KEY = 'mock-resend-api-key-test';
+      process.env.EMAIL_FROM = 'Test App <auth@example.com>';
+      process.env.FRONTEND_URL = 'https://app.example.com';
+
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        json: async () => ({ id: 'email-resend-reset-id' }),
+      });
+      vi.stubGlobal('fetch', fetchMock);
+
+      const service = new ResendEmailDeliveryService();
+      await service.sendPasswordResetEmail(
+        'alice@example.com',
+        'raw-reset-token-value',
+      );
+
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      const [url, options] = fetchMock.mock.calls[0];
+      expect(url).toBe('https://api.resend.com/emails');
+      expect(options.method).toBe('POST');
+      expect(options.headers).toEqual({
+        Authorization: 'Bearer mock-resend-api-key-test',
+        'Content-Type': 'application/json',
+      });
+
+      const body = JSON.parse(options.body);
+      expect(body.from).toBe('Test App <auth@example.com>');
+      expect(body.to).toEqual(['alice@example.com']);
+      expect(body.subject).toBe('Reset your Agency OS password');
+      expect(body.html).toContain(
+        'https://app.example.com/reset-password?token=raw-reset-token-value',
+      );
+      expect(body.text).toContain(
+        'https://app.example.com/reset-password?token=raw-reset-token-value',
+      );
     });
   });
 });

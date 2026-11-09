@@ -24,6 +24,8 @@ describe('AuthController', () => {
       changePassword: vi.fn(),
       verifyEmail: vi.fn(),
       resendVerification: vi.fn(),
+      forgotPassword: vi.fn(),
+      resetPassword: vi.fn(),
       revokeAllUserSessions: vi.fn(),
     };
 
@@ -810,6 +812,149 @@ describe('AuthController', () => {
 
       expect(result.user.emailVerified).toBe(false);
       expect((result.user as any).hashedPassword).toBeUndefined();
+    });
+  });
+
+  describe('forgotPassword', () => {
+    const validDto = { email: 'user@example.com' };
+
+    it('delegates to authService.forgotPassword and returns response payload', async () => {
+      authServiceMock.forgotPassword.mockResolvedValueOnce({
+        message:
+          'If an account with that email exists, a password reset link has been sent.',
+      });
+
+      const result = await controller.forgotPassword(
+        validDto,
+        reqMock as Request,
+      );
+
+      expect(authServiceMock.forgotPassword).toHaveBeenCalledWith(
+        'user@example.com',
+        'req-auth-123',
+      );
+      expect(result).toEqual({
+        message:
+          'If an account with that email exists, a password reset link has been sent.',
+      });
+    });
+
+    it('rejects non-HTTPS forgot-password requests in production without insecure override', async () => {
+      const prevEnv = process.env.NODE_ENV;
+      const prevOverride = process.env.ALLOW_INSECURE_HTTP_AUTH;
+      process.env.NODE_ENV = 'production';
+      delete process.env.ALLOW_INSECURE_HTTP_AUTH;
+
+      try {
+        const insecureReq = { ...reqMock, secure: false };
+        await expect(
+          controller.forgotPassword(validDto, insecureReq as Request),
+        ).rejects.toThrow(BadRequestException);
+      } finally {
+        process.env.NODE_ENV = prevEnv;
+        if (prevOverride !== undefined) {
+          process.env.ALLOW_INSECURE_HTTP_AUTH = prevOverride;
+        }
+      }
+    });
+
+    it('allows non-HTTPS forgot-password requests in production when ALLOW_INSECURE_HTTP_AUTH=true', async () => {
+      const prevEnv = process.env.NODE_ENV;
+      const prevOverride = process.env.ALLOW_INSECURE_HTTP_AUTH;
+      process.env.NODE_ENV = 'production';
+      process.env.ALLOW_INSECURE_HTTP_AUTH = 'true';
+
+      authServiceMock.forgotPassword.mockResolvedValueOnce({
+        message:
+          'If an account with that email exists, a password reset link has been sent.',
+      });
+
+      try {
+        const insecureReq = { ...reqMock, secure: false };
+        const result = await controller.forgotPassword(
+          validDto,
+          insecureReq as Request,
+        );
+        expect(result).toBeDefined();
+      } finally {
+        process.env.NODE_ENV = prevEnv;
+        if (prevOverride !== undefined) {
+          process.env.ALLOW_INSECURE_HTTP_AUTH = prevOverride;
+        } else {
+          delete process.env.ALLOW_INSECURE_HTTP_AUTH;
+        }
+      }
+    });
+  });
+
+  describe('resetPassword', () => {
+    const validDto = {
+      token: 'a'.repeat(64),
+      newPassword: 'mock-new-password-123!',
+    };
+
+    it('delegates to authService.resetPassword and returns response payload', async () => {
+      authServiceMock.resetPassword.mockResolvedValueOnce({
+        message: 'Password reset successfully.',
+      });
+
+      const result = await controller.resetPassword(
+        validDto,
+        reqMock as Request,
+      );
+
+      expect(authServiceMock.resetPassword).toHaveBeenCalledWith(
+        validDto.token,
+        validDto.newPassword,
+        'req-auth-123',
+      );
+      expect(result).toEqual({ message: 'Password reset successfully.' });
+    });
+
+    it('rejects non-HTTPS reset-password requests in production without insecure override', async () => {
+      const prevEnv = process.env.NODE_ENV;
+      const prevOverride = process.env.ALLOW_INSECURE_HTTP_AUTH;
+      process.env.NODE_ENV = 'production';
+      delete process.env.ALLOW_INSECURE_HTTP_AUTH;
+
+      try {
+        const insecureReq = { ...reqMock, secure: false };
+        await expect(
+          controller.resetPassword(validDto, insecureReq as Request),
+        ).rejects.toThrow(BadRequestException);
+      } finally {
+        process.env.NODE_ENV = prevEnv;
+        if (prevOverride !== undefined) {
+          process.env.ALLOW_INSECURE_HTTP_AUTH = prevOverride;
+        }
+      }
+    });
+
+    it('allows non-HTTPS reset-password requests in production when ALLOW_INSECURE_HTTP_AUTH=true', async () => {
+      const prevEnv = process.env.NODE_ENV;
+      const prevOverride = process.env.ALLOW_INSECURE_HTTP_AUTH;
+      process.env.NODE_ENV = 'production';
+      process.env.ALLOW_INSECURE_HTTP_AUTH = 'true';
+
+      authServiceMock.resetPassword.mockResolvedValueOnce({
+        message: 'Password reset successfully.',
+      });
+
+      try {
+        const insecureReq = { ...reqMock, secure: false };
+        const result = await controller.resetPassword(
+          validDto,
+          insecureReq as Request,
+        );
+        expect(result).toBeDefined();
+      } finally {
+        process.env.NODE_ENV = prevEnv;
+        if (prevOverride !== undefined) {
+          process.env.ALLOW_INSECURE_HTTP_AUTH = prevOverride;
+        } else {
+          delete process.env.ALLOW_INSECURE_HTTP_AUTH;
+        }
+      }
     });
   });
 });

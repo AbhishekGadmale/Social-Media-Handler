@@ -3016,3 +3016,116 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
    - Submit PR #61 (`fix/auth-guard-public-routes`) targeting `main`.
    - Independent Muse review before any merge. Do not call merge-ready.
    - Next Milestone: TBD.
+
+
+---
+
+## 50. Self-Serve Password Reset Flow (Branch feat/password-reset — PR #63)
+
+### 1. Summary & Motivation
+
+- **Status**: **IN REVIEW** (Branch `feat/password-reset`, PR #63 pending independent Muse review)
+- **Branch**: `feat/password-reset`
+- **Base Commit**: `430972432dee797d582e426e4b1e33e2d0749c5e` (`main`, includes PR #62 auth readiness audit)
+- **Reviewer**: Muse (Independent review required before any merge; do not call merge-ready)
+- **Live Deployment Release Gate**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending external infrastructure provisioning, live email delivery verification, live payment credentials, and disaster recovery rehearsals G18/G19).
+- **Next Milestone**: TBD
+- **Problem & Motivation**:
+  - Identified as P0 #1 in `docs/auth-production-readiness-report.md`: prior to this PR, there was no password-reset mechanism anywhere in the codebase.
+  - A user who forgot their password was permanently locked out unless an operator manually intervened in the database.
+  - This feature closes the P0 #1 gap by delivering an end-to-end self-serve password reset flow: requesting a reset link via email, consuming a single-use cryptographically secure token, setting a new Argon2-hashed password, incrementing the user security epoch, revoking all existing sessions, and redirecting to login.
+
+### 2. Scope & Implementation Details
+
+1. **Database & Migration (`packages/database`)**:
+   - Added `PasswordResetToken` model to `prisma/schema.prisma` mirroring `EmailVerificationToken`:
+     - Fields: `id` (UUID @id), `userId` (String @db.Uuid), `tokenHash` (String @unique @db.VarChar(64)), `expiresAt` (DateTime), `consumedAt` (DateTime?), `createdAt` (DateTime @default(now())).
+     - Foreign key relation: `user User @relation(fields: [userId], references: [id], onDelete: Cascade)`.
+     - Index: `@@index([userId, expiresAt])`.
+   - Added relation field `passwordResetTokens PasswordResetToken[]` to `User` model.
+   - Generated Prisma migration `20261109000000_add_password_reset_token`.
+   - Added `AUTH_PASSWORD_RESET_REQUESTED` and `AUTH_PASSWORD_RESET_SUCCEEDED` to `AuditAction` enum.
+   - Implemented `PasswordResetTokenRepository`:
+     - `hashToken(rawToken)`: SHA-256 hex digest.
+     - `generateRawToken()`: 32 cryptographically secure random bytes via `crypto.randomBytes(32).toString('hex')` (64 hex characters).
+     - `createToken(userId, tx?)`: 1-hour expiration (`expiresAt = Date.now() + 60 * 60 * 1000`).
+     - `invalidateActiveUserTokens(userId, tx?)`: sets `consumedAt = NOW()` on unconsumed, unexpired tokens (newest-token-wins semantics).
+     - `findByTokenHash(tokenHash, tx?)`: returns token with joined `user`.
+     - `consumeToken(rawToken, tx?)`: atomic CAS consumption (`consumedAt IS NULL AND expiresAt > NOW()`). Returns `{ token, user }`. Does NOT modify `emailVerified`.
+   - Exported `PasswordResetTokenRepository` in `packages/database/index.ts`.
+
+2. **Core Module Integration (`apps/api`)**:
+   - Registered and exported `PasswordResetTokenRepository` in `CoreModule` (`apps/api/src/modules/core/core.module.ts`).
+
+3. **Email Delivery Service (`apps/api`)**:
+   - Added `sendPasswordResetEmail(toEmail: string, rawToken: string): Promise<void>` to `EmailDeliveryService` abstract class.
+   - Implemented across all providers:
+     - `MockEmailDeliveryService`: records to `sentPasswordResetEmails` array for assertions, logs simulation notice with redacted token.
+     - `NoopEmailDeliveryService`: logs warning that password reset email delivery was skipped (no provider configured).
+     - `ResendEmailDeliveryService`: constructs email subject `"Reset your Agency OS password"` and body containing reset link `${frontendUrl}/reset-password?token=${encodeURIComponent(rawToken)}` with 1-hour expiration notice. Dispatches via Resend REST API, redacting token from logs, and throws on non-2xx status.
+
+4. **API DTOs, Service & Controller (`apps/api`)**:
+   - DTOs:
+     - `ForgotPasswordDto`: `email` (`@IsEmail()`, `@IsNotEmpty()`, trimmed and lowercased).
+     - `ResetPasswordDto`: `token` (`@IsString()`, `@MinLength(32)`, `@MaxLength(128)`), `newPassword` (`@IsString()`, `@MinLength(8)`, `@MaxLength(128)`).
+   - `AuthService`:
+     - `forgotPassword(dto, requestId)`: normalizes email, checks user existence. If not found, executes dummy Argon2 work to match timing, logs `AUTH_PASSWORD_RESET_REQUESTED` without revealing failure, and returns generic message. If user found: invalidates active tokens, creates new token (1h expiry), dispatches email, logs `AUTH_PASSWORD_RESET_REQUESTED`, and returns generic message: `"If an account exists for this email, password reset instructions have been sent."`
+     - `resetPassword(dto, requestId)`: consumes token atomically via `PasswordResetTokenRepository.consumeToken`. Rejects invalid/expired/consumed tokens with generic 400 Bad Request (`Invalid or expired password reset token`). Verifies new password is not identical to current password (Argon2 verify); rejects with 400 (`New password cannot be the same as your current password`). Hashes new password with Argon2, updates password and increments security epoch atomically via `UserRepository.updatePasswordAndIncrementEpoch`, revokes all active Redis sessions via `SessionService.revokeAllUserSessions(userId)`, logs `AUTH_PASSWORD_RESET_SUCCEEDED`, and returns `{ message: "Password has been successfully reset. Please log in with your new password." }`.
+   - `AuthController`:
+     - `POST /api/v1/auth/forgot-password`: public endpoint, throttled under `RateLimitPolicies.auth`, validates input, enforces HTTPS in production, returns HTTP 200.
+     - `POST /api/v1/auth/reset-password`: public endpoint, throttled under `RateLimitPolicies.auth`, validates input, enforces HTTPS in production, returns HTTP 200.
+
+5. **Frontend Public Routes & Pages (`apps/web`)**:
+   - `AuthGuard` (`apps/web/src/components/auth-guard.tsx`):
+     - Added `'/forgot-password'` and `'/reset-password'` to `PUBLIC_ROUTES`: `['/login', '/signup', '/verify-email', '/forgot-password', '/reset-password']`.
+     - Logged-out users can access `/forgot-password` and `/reset-password` without bounce to `/login`.
+   - Login Page (`apps/web/src/app/login/page.tsx`):
+     - Added "Forgot password?" link below password field pointing to `/forgot-password`.
+   - Forgot Password Page (`apps/web/src/app/forgot-password/page.tsx`):
+     - Email input with client-side pattern validation, `noValidate` on form, submit to `auth/forgot-password`.
+     - Generic success state ("Check your email — If an account exists...") regardless of backend response body.
+     - Comprehensive error handling for 429 rate limit (retry-after seconds) and generic server errors.
+     - "Back to sign in" navigation link.
+   - Reset Password Page (`apps/web/src/app/reset-password/page.tsx`):
+     - Wrapped in React `<Suspense>` boundary for Next.js App Router static prerendering compatibility.
+     - Validates `token` query param presence on mount; missing token immediately displays invalid/expired state with link back to `/forgot-password`.
+     - Password & Confirm Password fields with client validation (8–128 characters, match verification).
+     - StrictMode double-submit ref guard (`useRef(false)`).
+     - Success screen with confirmation message and primary "Sign in with new password" CTA link to `/login`.
+     - Error banner on submission failure (e.g. expired token, same password rejection, rate limit retry-after).
+
+### 3. Verification & Test Evidence
+
+- **Database Repository Tests (`packages/database`)**:
+  - `PasswordResetTokenRepository.spec.ts`: 8/8 tests PASS (token creation with 1h expiry, SHA-256 hash lookup, single-use atomic CAS consumption, rejection of expired/consumed tokens, invalidation of prior active tokens, isolation from `emailVerified`).
+- **API Unit Tests (`apps/api`)**:
+  - 35/35 test files passed, 450/450 tests passed.
+  - `email-delivery.service.spec.ts`: 9/9 PASS (Resend dispatch for verification and reset emails, missing API key exception, non-2xx failure, Mock delivery simulation and recording, Noop fallback).
+  - `auth.service.spec.ts`: 30/30 PASS (forgotPassword anti-enumeration timing and dummy work, email dispatch, resetPassword CAS token consumption, same-password rejection, Argon2 hashing, epoch incrementation, revokeAllUserSessions, audit logging).
+  - `auth.controller.spec.ts`: 32/32 PASS (forgot-password and reset-password input validation, HTTP 200 responses, HTTPS production enforcement).
+- **API E2E Tests (`apps/api/test/auth.e2e-spec.ts`)**:
+  - 6/6 test suites passed, 121/121 tests passed.
+  - New `Self-Serve Password Reset Flow (e2e)` suite (3/3 PASS):
+    1. Full lifecycle: forgot-password -> reset-password with new credentials -> old password rejected (401) -> new password signs in successfully (200) -> session cookie issued.
+    2. Token replay attack rejected with HTTP 400 Bad Request.
+    3. Same password rejection with HTTP 400 Bad Request.
+- **Web Unit Tests (`apps/web`)**:
+  - 15/15 test files passed, 174/174 tests passed.
+  - `auth-guard.spec.tsx` (16/16 PASS): logged-out access to `/forgot-password` and `/reset-password` renders without bounce; logged-in access renders without bounce.
+  - `login/page.spec.tsx` (18/18 PASS): "Forgot password?" link verified with `href="/forgot-password"`.
+  - `forgot-password/page.spec.tsx` (6/6 PASS): form rendering, email validation, submit to API, generic success state, rate limit error handling, back to login link.
+  - `reset-password/page.spec.tsx` (8/8 PASS): missing token state, password mismatch error, client length validation, submit payload, success screen with login link, API 400 error banner, rate limit mapping.
+- **Monorepo Quality & Build Checks**:
+  - `pnpm turbo run lint typecheck`: 15/15 tasks passed, 0 errors.
+  - `pnpm turbo run test`: 10/10 tasks passed across all packages.
+  - `pnpm turbo run build`: 7/7 tasks passed; `/forgot-password` and `/reset-password` statically prerendered.
+
+### 4. Release Gate & Next Steps
+
+1. **Release Gate**:
+   - **Live Deployment**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending external infrastructure provisioning, live email delivery verification, live payment credentials, and disaster recovery rehearsals G18/G19).
+2. **Next Steps**:
+   - Open Pull Request targeting `main`.
+   - Independent Muse review required before any merge. Do not call merge-ready.
+   - Next Milestone: TBD.
+

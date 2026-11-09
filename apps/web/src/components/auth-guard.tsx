@@ -5,7 +5,13 @@ import { useRouter, usePathname } from 'next/navigation';
 import { useEffect } from 'react';
 import { authQueries } from '../lib/query/auth';
 
-export const PUBLIC_ROUTES = ['/login', '/signup', '/verify-email'];
+export const PUBLIC_ROUTES = [
+  '/login',
+  '/signup',
+  '/verify-email',
+  '/forgot-password',
+  '/reset-password',
+];
 
 export function AuthGuard({ children }: { children: React.ReactNode }) {
   const router = useRouter();

@@ -9,6 +9,7 @@ import {
 import {
   UserRepository,
   EmailVerificationTokenRepository,
+  PasswordResetTokenRepository,
   AuditAction,
   Prisma,
 } from '@agency-os/database';
@@ -52,6 +53,7 @@ export class AuthService {
     private readonly tokenRepository: EmailVerificationTokenRepository,
     @Inject(EMAIL_DELIVERY_SERVICE)
     private readonly emailDeliveryService: EmailDeliveryService,
+    private readonly passwordResetTokenRepo: PasswordResetTokenRepository,
     @Optional() private readonly auditService?: AuditService,
   ) {}
 
@@ -274,6 +276,117 @@ export class AuthService {
     }
 
     return genericResponse;
+  }
+
+  /**
+   * Requests a password reset link for the provided email address.
+   * Provides full anti-enumeration parity: returns identical generic message regardless
+   * of whether the email exists or not.
+   */
+  async forgotPassword(
+    email: string,
+    requestId?: string,
+  ): Promise<{ message: string }> {
+    const genericResponse = {
+      message:
+        'If an account with that email exists, a password reset link has been sent.',
+    };
+
+    if (!email || typeof email !== 'string') {
+      return genericResponse;
+    }
+
+    const normalizedEmail = email.trim().toLowerCase();
+    const user = await this.userRepository.findByEmail(normalizedEmail);
+
+    if (!user) {
+      await this.runDummyArgon2Work();
+      if (this.auditService) {
+        this.auditService.logActionBestEffort({
+          action: AuditAction.AUTH_PASSWORD_RESET_REQUESTED,
+          targetType: 'User',
+          requestId,
+        });
+      }
+      return genericResponse;
+    }
+
+    // Invalidate prior active reset tokens to prevent multi-link confusion
+    await this.passwordResetTokenRepo.invalidateActiveUserTokens(user.id);
+
+    const rawToken = PasswordResetTokenRepository.generateRawToken();
+    const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
+    await this.passwordResetTokenRepo.createToken(user.id, rawToken, expiresAt);
+
+    try {
+      await this.emailDeliveryService.sendPasswordResetEmail(
+        normalizedEmail,
+        rawToken,
+      );
+    } catch (emailErr) {
+      this.logger.warn({
+        msg: 'forgot_password.email_delivery_failed',
+        userId: user.id,
+        error: emailErr instanceof Error ? emailErr.message : String(emailErr),
+      });
+    }
+
+    if (this.auditService) {
+      this.auditService.logActionBestEffort({
+        action: AuditAction.AUTH_PASSWORD_RESET_REQUESTED,
+        targetType: 'User',
+        requestId,
+      });
+    }
+
+    return genericResponse;
+  }
+
+  /**
+   * Resets a user's password using a single-use password reset token.
+   * Enforces single-use CAS consumption, rejects identical password, hashes new password with argon2id,
+   * updates password and increments securityEpoch, and revokes all active user sessions.
+   */
+  async resetPassword(
+    token: string,
+    newPasswordPlain: string,
+    requestId?: string,
+  ): Promise<{ message: string }> {
+    const result = await this.passwordResetTokenRepo.consumeToken(token);
+    if (!result) {
+      throw new BadRequestException('Invalid or expired reset link');
+    }
+
+    const isSamePassword = await argon2.verify(
+      result.user.hashedPassword,
+      newPasswordPlain,
+    );
+    if (isSamePassword) {
+      throw new BadRequestException(
+        'New password cannot be the same as the current password',
+      );
+    }
+
+    const hashedPassword = await argon2.hash(newPasswordPlain);
+    await this.userRepository.updatePasswordAndIncrementEpoch(
+      result.user.id,
+      hashedPassword,
+    );
+
+    // Revoke all sessions for the user to invalidate any potentially compromised sessions
+    await this.revokeAllUserSessions(result.user.id);
+
+    if (this.auditService) {
+      this.auditService.logActionBestEffort({
+        action: AuditAction.AUTH_PASSWORD_RESET_SUCCEEDED,
+        actorId: result.user.id,
+        targetType: 'User',
+        targetId: result.user.id,
+        requestId,
+      });
+    }
+
+    return { message: 'Password reset successfully.' };
   }
 
   async login(
