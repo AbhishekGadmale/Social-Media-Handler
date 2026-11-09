@@ -4,7 +4,7 @@
 **Repository**: `AbhishekGadmale/Social-Media-Handler`  
 **Base Commit**: `85deaf0dbfdce358b1498ba4fc96141b20a63c5e` (`main`)  
 **Branch**: `docs/auth-production-readiness`  
-**Audit Scope**: Full authentication surface (`apps/api/src/modules/auth/`, `apps/web/src/app/(auth)/`, `packages/session/`, `packages/database/prisma/schema.prisma`, rate limiting, billing integration, operational security).
+**Audit Scope**: Full authentication surface (`apps/api/src/modules/auth/`, `apps/web/src/app/` (login, signup, verify-email), `packages/session/`, `packages/database/prisma/schema.prisma`, rate limiting, billing integration, operational security).
 
 ---
 
@@ -18,7 +18,7 @@ This audit evaluated the current authentication system in Agency OS against the 
 
 ### Finding 2: Returning Unverified User Redirect Trap & Frontend Error Silencing (Severity: P0)
 - **The Reality**: Two cascading defects break the onboarding and error-reporting loops:
-  1. **The Redirect Trap**: When an unverified user logs in at `/login`, `apps/web/src/app/login/page.tsx:40-42` checks `if (authData.memberships.length > 0)` and redirects the user directly to `/${workspaceId}/analytics`. However, `apps/api/src/modules/auth/guards/workspace.guard.ts:23-27` blocks unverified users from all workspace routes with HTTP 403 (`"Email verification required to access workspaces"`). The analytics page (`apps/web/src/app/[workspaceId]/analytics/page.tsx:174-178`) catches the 403 and displays a generic dead-end: *"Access Denied: You don't have permission to view analytics in this workspace."* The user is never directed to `/dashboard` where the amber resend-verification banner exists (`apps/web/src/app/dashboard/page.tsx:69-112`), leaving them trapped without an explanation or a resend button.
+  1. **The Redirect Trap**: When an unverified user logs in at `/login`, `apps/web/src/app/login/page.tsx:40-42` checks `if (authData.memberships.length > 0)` and redirects the user directly to `/${workspaceId}/analytics`. However, `apps/api/src/modules/auth/guards/workspace.guard.ts:23-27` blocks unverified users from all workspace routes with HTTP 403 (`"Email verification required to access workspaces"`). The analytics page (`apps/web/src/app/[workspaceId]/analytics/page.tsx:169–175`) catches the 403 and displays a generic dead-end: *"Access Denied: You don't have permission to view analytics in this workspace."* Nothing in the flow routes the user to `/dashboard` or explains the problem — they can reach it by navigating to the URL, but nothing tells them the resend banner lives there (`apps/web/src/app/dashboard/page.tsx:69-112`), leaving them without guidance or a resend button.
   2. **The Error Silencing Bug**: The API's global exception filter (`apps/api/src/filters/all-exceptions.filter.ts:85-91`) returns errors in the format `{ error: { code, message, requestId } }`. However, all frontend auth pages (`apps/web/src/app/login/page.tsx:66`, `apps/web/src/app/signup/page.tsx:90-97`, `apps/web/src/app/dashboard/page.tsx:54`) attempt to read `err.data.message`. Because `err.data.message` is `undefined`, every real error—such as DTO validation rejections, password complexity failures, or HTTPS protocol rejections—is silenced and replaced with generic placeholder text (*"An error occurred during signup."* or *"An error occurred during login."*).
 
 ### Finding 3: Rate Limiting Flaws: Vulnerable to Proxy Rotation and Prone to Office-Wide Collateral Lockouts (Severity: P0)
@@ -91,19 +91,19 @@ This audit evaluated the current authentication system in Agency OS against the 
     router.push(`/${authData.memberships[0].workspaceId}/analytics`);
   }
   ```
-- Browser lands on `/[workspaceId]/analytics`. The page issues `analyticsQueries.overview(workspaceId)` (`apps/web/src/app/[workspaceId]/analytics/page.tsx:87`).
+- Browser lands on `/[workspaceId]/analytics`. The page issues `analyticsQueries.overview(workspaceId)` (`apps/web/src/app/[workspaceId]/analytics/page.tsx:111`).
 - `WorkspaceGuard` (`apps/api/src/modules/auth/guards/workspace.guard.ts:23-27`) executes:
   ```ts
   if (!user.emailVerified) {
     throw new ForbiddenException('Email verification required to access workspaces');
   }
   ```
-- Analytics page catches HTTP 403 (`apps/web/src/app/[workspaceId]/analytics/page.tsx:174-178`) and renders:
+- Analytics page catches HTTP 403 (`apps/web/src/app/[workspaceId]/analytics/page.tsx:169–175`) and renders:
   ```tsx
   <h3 className="text-xl font-semibold text-red-900">Access Denied</h3>
   <p className="mt-2 text-red-700">You don't have permission to view analytics in this workspace.</p>
   ```
-- **Observed User Experience**: The user is completely stranded. They are not informed that their email is unverified, there is no resend verification button, and they cannot reach `/dashboard` unless they guess the URL path.
+- **Observed User Experience**: The user is completely stranded. They are not informed that their email is unverified, and there is no resend verification button on the error page. Nothing in the flow routes the user to `/dashboard` or explains the problem — they can reach it by navigating to the URL, but nothing tells them the resend banner lives there.
 
 #### Path C: Login After Trial Expiry
 - User logs in after their 14-day trial period (`trialEndsAt + graceDays`) has elapsed.
@@ -296,7 +296,7 @@ This audit evaluated the current authentication system in Agency OS against the 
 3. **Magic Link / Passwordless-Only Login**:
    - *Reason*: Magic links introduce external dependencies on email delivery speed for every single login. Email latency (e.g. 30–60 second greylisting) creates massive user friction during high-frequency daily logins.
 4. **Complex Custom RBAC Builders**:
-   - *Reason*: The current `PermissionMatrix` and standard roles (`OWNER`, `ADMIN`, `MEMBER`, `VIEWER`) are sufficient for 1,000 agencies. Allowing custom permission-rule builders creates exponential test surface area without tangible revenue impact.
+   - *Reason*: The current `PermissionMatrix` and standard roles (`OWNER`, `MANAGER`, `EDITOR`, `CLIENT_APPROVER`, `VIEWER`) are sufficient for 1,000 agencies. Allowing custom permission-rule builders creates exponential test surface area without tangible revenue impact.
 
 ---
 
