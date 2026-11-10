@@ -17,7 +17,7 @@ vi.mock('../../lib/api/client', () => ({
       headers?: Headers | Record<string, string>,
     ) {
       let resolvedMessage = message;
-      if (data && typeof data === 'object') {
+      if (!resolvedMessage && data && typeof data === 'object') {
         const dataObj = data as Record<string, unknown>;
         const nested = dataObj.error;
         let extracted: unknown;
@@ -138,7 +138,7 @@ describe('ForgotPasswordPage', () => {
             message: 'Invalid email address provided',
           },
         },
-        'Bad Request',
+        'Invalid email address provided',
       ),
     );
 

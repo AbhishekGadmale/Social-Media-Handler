@@ -3147,7 +3147,7 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
   - The NestJS `AllExceptionsFilter` (`apps/api/src/filters/all-exceptions.filter.ts`) serializes all API errors under a nested envelope: `{ error: { code, message, requestId } }`.
   - In `apps/web/src/lib/api/client.ts`, the `!response.ok` branch previously built `ApiError` with `(errorData)?.message`.
   - For the nested envelope, `(errorData)?.message` evaluated to `undefined`, causing `err.message` to fall back to `response.statusText` (e.g. `"Bad Request"`, `"Conflict"`).
-  - Consequently, every page/component that attempted to read `err.data.message` saw `undefined` and rendered a generic fallback (e.g., "Registration failed. Please check your information.", "Invalid email or password.", "Unable to send verification email.").
+  - Consequently, every page/component that attempted to read `err.data.message` saw `undefined` and rendered a generic fallback (e.g., 'An error occurred during signup.', 'An error occurred during login.', 'Unable to send verification email. Please try again.').
   - This issue affected signup submission, login, verify-email resend, and dashboard resend. PR #63 introduced pages that worked around it via nested-first digging (`err.data?.error?.message ?? err.data?.message`).
   - **Resolution**: Fix the root cause once at the client boundary in `apps/web/src/lib/api/client.ts` rather than patching pages one by one, while eliminating redundant workarounds across all consuming pages.
 
@@ -3168,7 +3168,7 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
      - Displays `err.message || 'An error occurred during login.'` for 4xx responses.
      - Preserves status branches: 429 rate limit with `retry-after` header, >=500 server error, and 0 network error.
    - **Signup Page** (`apps/web/src/app/signup/page.tsx`):
-     - Form submission error displays `err.message || 'Registration failed. Please check your information and try again.'`.
+     - Form submission error displays `err.message || 'An error occurred during signup.'`.
      - Inline check-email resend error displays `err.message || 'Unable to send verification email. Please try again.'`.
      - Preserves status branches: 429, >=500, 0.
    - **Verify Email Page** (`apps/web/src/app/verify-email/page.tsx`):
@@ -3205,7 +3205,8 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
   - `apps/web/src/app/dashboard/page.spec.tsx` (5/5 PASS): asserts 400 resend error with nested shape, 429, and 500.
   - `apps/web/src/app/forgot-password/page.spec.tsx` (6/6 PASS): verified clean pass.
   - `apps/web/src/app/reset-password/page.spec.tsx` (8/8 PASS): verified clean pass.
-  - Total `apps/web` test suite: 16/16 test files passed, 193/193 tests passed.
+  - `apps/web/src/app/[workspaceId]/billing/page.spec.tsx` (9/9 PASS): asserts specific 400 error message from nested real shape for subscribe failure and cancel failure.
+  - Total `apps/web` test suite: 16/16 test files passed, 195/195 tests passed.
 - **Monorepo Quality & Build Checks**:
   - `pnpm turbo run lint typecheck`: 15/15 tasks passed, 0 errors.
   - `pnpm turbo run test`: 10/10 tasks passed across all packages.

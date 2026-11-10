@@ -26,7 +26,7 @@ vi.mock('../../lib/api/client', () => ({
       headers?: Headers | Record<string, string>,
     ) {
       let resolvedMessage = message;
-      if (data && typeof data === 'object') {
+      if (!resolvedMessage && data && typeof data === 'object') {
         const dataObj = data as Record<string, unknown>;
         const nested = dataObj.error;
         let extracted: unknown;
@@ -195,7 +195,7 @@ describe('ResetPasswordPage', () => {
             message: 'Invalid or expired reset link',
           },
         },
-        'Bad Request',
+        'Invalid or expired reset link',
       ),
     );
 
@@ -230,7 +230,7 @@ describe('ResetPasswordPage', () => {
             message: 'New password cannot be the same as the current password',
           },
         },
-        'Bad Request',
+        'New password cannot be the same as the current password',
       ),
     );
 
