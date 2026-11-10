@@ -104,7 +104,7 @@ describe('LoginPage post-login redirects', () => {
     currentSearchParamRedirect = null;
     mockApiPost.mockResolvedValue({});
     mockApiGet.mockResolvedValue({
-      user: { id: 'user-1', email: 'user@example.com', name: 'Test User' },
+      user: { id: 'user-1', email: 'user@example.com', name: 'Test User', emailVerified: true },
       memberships: defaultMemberships,
     });
   });
@@ -190,7 +190,7 @@ describe('LoginPage post-login redirects', () => {
   describe('Fallback to /dashboard when user has no memberships', () => {
     beforeEach(() => {
       mockApiGet.mockResolvedValue({
-        user: { id: 'user-1', email: 'user@example.com', name: 'Test User' },
+        user: { id: 'user-1', email: 'user@example.com', name: 'Test User', emailVerified: true },
         memberships: [],
       });
     });
@@ -207,6 +207,35 @@ describe('LoginPage post-login redirects', () => {
 
     it('redirects to /dashboard when redirect param is missing and memberships is empty', async () => {
       currentSearchParamRedirect = null;
+      renderLogin();
+      await performLogin();
+
+      await waitFor(() => {
+        expect(mockPush).toHaveBeenCalledWith('/dashboard');
+      });
+    });
+  });
+
+  describe('Unverified user redirect to /dashboard', () => {
+    beforeEach(() => {
+      mockApiGet.mockResolvedValue({
+        user: { id: 'user-1', email: 'user@example.com', name: 'Test User', emailVerified: false },
+        memberships: defaultMemberships,
+      });
+    });
+
+    it('redirects unverified user with memberships to /dashboard', async () => {
+      currentSearchParamRedirect = null;
+      renderLogin();
+      await performLogin();
+
+      await waitFor(() => {
+        expect(mockPush).toHaveBeenCalledWith('/dashboard');
+      });
+    });
+
+    it('redirects unverified user with ?redirect param to /dashboard (ignores redirect param)', async () => {
+      currentSearchParamRedirect = '/ws-1/analytics';
       renderLogin();
       await performLogin();
 

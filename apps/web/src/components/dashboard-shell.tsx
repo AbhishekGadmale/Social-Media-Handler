@@ -3,7 +3,7 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { authQueries } from '../lib/query/auth';
 import { useParams, useRouter, usePathname } from 'next/navigation';
-import { api } from '../lib/api/client';
+import { api, ApiError } from '../lib/api/client';
 import React, { useEffect, useState } from 'react';
 import { Menu, BarChart, Users, LogOut, ChevronDown, Send, CreditCard } from 'lucide-react';
 import Link from 'next/link';
@@ -17,6 +17,9 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
   
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isWorkspaceSwitcherOpen, setIsWorkspaceSwitcherOpen] = useState(false);
+  const [resendLoading, setResendLoading] = useState(false);
+  const [resendNotice, setResendNotice] = useState<string | null>(null);
+  const [resendError, setResendError] = useState<string | null>(null);
 
   const currentWorkspaceId = params.workspaceId as string;
   const memberships = React.useMemo(() => authData?.memberships || [], [authData?.memberships]);
@@ -45,10 +48,95 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
     }
   };
 
+  const handleResend = async () => {
+    setResendLoading(true);
+    setResendNotice(null);
+    setResendError(null);
+
+    try {
+      await api.post('auth/resend-verification', { email: authData?.user?.email });
+      setResendNotice('If an unverified account exists for this email, a verification link has been sent.');
+    } catch (err) {
+      if (err instanceof ApiError) {
+        if (err.status === 429) {
+          const retryAfter = err.headers['retry-after'];
+          const seconds = retryAfter ? parseInt(retryAfter, 10) : NaN;
+          if (!isNaN(seconds)) {
+            setResendError(`Too many attempts. Please try again in ${seconds} seconds.`);
+          } else {
+            setResendError('Too many attempts. Please try again in a few minutes.');
+          }
+        } else if (err.status >= 500) {
+          setResendError('Something went wrong. Please try again.');
+        } else if (err.status === 0) {
+          setResendError('Unable to reach the server. Please try again.');
+        } else {
+          setResendError(
+            err.message || 'Unable to send verification email. Please try again.',
+          );
+        }
+      } else {
+        setResendError('Unable to reach the server. Please try again.');
+      }
+    } finally {
+      setResendLoading(false);
+    }
+  };
+
   if (isLoading || !authData || !isValidWorkspace || !currentMembership) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
         <div className="text-gray-500">Loading workspace...</div>
+      </div>
+    );
+  }
+
+  if (authData.user.emailVerified === false) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50 p-4">
+        <div className="w-full max-w-lg rounded-lg bg-white p-6 shadow space-y-4">
+          <div
+            className="rounded-md bg-amber-50 border border-amber-200 p-4"
+            role="alert"
+          >
+            <div className="space-y-3">
+              <div>
+                <h2 className="text-base font-semibold text-amber-800">
+                  Verify your email to unlock your workspace
+                </h2>
+                <p className="mt-1 text-sm text-amber-700">
+                  Email verification is required to access workspace features. Please check your inbox for a verification link.
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={handleResend}
+                  disabled={resendLoading}
+                  className="rounded-md bg-amber-600 px-4 py-2 text-sm font-medium text-white hover:bg-amber-700 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-2 disabled:bg-amber-400"
+                >
+                  {resendLoading ? 'Sending...' : 'Resend verification email'}
+                </button>
+                <Link
+                  href="/dashboard"
+                  className="text-sm font-medium text-amber-800 hover:text-amber-900 underline"
+                >
+                  Go to Dashboard
+                </Link>
+              </div>
+              {resendNotice && (
+                <div className="mt-3 text-sm text-amber-900 bg-amber-100/60 p-2 rounded">
+                  {resendNotice}
+                </div>
+              )}
+              {resendError && (
+                <div className="mt-3 text-sm text-red-700 bg-red-100/60 p-2 rounded">
+                  {resendError}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
       </div>
     );
   }

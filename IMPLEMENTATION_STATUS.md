@@ -3223,4 +3223,80 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
    - Independent Muse review required before any merge. Do not call merge-ready.
    - Next Milestone: TBD.
 
+## 52. Unverified-User Routing Trap Remediation (Branch fix/unverified-user-routing — PR #65)
+
+### 1. Root Cause & Real File:Line Citations
+
+- **Login Redirect Gap (`apps/web/src/app/login/page.tsx:35-44`)**:
+  - After a successful login and querying `authQueries.me()`, `LoginPage` evaluated `getValidRedirect(searchParams.get('redirect'))` and `authData.memberships.length > 0` before checking `authData.user.emailVerified`.
+  - Because signup automatically creates an initial workspace membership, an unverified user was immediately pushed to `/${authData.memberships[0].workspaceId}/analytics`.
+- **AuthGuard Access Gap (`apps/web/src/components/auth-guard.tsx:34-41`)**:
+  - In the `authData && isLoginPage` branch, authenticated visitors hitting `/login` were redirected to `/${authData.memberships[0].workspaceId}/analytics` if `authData.memberships.length > 0`, lacking an `emailVerified` pre-check.
+- **Backend Enforcement & Dead-End (`apps/api/src/modules/auth/guards/workspace.guard.ts:23-27`)**:
+  - `WorkspaceGuard` enforces `if (!user.emailVerified) throw new ForbiddenException('Email verification required to access workspaces')`.
+  - When an unverified user was routed to workspace analytics, every workspace API query was rejected with HTTP 403, rendering the generic `'Access Denied'` block (`apps/web/src/app/[workspaceId]/analytics/page.tsx:169-175`) with no explanation or resend action.
+- **Pre-existing Working Resend Banner (`apps/web/src/app/dashboard/page.tsx:68-111`)**:
+  - The proper destination for unverified accounts is `/dashboard`, where an amber banner displays resend functionality posting `auth/resend-verification`.
+
+### 2. Three Fix Points & Architecture
+
+1. **Login Page Priority Check (`apps/web/src/app/login/page.tsx`)**:
+   - Immediately following `const authData = await queryClient.fetchQuery(authQueries.me())`, added `if (!authData.user.emailVerified)` as the first condition, routing unverified users directly to `router.push('/dashboard')`.
+   - The redirect query parameter is intentionally ignored for unverified users; after verification and subsequent sign-in, normal navigation resumes.
+   - For verified users (`authData.user.emailVerified === true`), existing redirect priority is preserved (`validRedirect`, then `authData.memberships[0].workspaceId/analytics`, then `/dashboard`).
+2. **AuthGuard Page Access Check (`apps/web/src/components/auth-guard.tsx`)**:
+   - In the `authData && isLoginPage` branch, added `if (!authData.user.emailVerified)` check routing unverified users to `router.replace('/dashboard')`.
+   - Verified users continue through existing membership-aware routing (`/${authData.memberships[0].workspaceId}/analytics` or `/dashboard`).
+3. **Workspace Dashboard Shell Verification Gate (`apps/web/src/components/dashboard-shell.tsx`)**:
+   - `DashboardShell` wraps all workspace routes under `app/[workspaceId]/layout.tsx`.
+   - Immediately following the workspace validity early-return check (`isLoading || !authData || !isValidWorkspace || !currentMembership`), added `if (authData.user.emailVerified === false)` to render a full-screen verification gate.
+   - For unverified users with valid memberships, `isValidWorkspace` evaluates to true, intercepting the request and rendering the gate instead of sidebar navigation, top header, or child route components.
+   - **Gate Content & Exact Quoted Fallbacks**:
+     - Alert banner: `role="alert"` styled with amber theme (`rounded-md bg-amber-50 border border-amber-200 p-4`).
+     - Heading: `'Verify your email to unlock your workspace'`.
+     - Copy: `'Email verification is required to access workspace features. Please check your inbox for a verification link.'`.
+     - Button: `'Resend verification email'` (displays `'Sending...'` when disabled and pending).
+     - Success notice: `'If an unverified account exists for this email, a verification link has been sent.'`.
+     - Link: `'Go to Dashboard'` pointing to `/dashboard`.
+     - Error handling (mirroring dashboard page):
+       - HTTP 429 with `retry-after` header: `` `Too many attempts. Please try again in ${seconds} seconds.` ``.
+       - HTTP 429 without parseable seconds: `'Too many attempts. Please try again in a few minutes.'`.
+       - HTTP >= 500: `'Something went wrong. Please try again.'`.
+       - HTTP 0 network error: `'Unable to reach the server. Please try again.'`.
+       - API error fallback: `err.message || 'Unable to send verification email. Please try again.'`.
+       - Non-ApiError fallback: `'Unable to reach the server. Please try again.'`.
+     - One-click trigger: posts `auth/resend-verification` with `{ email: authData.user.email }` without requiring manual email input.
+4. **Untouched Per-Page 403 Blocks**:
+   - The per-page 403 `'Access Denied'` blocks in `analytics/page.tsx`, `analytics/[accountId]/page.tsx`, `accounts/page.tsx`, and `billing/page.tsx` were intentionally left untouched.
+   - With `DashboardShell` intercepting unverified users across all workspace layouts, these blocks are unreachable for unverified users and remain solely for genuine workspace permission and non-membership 403 authorization failures.
+   - No backend changes were made (`WorkspaceGuard` and `auth.service` remain untouched).
+
+### 3. Verification & Test Evidence
+
+- **Verified Web Test Counts (counted via `it()` and `test()` blocks in source)**:
+  - `apps/web/src/app/login/page.spec.tsx`: 17 `it()` blocks in source (1 in a 9-item iteration table + 16 individual = 25 total executed tests, 25/25 PASS). Includes 2 new unverified user redirect tests (`currentSearchParamRedirect = null` and `currentSearchParamRedirect = '/ws-1/analytics'`). Mock updated with `emailVerified: true` default.
+  - `apps/web/src/components/auth-guard.spec.tsx`: 17 `it()` blocks in source (17/17 PASS). Includes 1 new unverified user redirect test asserting `router.replace('/dashboard')`. Mock updated with `emailVerified: true` default.
+  - `apps/web/src/components/dashboard-shell.spec.tsx` (NEW): 4 `it()` blocks in source (4/4 PASS):
+    1. Verified user with valid workspace membership renders children and sidebar nav.
+    2. Unverified user renders full-screen verification gate, suppressing children and sidebar nav.
+    3. Click `'Resend verification email'` calls `api.post('auth/resend-verification', { email: 'test@example.com' })` exactly once and displays success notice.
+    4. HTTP 429 with retry-after header displays rate-limit retry seconds message.
+  - Total `apps/web` test suite: 17/17 test files passed, 202/202 tests passed.
+- **Monorepo Quality & Build Checks**:
+  - `pnpm turbo run lint typecheck`: 15/15 tasks passed, 0 errors.
+  - `pnpm turbo run test`: 10/10 tasks passed across all packages.
+  - `pnpm turbo run build`: 7/7 tasks passed; Next.js 16.3.1 static and dynamic pages generated successfully.
+- **CI Quality Gates**:
+  - 6/6 verified green (Tests, API E2E, Application Builds, Code Quality, Docker Build & Smoke, GitGuardian Security Checks).
+
+### 4. Release Gate & Next Steps
+
+1. **Release Gate**:
+   - **Live Deployment**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending external infrastructure provisioning, live email delivery verification, live payment credentials, and disaster recovery rehearsals G18/G19).
+2. **Next Steps**:
+   - Open PR #65 targeting `main`.
+   - Independent Muse review required before any merge. Do not call merge-ready.
+   - Do NOT merge on this prompt alone.
+
+
 
