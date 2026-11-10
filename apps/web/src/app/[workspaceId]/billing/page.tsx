@@ -150,10 +150,9 @@ export default function BillingPage() {
         setSubscribingCode(null);
       }
     } catch (err: unknown) {
-      const errorObj = err as { data?: { message?: string }; message?: string };
+      const errorObj = err as { message?: string };
       setSubscribeError(
-        errorObj?.data?.message ||
-          errorObj?.message ||
+        errorObj?.message ||
           'Failed to initiate checkout. Please try again.',
       );
       setSubscribingCode(null);
@@ -170,10 +169,9 @@ export default function BillingPage() {
       await refetchBilling();
       setIsCancelModalOpen(false);
     } catch (err: unknown) {
-      const errorObj = err as { data?: { message?: string }; message?: string };
+      const errorObj = err as { message?: string };
       setCancelError(
-        errorObj?.data?.message ||
-          errorObj?.message ||
+        errorObj?.message ||
           'Failed to cancel subscription. Please try again.',
       );
     } finally {

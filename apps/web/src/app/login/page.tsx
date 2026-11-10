@@ -63,7 +63,7 @@ export default function LoginPage() {
         } else if (err.status === 0) {
           setError('Unable to reach the server. Please try again.');
         } else {
-          setError((err.data as Record<string, unknown>)?.message as string || 'An error occurred during login.');
+          setError(err.message || 'An error occurred during login.');
         }
       } else {
         // Fallback for non-ApiError (e.g. TypeError from fetch failing)

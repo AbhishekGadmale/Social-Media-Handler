@@ -22,10 +22,27 @@ vi.mock('../../lib/api/client', () => ({
     constructor(
       public status: number,
       public data: unknown,
-      message: string,
+      message?: string,
       headers?: Headers | Record<string, string>,
     ) {
-      super(message);
+      let resolvedMessage = message;
+      if (data && typeof data === 'object') {
+        const dataObj = data as Record<string, unknown>;
+        const nested = dataObj.error;
+        let extracted: unknown;
+        if (nested && typeof nested === 'object') {
+          extracted = (nested as Record<string, unknown>).message;
+        }
+        if (extracted === undefined) {
+          extracted = dataObj.message;
+        }
+        if (Array.isArray(extracted)) {
+          resolvedMessage = extracted.join(', ');
+        } else if (typeof extracted === 'string') {
+          resolvedMessage = extracted;
+        }
+      }
+      super(resolvedMessage || 'API Error');
       this.name = 'ApiError';
       this.headers = {};
       if (headers) {
