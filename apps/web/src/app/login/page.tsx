@@ -33,14 +33,18 @@ export default function LoginPage() {
       const authData = await queryClient.fetchQuery(authQueries.me());
       
       // Redirect logic
-      const redirectTo = searchParams.get('redirect');
-      const validRedirect = getValidRedirect(redirectTo);
-      if (validRedirect) {
-        router.push(validRedirect);
-      } else if (authData.memberships.length > 0) {
-        router.push(`/${authData.memberships[0].workspaceId}/analytics`);
-      } else {
+      if (!authData.user.emailVerified) {
         router.push('/dashboard');
+      } else {
+        const redirectTo = searchParams.get('redirect');
+        const validRedirect = getValidRedirect(redirectTo);
+        if (validRedirect) {
+          router.push(validRedirect);
+        } else if (authData.memberships.length > 0) {
+          router.push(`/${authData.memberships[0].workspaceId}/analytics`);
+        } else {
+          router.push('/dashboard');
+        }
       }
     } catch (err) {
       if (err instanceof ApiError) {

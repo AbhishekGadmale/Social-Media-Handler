@@ -33,7 +33,9 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
       }
     } else if (authData && isLoginPage) {
       // Authenticated user trying to access login page
-      if (authData.memberships.length > 0) {
+      if (!authData.user.emailVerified) {
+        router.replace('/dashboard');
+      } else if (authData.memberships.length > 0) {
         router.replace(`/${authData.memberships[0].workspaceId}/analytics`);
       } else {
         router.replace('/dashboard');

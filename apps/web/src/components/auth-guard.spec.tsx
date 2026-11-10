@@ -142,7 +142,7 @@ describe('AuthGuard Route Logic & Protection', () => {
         id: 'user-1',
         email: 'user@example.com',
         name: 'Test User',
-        emailVerified: false,
+        emailVerified: true,
       },
       memberships: [
         {
@@ -158,12 +158,26 @@ describe('AuthGuard Route Logic & Protection', () => {
       mockApiGet.mockResolvedValue(mockAuthData);
     });
 
-    it('redirects authenticated user from /login to their workspace analytics', async () => {
+    it('redirects authenticated verified user from /login to their workspace analytics', async () => {
       currentPathname = '/login';
       renderWithGuard(<div data-testid="login-page">Login Form</div>);
 
       await waitFor(() => {
         expect(mockReplace).toHaveBeenCalledWith('/ws-agency/analytics');
+      });
+      expect(screen.queryByTestId('login-page')).not.toBeInTheDocument();
+    });
+
+    it('redirects authenticated unverified user from /login to /dashboard', async () => {
+      mockApiGet.mockResolvedValueOnce({
+        user: { ...mockAuthData.user, emailVerified: false },
+        memberships: mockAuthData.memberships,
+      });
+      currentPathname = '/login';
+      renderWithGuard(<div data-testid="login-page">Login Form</div>);
+
+      await waitFor(() => {
+        expect(mockReplace).toHaveBeenCalledWith('/dashboard');
       });
       expect(screen.queryByTestId('login-page')).not.toBeInTheDocument();
     });
