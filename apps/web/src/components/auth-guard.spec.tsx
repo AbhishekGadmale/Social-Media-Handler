@@ -49,8 +49,14 @@ describe('AuthGuard Route Logic & Protection', () => {
   });
 
   describe('PUBLIC_ROUTES list', () => {
-    it('defines exactly the 3 public routes', () => {
-      expect(PUBLIC_ROUTES).toEqual(['/login', '/signup', '/verify-email']);
+    it('defines exactly the 5 public routes', () => {
+      expect(PUBLIC_ROUTES).toEqual([
+        '/login',
+        '/signup',
+        '/verify-email',
+        '/forgot-password',
+        '/reset-password',
+      ]);
     });
   });
 
@@ -85,6 +91,26 @@ describe('AuthGuard Route Logic & Protection', () => {
 
       await waitFor(() => {
         expect(screen.getByTestId('login-page')).toBeInTheDocument();
+      });
+      expect(mockReplace).not.toHaveBeenCalled();
+    });
+
+    it('renders forgot-password page on /forgot-password without redirecting to login', async () => {
+      currentPathname = '/forgot-password';
+      renderWithGuard(<div data-testid="forgot-password-page">Forgot Password Form</div>);
+
+      await waitFor(() => {
+        expect(screen.getByTestId('forgot-password-page')).toBeInTheDocument();
+      });
+      expect(mockReplace).not.toHaveBeenCalled();
+    });
+
+    it('renders reset-password page on /reset-password without redirecting to login', async () => {
+      currentPathname = '/reset-password';
+      renderWithGuard(<div data-testid="reset-password-page">Reset Password Form</div>);
+
+      await waitFor(() => {
+        expect(screen.getByTestId('reset-password-page')).toBeInTheDocument();
       });
       expect(mockReplace).not.toHaveBeenCalled();
     });
@@ -172,6 +198,26 @@ describe('AuthGuard Route Logic & Protection', () => {
 
       await waitFor(() => {
         expect(screen.getByTestId('verify-email-page')).toBeInTheDocument();
+      });
+      expect(mockReplace).not.toHaveBeenCalled();
+    });
+
+    it('does not redirect authenticated user on /forgot-password and renders children', async () => {
+      currentPathname = '/forgot-password';
+      renderWithGuard(<div data-testid="forgot-password-page">Forgot Password Form</div>);
+
+      await waitFor(() => {
+        expect(screen.getByTestId('forgot-password-page')).toBeInTheDocument();
+      });
+      expect(mockReplace).not.toHaveBeenCalled();
+    });
+
+    it('does not redirect authenticated user on /reset-password and renders children', async () => {
+      currentPathname = '/reset-password';
+      renderWithGuard(<div data-testid="reset-password-page">Reset Password Form</div>);
+
+      await waitFor(() => {
+        expect(screen.getByTestId('reset-password-page')).toBeInTheDocument();
       });
       expect(mockReplace).not.toHaveBeenCalled();
     });

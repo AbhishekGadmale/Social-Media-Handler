@@ -515,14 +515,18 @@ describe('AuthController (e2e)', () => {
 
         expect(changeRes.status).toBe(200);
         expect(changeRes.body.sessionCleanupDeferred).toBe(true);
-        expect(changeRes.body.message).toContain('terminating other active sessions failed');
+        expect(changeRes.body.message).toContain(
+          'terminating other active sessions failed',
+        );
 
         // 4. Stale Device B session is rejected via AuthGuard epoch check (status 401)
         const meResBAfter = await request(app.getHttpServer())
           .get('/api/v1/auth/me')
           .set('Cookie', sessB);
         expect(meResBAfter.status).toBe(401);
-        expect(meResBAfter.body.error.message).toBe('Invalid or expired session');
+        expect(meResBAfter.body.error.message).toBe(
+          'Invalid or expired session',
+        );
 
         // 5. Old password no longer works
         const oldLogin = await request(app.getHttpServer())
@@ -544,8 +548,13 @@ describe('AuthController (e2e)', () => {
           .send({ email: testUser.email, password: 'DeferredPassword123!' });
         if (loginAgain.status === 200) {
           const cookies = loginAgain.headers['set-cookie'] as string[];
-          const s = cookies.find((c: string) => c.startsWith('session='))!.split(';')[0];
-          const c = cookies.find((c: string) => c.startsWith('csrfToken='))!.split(';')[0].split('=')[1];
+          const s = cookies
+            .find((c: string) => c.startsWith('session='))!
+            .split(';')[0];
+          const c = cookies
+            .find((c: string) => c.startsWith('csrfToken='))!
+            .split(';')[0]
+            .split('=')[1];
           await request(app.getHttpServer())
             .post('/api/v1/auth/change-password')
             .set('Cookie', `${s}; csrfToken=${c}`)
@@ -578,8 +587,9 @@ describe('AuthController (e2e)', () => {
     }
 
     it('fails with 401 when unauthenticated', async () => {
-      const res = await request(app.getHttpServer())
-        .post('/api/v1/auth/sessions/revoke-all');
+      const res = await request(app.getHttpServer()).post(
+        '/api/v1/auth/sessions/revoke-all',
+      );
 
       expect(res.status).toBe(401);
       expect(res.body.error.message).toBe('No session cookie provided');
@@ -631,7 +641,11 @@ describe('AuthController (e2e)', () => {
       // Assert cookies cleared
       const cookies = revokeRes.headers['set-cookie'] as string[];
       expect(cookies).toBeDefined();
-      expect(cookies.some((c: string) => c.startsWith('session=;') || c.includes('session=;'))).toBe(true);
+      expect(
+        cookies.some(
+          (c: string) => c.startsWith('session=;') || c.includes('session=;'),
+        ),
+      ).toBe(true);
 
       // 4. Device A session is revoked (returns 401)
       const meResAAfter = await request(app.getHttpServer())
@@ -702,7 +716,6 @@ describe('AuthController (e2e)', () => {
       });
       expect(tokenRecord).toBeDefined();
       expect(tokenRecord?.consumedAt).toBeNull();
-
 
       signedUpOrg = await prisma.organization.findFirst({
         where: { name: 'Signup Org E2E' },
@@ -845,7 +858,9 @@ describe('AuthController (e2e)', () => {
       );
 
       // 9. Verify email using the fresh token dispatched to MockEmailDeliveryService
-      const emailService = app.get(EMAIL_DELIVERY_SERVICE) as MockEmailDeliveryService;
+      const emailService = app.get(
+        EMAIL_DELIVERY_SERVICE,
+      ) as MockEmailDeliveryService;
       const latestEmail = [...emailService.sentEmails]
         .reverse()
         .find((e: any) => e.toEmail === signedUpEmail);
@@ -937,7 +952,6 @@ describe('AuthController (e2e)', () => {
         'If an unverified account exists for this email, a verification link has been sent.',
       );
 
-
       // Cleanup signed up user data
       await prisma.emailVerificationToken.deleteMany({
         where: { userId: signedUpUser.id },
@@ -954,6 +968,165 @@ describe('AuthController (e2e)', () => {
       await prisma.user.deleteMany({
         where: { id: signedUpUser.id },
       });
+    });
+  });
+
+  describe('Self-Serve Password Reset Flow (e2e)', () => {
+    let resetUserEmail: string;
+    let resetUser: any;
+
+    beforeEach(async () => {
+      resetUserEmail = `reset-user-${generateId()}@example.com`;
+      const hashedPassword = await argon2.hash('OriginalPassword123!');
+      resetUser = await prisma.user.create({
+        data: {
+          id: generateId(),
+          email: resetUserEmail,
+          hashedPassword,
+          emailVerified: true,
+          securityEpoch: 1,
+        },
+      });
+    });
+
+    afterEach(async () => {
+      if (resetUser) {
+        await prisma.passwordResetToken.deleteMany({
+          where: { userId: resetUser.id },
+        });
+        await prisma.user.deleteMany({
+          where: { id: resetUser.id },
+        });
+      }
+    });
+
+    it('happy path: forgot-password -> consume token -> reset-password -> login with new password works, old password fails', async () => {
+      const emailService = app.get(
+        EMAIL_DELIVERY_SERVICE,
+      ) as MockEmailDeliveryService;
+      emailService.sentPasswordResetEmails = [];
+
+      // 1. Request password reset
+      const forgotRes = await request(app.getHttpServer())
+        .post('/api/v1/auth/forgot-password')
+        .send({ email: resetUserEmail });
+
+      expect(forgotRes.status).toBe(200);
+      expect(forgotRes.body.message).toBe(
+        'If an account with that email exists, a password reset link has been sent.',
+      );
+
+      // Verify simulated email received
+      const sentEmail = emailService.sentPasswordResetEmails.find(
+        (e: any) => e.toEmail === resetUserEmail,
+      );
+      expect(sentEmail).toBeDefined();
+      const rawToken = sentEmail!.rawToken;
+
+      // 2. Consume token and reset password
+      const resetRes = await request(app.getHttpServer())
+        .post('/api/v1/auth/reset-password')
+        .send({
+          token: rawToken,
+          newPassword: 'mock-new-password-456!',
+        });
+
+      expect(resetRes.status).toBe(200);
+      expect(resetRes.body.message).toBe('Password reset successfully.');
+
+      // Verify token is consumed in database
+      const dbTokens = await prisma.passwordResetToken.findMany({
+        where: { userId: resetUser.id },
+      });
+      expect(dbTokens).toHaveLength(1);
+      expect(dbTokens[0].consumedAt).not.toBeNull();
+
+      // 3. Login with new password works
+      const newLoginRes = await request(app.getHttpServer())
+        .post('/api/v1/auth/login')
+        .send({
+          email: resetUserEmail,
+          password: 'mock-new-password-456!',
+        });
+
+      expect(newLoginRes.status).toBe(200);
+
+      // 4. Login with old password fails
+      const oldLoginRes = await request(app.getHttpServer())
+        .post('/api/v1/auth/login')
+        .send({
+          email: resetUserEmail,
+          password: 'OriginalPassword123!',
+        });
+
+      expect(oldLoginRes.status).toBe(401);
+    });
+
+    it('replay case: same reset token cannot be consumed twice (second use -> 400)', async () => {
+      const emailService = app.get(
+        EMAIL_DELIVERY_SERVICE,
+      ) as MockEmailDeliveryService;
+      emailService.sentPasswordResetEmails = [];
+
+      // 1. Request password reset
+      await request(app.getHttpServer())
+        .post('/api/v1/auth/forgot-password')
+        .send({ email: resetUserEmail });
+
+      const sentEmail = emailService.sentPasswordResetEmails.find(
+        (e: any) => e.toEmail === resetUserEmail,
+      );
+      const rawToken = sentEmail!.rawToken;
+
+      // 2. First consumption succeeds
+      const firstReset = await request(app.getHttpServer())
+        .post('/api/v1/auth/reset-password')
+        .send({
+          token: rawToken,
+          newPassword: 'mock-new-password-456!',
+        });
+      expect(firstReset.status).toBe(200);
+
+      // 3. Second consumption fails with 400
+      const secondReset = await request(app.getHttpServer())
+        .post('/api/v1/auth/reset-password')
+        .send({
+          token: rawToken,
+          newPassword: 'mock-another-password-789!',
+        });
+
+      expect(secondReset.status).toBe(400);
+      expect(secondReset.body.error.message).toBe(
+        'Invalid or expired reset link',
+      );
+    });
+
+    it('rejects reset when new password equals current password (400)', async () => {
+      const emailService = app.get(
+        EMAIL_DELIVERY_SERVICE,
+      ) as MockEmailDeliveryService;
+      emailService.sentPasswordResetEmails = [];
+
+      await request(app.getHttpServer())
+        .post('/api/v1/auth/forgot-password')
+        .send({ email: resetUserEmail });
+
+      const sentEmail = emailService.sentPasswordResetEmails.find(
+        (e: any) => e.toEmail === resetUserEmail,
+      );
+      const rawToken = sentEmail!.rawToken;
+
+      const resetRes = await request(app.getHttpServer())
+        .post('/api/v1/auth/reset-password')
+        .send({
+          token: rawToken,
+          newPassword: 'OriginalPassword123!',
+        });
+
+      expect(resetRes.status).toBe(400);
+      expect(resetRes.body.error.message).toBe(
+        'New password cannot be the same as the current password',
+      );
     });
   });
 });

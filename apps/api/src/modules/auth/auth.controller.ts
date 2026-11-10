@@ -28,6 +28,8 @@ import { SignupDto } from './dto/signup.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { VerifyEmailDto } from './dto/verify-email.dto';
 import { ResendVerificationDto } from './dto/resend-verification.dto';
+import { ForgotPasswordDto } from './dto/forgot-password.dto';
+import { ResetPasswordDto } from './dto/reset-password.dto';
 
 import { RateLimitPolicies } from '../core/rate-limit.policies';
 
@@ -100,6 +102,48 @@ export class AuthController {
 
     const requestId = (req as any).id;
     return this.authService.resendVerification(body.email, requestId);
+  }
+
+  @Throttle({ default: RateLimitPolicies.auth })
+  @Post('forgot-password')
+  @UsePipes(new ValidationPipe({ whitelist: true, transform: true }))
+  @HttpCode(HttpStatus.OK)
+  async forgotPassword(@Body() body: ForgotPasswordDto, @Req() req: Request) {
+    const isProduction = process.env.NODE_ENV === 'production';
+    const isSecureRequest = Boolean(req.secure);
+    const allowInsecureHttp = process.env.ALLOW_INSECURE_HTTP_AUTH === 'true';
+
+    if (isProduction && !isSecureRequest && !allowInsecureHttp) {
+      throw new BadRequestException(
+        'HTTPS is required for registration in production environments. Please configure TLS on your reverse proxy or custom domain.',
+      );
+    }
+
+    const requestId = (req as any).id;
+    return this.authService.forgotPassword(body.email, requestId);
+  }
+
+  @Throttle({ default: RateLimitPolicies.auth })
+  @Post('reset-password')
+  @UsePipes(new ValidationPipe({ whitelist: true, transform: true }))
+  @HttpCode(HttpStatus.OK)
+  async resetPassword(@Body() body: ResetPasswordDto, @Req() req: Request) {
+    const isProduction = process.env.NODE_ENV === 'production';
+    const isSecureRequest = Boolean(req.secure);
+    const allowInsecureHttp = process.env.ALLOW_INSECURE_HTTP_AUTH === 'true';
+
+    if (isProduction && !isSecureRequest && !allowInsecureHttp) {
+      throw new BadRequestException(
+        'HTTPS is required for registration in production environments. Please configure TLS on your reverse proxy or custom domain.',
+      );
+    }
+
+    const requestId = (req as any).id;
+    return this.authService.resetPassword(
+      body.token,
+      body.newPassword,
+      requestId,
+    );
   }
 
   private clearSessionCookies(req: Request, res: Response): void {

@@ -194,5 +194,12 @@ describe('LoginPage post-login redirects', () => {
       expect(signupLink).toBeInTheDocument();
       expect(signupLink).toHaveAttribute('href', '/signup');
     });
+
+    it('renders a link to /forgot-password', () => {
+      renderLogin();
+      const forgotPasswordLink = screen.getByRole('link', { name: /forgot password\?/i });
+      expect(forgotPasswordLink).toBeInTheDocument();
+      expect(forgotPasswordLink).toHaveAttribute('href', '/forgot-password');
+    });
   });
 });

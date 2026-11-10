@@ -5,6 +5,7 @@ import { AuthService, InvalidCredentialsException } from './auth.service';
 import {
   UserRepository,
   EmailVerificationTokenRepository,
+  PasswordResetTokenRepository,
   AuditAction,
   Prisma,
 } from '@agency-os/database';
@@ -40,8 +41,15 @@ describe('AuthService', () => {
     findByTokenHash: any;
     invalidateActiveUserTokens: any;
   };
+  let passwordResetTokenRepoMock: {
+    createToken: any;
+    consumeToken: any;
+    findByTokenHash: any;
+    invalidateActiveUserTokens: any;
+  };
   let emailDeliveryMock: {
     sendVerificationEmail: any;
+    sendPasswordResetEmail: any;
   };
   let auditServiceMock: {
     logActionBestEffort: any;
@@ -73,8 +81,16 @@ describe('AuthService', () => {
       invalidateActiveUserTokens: vi.fn(),
     };
 
+    passwordResetTokenRepoMock = {
+      createToken: vi.fn(),
+      consumeToken: vi.fn(),
+      findByTokenHash: vi.fn(),
+      invalidateActiveUserTokens: vi.fn(),
+    };
+
     emailDeliveryMock = {
       sendVerificationEmail: vi.fn(),
+      sendPasswordResetEmail: vi.fn(),
     };
 
     auditServiceMock = {
@@ -89,6 +105,10 @@ describe('AuthService', () => {
         {
           provide: EmailVerificationTokenRepository,
           useValue: tokenRepoMock,
+        },
+        {
+          provide: PasswordResetTokenRepository,
+          useValue: passwordResetTokenRepoMock,
         },
         {
           provide: EMAIL_DELIVERY_SERVICE,
@@ -727,6 +747,191 @@ describe('AuthService', () => {
       expect(
         sessionManagerMock.destroyOtherUserSessions,
       ).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('forgotPassword', () => {
+    const genericMessage =
+      'If an account with that email exists, a password reset link has been sent.';
+
+    it('returns generic response and executes dummy argon2 work when user does not exist', async () => {
+      userRepoMock.findByEmail.mockResolvedValueOnce(null);
+
+      const result = await service.forgotPassword(
+        'nonexistent@example.com',
+        'req-fp-1',
+      );
+
+      expect(userRepoMock.findByEmail).toHaveBeenCalledWith(
+        'nonexistent@example.com',
+      );
+      expect(argon2.hash).toHaveBeenCalled();
+      expect(passwordResetTokenRepoMock.createToken).not.toHaveBeenCalled();
+      expect(emailDeliveryMock.sendPasswordResetEmail).not.toHaveBeenCalled();
+      expect(auditServiceMock.logActionBestEffort).toHaveBeenCalledWith({
+        action: AuditAction.AUTH_PASSWORD_RESET_REQUESTED,
+        targetType: 'User',
+        requestId: 'req-fp-1',
+      });
+      expect(result).toEqual({ message: genericMessage });
+    });
+
+    it('creates a token with 1-hour expiry, invalidates prior tokens, sends email, and logs audit when user exists', async () => {
+      const mockUser = { id: 'u-123', email: 'user@example.com' };
+      userRepoMock.findByEmail.mockResolvedValueOnce(mockUser);
+      passwordResetTokenRepoMock.invalidateActiveUserTokens.mockResolvedValueOnce(
+        1,
+      );
+      passwordResetTokenRepoMock.createToken.mockResolvedValueOnce({
+        id: 'prt-1',
+        tokenHash: 'hash-val',
+        userId: 'u-123',
+      });
+
+      const before = Date.now();
+      const result = await service.forgotPassword(
+        '  User@Example.COM  ',
+        'req-fp-2',
+      );
+      const after = Date.now();
+
+      expect(userRepoMock.findByEmail).toHaveBeenCalledWith('user@example.com');
+      expect(
+        passwordResetTokenRepoMock.invalidateActiveUserTokens,
+      ).toHaveBeenCalledWith('u-123');
+      expect(passwordResetTokenRepoMock.createToken).toHaveBeenCalledWith(
+        'u-123',
+        expect.any(String),
+        expect.any(Date),
+      );
+
+      // Verify 1-hour expiry
+      const expiryCall = passwordResetTokenRepoMock.createToken.mock
+        .calls[0][2] as Date;
+      expect(expiryCall.getTime()).toBeGreaterThanOrEqual(
+        before + 59 * 60 * 1000,
+      );
+      expect(expiryCall.getTime()).toBeLessThanOrEqual(after + 61 * 60 * 1000);
+
+      expect(emailDeliveryMock.sendPasswordResetEmail).toHaveBeenCalledWith(
+        'user@example.com',
+        expect.any(String),
+      );
+      expect(auditServiceMock.logActionBestEffort).toHaveBeenCalledWith({
+        action: AuditAction.AUTH_PASSWORD_RESET_REQUESTED,
+        targetType: 'User',
+        requestId: 'req-fp-2',
+      });
+      expect(result).toEqual({ message: genericMessage });
+    });
+
+    it('does not fail when email delivery throws an error (best-effort)', async () => {
+      const mockUser = { id: 'u-123', email: 'user@example.com' };
+      userRepoMock.findByEmail.mockResolvedValueOnce(mockUser);
+      passwordResetTokenRepoMock.invalidateActiveUserTokens.mockResolvedValueOnce(
+        0,
+      );
+      passwordResetTokenRepoMock.createToken.mockResolvedValueOnce({});
+      emailDeliveryMock.sendPasswordResetEmail.mockRejectedValueOnce(
+        new Error('Resend down'),
+      );
+
+      const result = await service.forgotPassword('user@example.com');
+
+      expect(result).toEqual({ message: genericMessage });
+    });
+  });
+
+  describe('resetPassword', () => {
+    it('throws BadRequestException when token consumption fails (missing/invalid/expired/consumed)', async () => {
+      passwordResetTokenRepoMock.consumeToken.mockResolvedValueOnce(null);
+
+      await expect(
+        service.resetPassword('invalid-or-expired-token', 'NewPassword123!'),
+      ).rejects.toThrow(
+        new BadRequestException('Invalid or expired reset link'),
+      );
+
+      expect(
+        userRepoMock.updatePasswordAndIncrementEpoch,
+      ).not.toHaveBeenCalled();
+      expect(sessionManagerMock.destroyAllUserSessions).not.toHaveBeenCalled();
+    });
+
+    it('throws BadRequestException when new password equals current password', async () => {
+      const mockUser = {
+        id: 'u-123',
+        hashedPassword: '$argon2id$hashedCurrent',
+      };
+      passwordResetTokenRepoMock.consumeToken.mockResolvedValueOnce({
+        token: { id: 'prt-1' },
+        user: mockUser,
+      });
+      vi.mocked(argon2.verify).mockResolvedValueOnce(true);
+
+      await expect(
+        service.resetPassword('valid-token', 'CurrentPassword123!'),
+      ).rejects.toThrow(
+        new BadRequestException(
+          'New password cannot be the same as the current password',
+        ),
+      );
+
+      expect(
+        userRepoMock.updatePasswordAndIncrementEpoch,
+      ).not.toHaveBeenCalled();
+      expect(sessionManagerMock.destroyAllUserSessions).not.toHaveBeenCalled();
+    });
+
+    it('successfully consumes token, updates password, increments epoch, and revokes all sessions', async () => {
+      const mockUser = {
+        id: 'u-123',
+        hashedPassword: '$argon2id$hashedOld',
+      };
+      passwordResetTokenRepoMock.consumeToken.mockResolvedValueOnce({
+        token: { id: 'prt-1' },
+        user: mockUser,
+      });
+      vi.mocked(argon2.verify).mockResolvedValueOnce(false);
+      vi.mocked(argon2.hash).mockResolvedValueOnce('$argon2id$hashedBrandNew');
+      userRepoMock.updatePasswordAndIncrementEpoch.mockResolvedValueOnce({
+        id: 'u-123',
+        securityEpoch: 2,
+      });
+      userRepoMock.incrementSecurityEpoch.mockResolvedValueOnce({
+        id: 'u-123',
+        securityEpoch: 3,
+      });
+      sessionManagerMock.destroyAllUserSessions.mockResolvedValueOnce(
+        undefined,
+      );
+
+      const result = await service.resetPassword(
+        'valid-token',
+        'mock-new-password-123!',
+        'req-rp-1',
+      );
+
+      expect(passwordResetTokenRepoMock.consumeToken).toHaveBeenCalledWith(
+        'valid-token',
+      );
+      expect(argon2.hash).toHaveBeenCalledWith('mock-new-password-123!');
+      expect(userRepoMock.updatePasswordAndIncrementEpoch).toHaveBeenCalledWith(
+        'u-123',
+        '$argon2id$hashedBrandNew',
+      );
+      expect(userRepoMock.incrementSecurityEpoch).toHaveBeenCalledWith('u-123');
+      expect(sessionManagerMock.destroyAllUserSessions).toHaveBeenCalledWith(
+        'u-123',
+      );
+      expect(auditServiceMock.logActionBestEffort).toHaveBeenCalledWith({
+        action: AuditAction.AUTH_PASSWORD_RESET_SUCCEEDED,
+        actorId: 'u-123',
+        targetType: 'User',
+        targetId: 'u-123',
+        requestId: 'req-rp-1',
+      });
+      expect(result).toEqual({ message: 'Password reset successfully.' });
     });
   });
 });

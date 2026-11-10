@@ -12,6 +12,7 @@ import {
   SocialAccountRepository,
   AuditLogRepository,
   EmailVerificationTokenRepository,
+  PasswordResetTokenRepository,
 } from '@agency-os/database';
 import { SessionManager } from '@agency-os/session';
 import Redis from 'ioredis';
@@ -56,6 +57,12 @@ const providers: Provider[] = [
     provide: EmailVerificationTokenRepository,
     useFactory: (prisma: PrismaClient) =>
       new EmailVerificationTokenRepository(prisma),
+    inject: [PrismaClient],
+  },
+  {
+    provide: PasswordResetTokenRepository,
+    useFactory: (prisma: PrismaClient) =>
+      new PasswordResetTokenRepository(prisma),
     inject: [PrismaClient],
   },
   AuditService,

@@ -4,6 +4,7 @@ export const EMAIL_DELIVERY_SERVICE = 'EMAIL_DELIVERY_SERVICE';
 
 export interface EmailDeliveryService {
   sendVerificationEmail(toEmail: string, rawToken: string): Promise<void>;
+  sendPasswordResetEmail(toEmail: string, rawToken: string): Promise<void>;
   sendDunningEmail(
     toEmail: string,
     details: { amountPaise?: number; reason?: string },
@@ -14,6 +15,10 @@ export interface EmailDeliveryService {
 export class MockEmailDeliveryService implements EmailDeliveryService {
   private readonly logger = new Logger(MockEmailDeliveryService.name);
   public sentEmails: Array<{ toEmail: string; rawToken: string }> = [];
+  public sentPasswordResetEmails: Array<{
+    toEmail: string;
+    rawToken: string;
+  }> = [];
   public sentDunningEmails: Array<{
     toEmail: string;
     details: { amountPaise?: number; reason?: string };
@@ -32,6 +37,22 @@ export class MockEmailDeliveryService implements EmailDeliveryService {
     this.sentEmails.push({ toEmail, rawToken });
     this.logger.debug(
       `[MockEmailDeliveryService] Verification email simulated for ${toEmail} (raw token redacted)`,
+    );
+  }
+
+  async sendPasswordResetEmail(
+    toEmail: string,
+    rawToken: string,
+  ): Promise<void> {
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error(
+        'MockEmailDeliveryService must NEVER be used in production.',
+      );
+    }
+
+    this.sentPasswordResetEmails.push({ toEmail, rawToken });
+    this.logger.debug(
+      `[MockEmailDeliveryService] Password reset email simulated for ${toEmail} (raw token redacted)`,
     );
   }
 
@@ -62,6 +83,15 @@ export class NoopEmailDeliveryService implements EmailDeliveryService {
   ): Promise<void> {
     this.logger.warn(
       `[NoopEmailDeliveryService] Verification email delivery skipped for ${toEmail}: no email provider configured.`,
+    );
+  }
+
+  async sendPasswordResetEmail(
+    toEmail: string,
+    _rawToken: string,
+  ): Promise<void> {
+    this.logger.warn(
+      `[NoopEmailDeliveryService] Password reset email delivery skipped for ${toEmail}: no email provider configured.`,
     );
   }
 
@@ -129,6 +159,49 @@ export class ResendEmailDeliveryService implements EmailDeliveryService {
 
     this.logger.log(
       `[ResendEmailDeliveryService] Verification email successfully sent to ${toEmail} (raw token redacted)`,
+    );
+  }
+
+  async sendPasswordResetEmail(
+    toEmail: string,
+    rawToken: string,
+  ): Promise<void> {
+    if (!this.apiKey) {
+      throw new Error(
+        'Resend API key is not configured (RESEND_API_KEY environment variable missing)',
+      );
+    }
+
+    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+    const resetUrl = `${frontendUrl}/reset-password?token=${encodeURIComponent(rawToken)}`;
+
+    const response = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${this.apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        from: this.fromEmail,
+        to: [toEmail],
+        subject: 'Reset your Agency OS password',
+        html: `<p>You recently requested to reset your password for your Agency OS account.</p><p>Please reset your password by clicking <a href="${resetUrl}">here</a>.</p><p>Or paste this link into your browser: ${resetUrl}</p><p>If you did not request a password reset, you can safely ignore this email.</p>`,
+        text: `You recently requested to reset your password for your Agency OS account.\n\nPlease reset your password using this link:\n${resetUrl}\n\nIf you did not request a password reset, you can safely ignore this email.\n`,
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => '');
+      this.logger.error(
+        `[ResendEmailDeliveryService] Failed to send password reset email to ${toEmail}: ${response.status} ${response.statusText} - ${errorText}`,
+      );
+      throw new Error(
+        `Failed to send password reset email via Resend (${response.status})`,
+      );
+    }
+
+    this.logger.log(
+      `[ResendEmailDeliveryService] Password reset email successfully sent to ${toEmail} (raw token redacted)`,
     );
   }
 
