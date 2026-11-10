@@ -68,17 +68,7 @@ function ResetPasswordContent() {
         } else if (err.status === 0) {
           setError('Unable to reach the server. Please try again.');
         } else {
-          const errData = err.data as Record<string, unknown> | undefined;
-          const nestedError = errData?.error as Record<string, unknown> | undefined;
-          const rawMessage = nestedError?.message ?? errData?.message;
-
-          let messageStr = '';
-          if (Array.isArray(rawMessage)) {
-            messageStr = rawMessage.join(', ');
-          } else if (typeof rawMessage === 'string') {
-            messageStr = rawMessage;
-          }
-
+          const messageStr = err.message || '';
           if (messageStr.toLowerCase().includes('invalid or expired')) {
             setStatus('invalid');
           } else {

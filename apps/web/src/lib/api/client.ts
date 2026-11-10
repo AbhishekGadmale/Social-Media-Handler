@@ -3,10 +3,27 @@ export class ApiError extends Error {
   constructor(
     public status: number,
     public data: unknown,
-    message: string,
+    message?: string,
     headers?: Headers
   ) {
-    super(message);
+    let resolvedMessage = message;
+    if (!resolvedMessage && data && typeof data === 'object') {
+      const dataObj = data as Record<string, unknown>;
+      const nested = dataObj.error;
+      let extracted: unknown;
+      if (nested && typeof nested === 'object') {
+        extracted = (nested as Record<string, unknown>).message;
+      }
+      if (extracted === undefined) {
+        extracted = dataObj.message;
+      }
+      if (Array.isArray(extracted)) {
+        resolvedMessage = extracted.join(', ');
+      } else if (typeof extracted === 'string') {
+        resolvedMessage = extracted;
+      }
+    }
+    super(resolvedMessage || 'API Error');
     this.name = 'ApiError';
     this.headers = {};
     if (headers) {
@@ -87,10 +104,32 @@ export const apiClient = async <T = unknown>(
     } catch {
       errorData = { message: response.statusText };
     }
+
+    let extractedMessage: unknown;
+    if (errorData && typeof errorData === 'object') {
+      const dataObj = errorData as Record<string, unknown>;
+      const nested = dataObj.error;
+      if (nested && typeof nested === 'object') {
+        extractedMessage = (nested as Record<string, unknown>).message;
+      }
+      if (extractedMessage === undefined) {
+        extractedMessage = dataObj.message;
+      }
+    }
+
+    let message: string;
+    if (Array.isArray(extractedMessage)) {
+      message = extractedMessage.join(', ');
+    } else if (typeof extractedMessage === 'string' && extractedMessage.length > 0) {
+      message = extractedMessage;
+    } else {
+      message = response.statusText || 'API Error';
+    }
+
     throw new ApiError(
       response.status,
       errorData,
-      (errorData as Record<string, unknown>)?.message as string || response.statusText || 'API Error',
+      message,
       response.headers
     );
   }

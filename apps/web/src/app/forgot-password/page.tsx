@@ -40,16 +40,7 @@ export default function ForgotPasswordPage() {
         } else if (err.status === 0) {
           setError('Unable to reach the server. Please try again.');
         } else {
-          const errData = err.data as Record<string, unknown> | undefined;
-          const nestedError = errData?.error as Record<string, unknown> | undefined;
-          const rawMessage = nestedError?.message ?? errData?.message;
-          if (Array.isArray(rawMessage)) {
-            setError(rawMessage.join(', '));
-          } else if (typeof rawMessage === 'string') {
-            setError(rawMessage);
-          } else {
-            setError('An error occurred. Please try again.');
-          }
+          setError(err.message || 'An error occurred. Please try again.');
         }
       } else {
         setError('Unable to reach the server. Please try again.');

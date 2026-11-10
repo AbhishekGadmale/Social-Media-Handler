@@ -22,13 +22,42 @@ vi.mock('../../lib/api/client', () => ({
     get: (...args: unknown[]) => mockApiGet(...args),
   },
   ApiError: class ApiError extends Error {
+    public headers: Record<string, string>;
     constructor(
       public status: number,
       public data: unknown,
-      message: string
+      message?: string,
+      headers?: Headers | Record<string, string>,
     ) {
-      super(message);
+      let resolvedMessage = message;
+      if (!resolvedMessage && data && typeof data === 'object') {
+        const dataObj = data as Record<string, unknown>;
+        const nested = dataObj.error;
+        let extracted: unknown;
+        if (nested && typeof nested === 'object') {
+          extracted = (nested as Record<string, unknown>).message;
+        }
+        if (extracted === undefined) {
+          extracted = dataObj.message;
+        }
+        if (Array.isArray(extracted)) {
+          resolvedMessage = extracted.join(', ');
+        } else if (typeof extracted === 'string') {
+          resolvedMessage = extracted;
+        }
+      }
+      super(resolvedMessage || 'API Error');
       this.name = 'ApiError';
+      this.headers = {};
+      if (headers) {
+        if (typeof (headers as Headers).forEach === 'function') {
+          (headers as Headers).forEach((val, key) => {
+            this.headers[key.toLowerCase()] = val;
+          });
+        } else {
+          this.headers = headers as Record<string, string>;
+        }
+      }
     }
   },
 }));
@@ -200,6 +229,82 @@ describe('LoginPage post-login redirects', () => {
       const forgotPasswordLink = screen.getByRole('link', { name: /forgot password\?/i });
       expect(forgotPasswordLink).toBeInTheDocument();
       expect(forgotPasswordLink).toHaveAttribute('href', '/forgot-password');
+    });
+  });
+
+  describe('Error handling', () => {
+    it('displays specific 400 validation error message from API (nested real shape)', async () => {
+      const { ApiError } = await import('../../lib/api/client');
+      mockApiPost.mockRejectedValueOnce(
+        new ApiError(
+          400,
+          { error: { message: 'Account is temporarily suspended' } },
+          'Account is temporarily suspended',
+        ),
+      );
+
+      renderLogin();
+      await performLogin();
+
+      await waitFor(() => {
+        expect(screen.getByRole('alert')).toHaveTextContent('Account is temporarily suspended');
+      });
+    });
+
+    it('displays 401 invalid credentials error', async () => {
+      const { ApiError } = await import('../../lib/api/client');
+      mockApiPost.mockRejectedValueOnce(
+        new ApiError(401, {}, 'Unauthorized'),
+      );
+
+      renderLogin();
+      await performLogin();
+
+      await waitFor(() => {
+        expect(screen.getByRole('alert')).toHaveTextContent('Invalid email or password.');
+      });
+    });
+
+    it('displays 429 rate limit error with retry seconds', async () => {
+      const { ApiError } = await import('../../lib/api/client');
+      mockApiPost.mockRejectedValueOnce(
+        new ApiError(429, {}, 'Too Many Requests', new Headers({ 'retry-after': '30' })),
+      );
+
+      renderLogin();
+      await performLogin();
+
+      await waitFor(() => {
+        expect(screen.getByRole('alert')).toHaveTextContent('Too many login attempts. Please try again in 30 seconds.');
+      });
+    });
+
+    it('displays 500 server error message', async () => {
+      const { ApiError } = await import('../../lib/api/client');
+      mockApiPost.mockRejectedValueOnce(
+        new ApiError(500, {}, 'Internal Server Error'),
+      );
+
+      renderLogin();
+      await performLogin();
+
+      await waitFor(() => {
+        expect(screen.getByRole('alert')).toHaveTextContent('Something went wrong. Please try again.');
+      });
+    });
+
+    it('displays status 0 network error message', async () => {
+      const { ApiError } = await import('../../lib/api/client');
+      mockApiPost.mockRejectedValueOnce(
+        new ApiError(0, null, 'Network error'),
+      );
+
+      renderLogin();
+      await performLogin();
+
+      await waitFor(() => {
+        expect(screen.getByRole('alert')).toHaveTextContent('Unable to reach the server. Please try again.');
+      });
     });
   });
 });

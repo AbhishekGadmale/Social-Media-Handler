@@ -3131,3 +3131,96 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
    - Independent Muse review required before any merge. Do not call merge-ready.
    - Next Milestone: TBD.
 
+---
+
+## 51. Frontend API Error Shape Normalization (Branch fix/frontend-error-shape — PR #64)
+
+### 1. Summary & Motivation
+
+- **Status**: **IN REVIEW** (Branch `fix/frontend-error-shape`, PR #64 pending independent Muse review)
+- **Branch**: `fix/frontend-error-shape`
+- **Base Commit**: `1b40954c939409c03ad11a7282ab49304b9460d1` (`main`, PR #63 password-reset merge)
+- **Reviewer**: Muse (Independent review required before any merge; do not call merge-ready)
+- **Live Deployment Release Gate**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending external infrastructure provisioning, live email delivery verification, live payment credentials, and disaster recovery rehearsals G18/G19).
+- **Next Milestone**: TBD
+- **Problem & Root Cause**:
+  - The NestJS `AllExceptionsFilter` (`apps/api/src/filters/all-exceptions.filter.ts`) serializes all API errors under a nested envelope: `{ error: { code, message, requestId } }`.
+  - In `apps/web/src/lib/api/client.ts`, the `!response.ok` branch previously built `ApiError` with `(errorData)?.message`.
+  - For the nested envelope, `(errorData)?.message` evaluated to `undefined`, causing `err.message` to fall back to `response.statusText` (e.g. `"Bad Request"`, `"Conflict"`).
+  - Consequently, every page/component that attempted to read `err.data.message` saw `undefined` and rendered a generic fallback (e.g., 'An error occurred during signup.', 'An error occurred during login.', 'Unable to send verification email. Please try again.').
+  - This issue affected signup submission, login, verify-email resend, and dashboard resend. PR #63 introduced pages that worked around it via nested-first digging (`err.data?.error?.message ?? err.data?.message`).
+  - **Resolution**: Fix the root cause once at the client boundary in `apps/web/src/lib/api/client.ts` rather than patching pages one by one, while eliminating redundant workarounds across all consuming pages.
+
+### 2. Scope & Implementation Details
+
+1. **API Client Normalization (`apps/web/src/lib/api/client.ts`)**:
+   - In `!response.ok` branch, extract error message nested-first:
+     - Check `errorData.error?.message`, fallback to `errorData.message`.
+     - If the extracted message is an array (e.g., NestJS `ValidationPipe` returning `{ message: string[] }` inside the exception envelope), join array elements with `', '`.
+     - Fall back to `response.statusText` if present and non-empty, otherwise `'API Error'`.
+   - Pass the resolved message as the 3rd argument to `new ApiError(response.status, errorData, message, response.headers)`.
+   - In `ApiError` constructor, also provide fallback resolution from `data` when `message` is omitted, guaranteeing `err.message` is always a clean string.
+   - Raw `errorData` is preserved untouched on `err.data` for callers requiring specific fields (e.g., error codes or requestId).
+   - Zero changes made to backend APIs, DTOs, filters, or database schemas.
+
+2. **Frontend Page Error Consumption Simplified (`apps/web`)**:
+   - **Login Page** (`apps/web/src/app/login/page.tsx`):
+     - Displays `err.message || 'An error occurred during login.'` for 4xx responses.
+     - Preserves status branches: 429 rate limit with `retry-after` header, >=500 server error, and 0 network error.
+   - **Signup Page** (`apps/web/src/app/signup/page.tsx`):
+     - Form submission error displays `err.message || 'An error occurred during signup.'`.
+     - Inline check-email resend error displays `err.message || 'Unable to send verification email. Please try again.'`.
+     - Preserves status branches: 429, >=500, 0.
+   - **Verify Email Page** (`apps/web/src/app/verify-email/page.tsx`):
+     - Inline resend form error displays `err.message || 'Unable to send verification email. Please try again.'`.
+     - Preserves status branches: 429, >=500, 0.
+   - **Dashboard Page** (`apps/web/src/app/dashboard/page.tsx`):
+     - Verification banner resend error displays `err.message || 'Unable to send verification email. Please try again.'`.
+     - Preserves status branches: 429, >=500, 0.
+   - **Forgot Password Page** (`apps/web/src/app/forgot-password/page.tsx`):
+     - Simplified redundant nested digging (`err.data?.error?.message ?? err.data?.message`) to normalized `err.message`.
+     - Preserves status branches: 429, >=500, 0.
+   - **Reset Password Page** (`apps/web/src/app/reset-password/page.tsx`):
+     - Simplified redundant nested digging to normalized `err.message`.
+     - Preserves status branches: 429, >=500, 0.
+   - **Billing Page** (`apps/web/src/app/[workspaceId]/billing/page.tsx`):
+     - `handleSubscribe` and `handleCancelSubscription` now read `errorObj?.message` directly.
+
+### 3. Verification & Test Evidence
+
+- **New Unit Tests (`apps/web/src/lib/api/client.spec.ts`)**:
+  - 8/8 tests PASS:
+    1. Extracts nested string error message (`{ error: { message: '...' } }`).
+    2. Joins nested array validation messages with comma (`{ error: { message: ['...', '...'] } }`).
+    3. Extracts top-level string message (`{ message: '...' }`).
+    4. Joins top-level array messages with comma (`{ message: ['...', '...'] }`).
+    5. Falls back to `response.statusText` when body is non-object.
+    6. Falls back to `response.statusText` when body is invalid non-JSON text.
+    7. Creates status 0 ApiError on network/fetch failure.
+    8. Preserves raw unmodified `errorData` on `err.data`.
+- **Page Unit Tests Updated & Verified (`apps/web`)**:
+  - `apps/web/src/app/login/page.spec.tsx` (23/23 PASS): asserts specific 400 validation error message from nested real shape, 401, 429, 500, and 0 network error.
+  - `apps/web/src/app/signup/page.spec.tsx` (10/10 PASS): asserts 400 validation error with nested real shape renders specific message, 429, and 500.
+  - `apps/web/src/app/verify-email/page.spec.tsx` (9/9 PASS): asserts 400 verification error with nested shape, 400 resend error with nested shape, 429, and 500.
+  - `apps/web/src/app/dashboard/page.spec.tsx` (5/5 PASS): asserts 400 resend error with nested shape, 429, and 500.
+  - `apps/web/src/app/forgot-password/page.spec.tsx` (6/6 PASS): verified clean pass.
+  - `apps/web/src/app/reset-password/page.spec.tsx` (8/8 PASS): verified clean pass.
+  - `apps/web/src/app/[workspaceId]/billing/page.spec.tsx` (9/9 PASS): asserts specific 400 error message from nested real shape for subscribe failure and cancel failure.
+  - Total `apps/web` test suite: 16/16 test files passed, 195/195 tests passed.
+- **Monorepo Quality & Build Checks**:
+  - `pnpm turbo run lint typecheck`: 15/15 tasks passed, 0 errors.
+  - `pnpm turbo run test`: 10/10 tasks passed across all packages.
+  - `pnpm turbo run build`: 7/7 tasks passed; all static routes generated successfully.
+- **CI Quality Gates**:
+  - 6/6 verified green (Tests, API E2E, Application Builds, Code Quality, Docker Build & Smoke, GitGuardian Security Checks).
+
+### 4. Release Gate & Next Steps
+
+1. **Release Gate**:
+   - **Live Deployment**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending external infrastructure provisioning, live email delivery verification, live payment credentials, and disaster recovery rehearsals G18/G19).
+2. **Next Steps**:
+   - PR #64 opened targeting `main`.
+   - Independent Muse review required before any merge. Do not call merge-ready.
+   - Next Milestone: TBD.
+
+

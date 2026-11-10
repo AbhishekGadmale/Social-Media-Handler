@@ -22,8 +22,42 @@ vi.mock('../../../lib/api/client', () => ({
     post: (...args: unknown[]) => mockApiPost(...args),
   },
   ApiError: class ApiError extends Error {
-    constructor(public status: number, public data: unknown, message: string) {
-      super(message);
+    public headers: Record<string, string>;
+    constructor(
+      public status: number,
+      public data: unknown,
+      message?: string,
+      headers?: Headers | Record<string, string>,
+    ) {
+      let resolvedMessage = message;
+      if (!resolvedMessage && data && typeof data === 'object') {
+        const dataObj = data as Record<string, unknown>;
+        const nested = dataObj.error;
+        let extracted: unknown;
+        if (nested && typeof nested === 'object') {
+          extracted = (nested as Record<string, unknown>).message;
+        }
+        if (extracted === undefined) {
+          extracted = dataObj.message;
+        }
+        if (Array.isArray(extracted)) {
+          resolvedMessage = extracted.join(', ');
+        } else if (typeof extracted === 'string') {
+          resolvedMessage = extracted;
+        }
+      }
+      super(resolvedMessage || 'API Error');
+      this.name = 'ApiError';
+      this.headers = {};
+      if (headers) {
+        if (typeof (headers as Headers).forEach === 'function') {
+          (headers as Headers).forEach((val, key) => {
+            this.headers[key.toLowerCase()] = val;
+          });
+        } else {
+          this.headers = headers as Record<string, string>;
+        }
+      }
     }
   },
 }));
@@ -291,5 +325,108 @@ describe('BillingPage', () => {
       'workspaces/ws-test-123/billing/cancel',
       { cancelAtPeriodEnd: true },
     );
+  });
+
+  it('renders specific error message when subscribe call fails', async () => {
+    const user = userEvent.setup();
+    const { ApiError } = await import('../../../lib/api/client');
+    mockApiPost.mockRejectedValueOnce(
+      new ApiError(
+        400,
+        {
+          error: {
+            code: 'BAD_REQUEST',
+            message: 'Unable to initiate checkout session for selected plan',
+          },
+        },
+        'Unable to initiate checkout session for selected plan',
+      ),
+    );
+
+    render(<BillingPage />, { wrapper: createWrapper() });
+
+    await waitFor(() => {
+      expect(screen.getByText('Choose Your Plan')).toBeInTheDocument();
+    });
+
+    const soloCard = screen.getByTestId('card-plan-SOLO');
+    const subscribeButton = within(soloCard).getByRole('button', {
+      name: /subscribe/i,
+    });
+    await user.click(subscribeButton);
+
+    await waitFor(() => {
+      expect(
+        screen.getByText('Unable to initiate checkout session for selected plan'),
+      ).toBeInTheDocument();
+    });
+  });
+
+  it('renders specific error message when cancel subscription fails', async () => {
+    const user = userEvent.setup();
+    const { ApiError } = await import('../../../lib/api/client');
+    mockApiGet.mockImplementation((url: string) => {
+      if (url.endsWith('billing')) {
+        return Promise.resolve({
+          workspaceId: 'ws-test-123',
+          subscription: {
+            id: 'sub-active',
+            status: 'ACTIVE',
+            billingInterval: 'MONTHLY',
+            isFounding: false,
+            currentPeriodEnd: '2026-12-01T00:00:00Z',
+            plan: {
+              code: 'STUDIO',
+              name: 'Studio',
+            },
+          },
+        });
+      }
+      if (url.includes('billing/plans')) {
+        return Promise.resolve(mockPlansResponse);
+      }
+      if (url.includes('billing/invoices')) {
+        return Promise.resolve(mockInvoicesResponse);
+      }
+      return Promise.resolve({});
+    });
+
+    render(<BillingPage />, { wrapper: createWrapper() });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('banner-active')).toBeInTheDocument();
+    });
+
+    const cancelButton = screen.getByRole('button', {
+      name: /cancel subscription/i,
+    });
+    await user.click(cancelButton);
+
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    expect(screen.getByText('Cancel Subscription?')).toBeInTheDocument();
+
+    mockApiPost.mockRejectedValueOnce(
+      new ApiError(
+        400,
+        {
+          error: {
+            code: 'BAD_REQUEST',
+            message: 'Subscription cancellation failed due to pending invoice',
+          },
+        },
+        'Subscription cancellation failed due to pending invoice',
+      ),
+    );
+
+    const confirmButton = screen.getByRole('button', {
+      name: /confirm cancellation/i,
+    });
+    await user.click(confirmButton);
+
+    await waitFor(() => {
+      expect(
+        screen.getByText('Subscription cancellation failed due to pending invoice'),
+      ).toBeInTheDocument();
+    });
   });
 });

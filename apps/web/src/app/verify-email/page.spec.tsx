@@ -22,16 +22,37 @@ vi.mock('../../lib/api/client', () => ({
     constructor(
       public status: number,
       public data: unknown,
-      message: string,
-      headers?: Headers,
+      message?: string,
+      headers?: Headers | Record<string, string>,
     ) {
-      super(message);
+      let resolvedMessage = message;
+      if (!resolvedMessage && data && typeof data === 'object') {
+        const dataObj = data as Record<string, unknown>;
+        const nested = dataObj.error;
+        let extracted: unknown;
+        if (nested && typeof nested === 'object') {
+          extracted = (nested as Record<string, unknown>).message;
+        }
+        if (extracted === undefined) {
+          extracted = dataObj.message;
+        }
+        if (Array.isArray(extracted)) {
+          resolvedMessage = extracted.join(', ');
+        } else if (typeof extracted === 'string') {
+          resolvedMessage = extracted;
+        }
+      }
+      super(resolvedMessage || 'API Error');
       this.name = 'ApiError';
       this.headers = {};
       if (headers) {
-        headers.forEach((val, key) => {
-          this.headers[key.toLowerCase()] = val;
-        });
+        if (typeof (headers as Headers).forEach === 'function') {
+          (headers as Headers).forEach((val, key) => {
+            this.headers[key.toLowerCase()] = val;
+          });
+        } else {
+          this.headers = headers as Record<string, string>;
+        }
       }
     }
   },
@@ -101,7 +122,16 @@ describe('VerifyEmailPage', () => {
       currentToken = validTestToken;
       const { ApiError } = await import('../../lib/api/client');
       mockApiPost.mockRejectedValueOnce(
-        new ApiError(400, { message: 'Invalid or expired token' }, 'Bad Request'),
+        new ApiError(
+          400,
+          {
+            error: {
+              code: 'BAD_REQUEST',
+              message: 'Invalid or expired verification token',
+            },
+          },
+          'Invalid or expired verification token',
+        ),
       );
 
       render(<VerifyEmailPage />);
@@ -174,6 +204,82 @@ describe('VerifyEmailPage', () => {
           screen.getByText(
             /if an unverified account exists for this email, a verification link has been sent\./i,
           ),
+        ).toBeInTheDocument();
+      });
+    });
+
+    it('displays specific 400 validation error message from API (nested real shape)', async () => {
+      currentToken = null;
+      const { ApiError } = await import('../../lib/api/client');
+      mockApiPost.mockRejectedValueOnce(
+        new ApiError(
+          400,
+          {
+            error: {
+              code: 'BAD_REQUEST',
+              message: 'Email address is invalid',
+            },
+          },
+          'Email address is invalid',
+        ),
+      );
+
+      render(<VerifyEmailPage />);
+
+      fireEvent.change(screen.getByLabelText(/email address/i), {
+        target: { value: 'bad@example.com' },
+      });
+      fireEvent.click(
+        screen.getByRole('button', { name: /resend verification email/i }),
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText('Email address is invalid')).toBeInTheDocument();
+      });
+    });
+
+    it('displays 429 rate limit error with retry seconds', async () => {
+      currentToken = null;
+      const { ApiError } = await import('../../lib/api/client');
+      mockApiPost.mockRejectedValueOnce(
+        new ApiError(429, {}, 'Too Many Requests', new Headers({ 'retry-after': '60' })),
+      );
+
+      render(<VerifyEmailPage />);
+
+      fireEvent.change(screen.getByLabelText(/email address/i), {
+        target: { value: 'user@example.com' },
+      });
+      fireEvent.click(
+        screen.getByRole('button', { name: /resend verification email/i }),
+      );
+
+      await waitFor(() => {
+        expect(
+          screen.getByText('Too many attempts. Please try again in 60 seconds.'),
+        ).toBeInTheDocument();
+      });
+    });
+
+    it('displays 500 server error message', async () => {
+      currentToken = null;
+      const { ApiError } = await import('../../lib/api/client');
+      mockApiPost.mockRejectedValueOnce(
+        new ApiError(500, {}, 'Internal Server Error'),
+      );
+
+      render(<VerifyEmailPage />);
+
+      fireEvent.change(screen.getByLabelText(/email address/i), {
+        target: { value: 'user@example.com' },
+      });
+      fireEvent.click(
+        screen.getByRole('button', { name: /resend verification email/i }),
+      );
+
+      await waitFor(() => {
+        expect(
+          screen.getByText('Something went wrong. Please try again.'),
         ).toBeInTheDocument();
       });
     });

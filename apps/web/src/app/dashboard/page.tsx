@@ -51,8 +51,7 @@ export default function Dashboard() {
           setResendError('Unable to reach the server. Please try again.');
         } else {
           setResendError(
-            ((err.data as Record<string, unknown>)?.message as string) ||
-              'Unable to send verification email. Please try again.',
+            err.message || 'Unable to send verification email. Please try again.',
           );
         }
       } else {

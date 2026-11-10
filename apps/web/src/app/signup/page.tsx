@@ -87,14 +87,7 @@ export default function SignupPage() {
         } else if (err.status === 0) {
           setError('Unable to reach the server. Please try again.');
         } else {
-          const errData = err.data as Record<string, unknown> | undefined;
-          if (Array.isArray(errData?.message)) {
-            setError(errData.message.join(', '));
-          } else if (typeof errData?.message === 'string') {
-            setError(errData.message);
-          } else {
-            setError('An error occurred during signup.');
-          }
+          setError(err.message || 'An error occurred during signup.');
         }
       } else {
         setError('Unable to reach the server. Please try again.');
@@ -132,12 +125,7 @@ export default function SignupPage() {
         } else if (err.status === 0) {
           setResendError('Unable to reach the server. Please try again.');
         } else {
-          const errData = err.data as Record<string, unknown> | undefined;
-          if (typeof errData?.message === 'string') {
-            setResendError(errData.message);
-          } else {
-            setResendError('Unable to send verification email. Please try again.');
-          }
+          setResendError(err.message || 'Unable to send verification email. Please try again.');
         }
       } else {
         setResendError('Unable to reach the server. Please try again.');
