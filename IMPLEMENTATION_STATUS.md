@@ -3120,7 +3120,7 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
   - `pnpm turbo run test`: 10/10 tasks passed across all packages.
   - `pnpm turbo run build`: 7/7 tasks passed; `/forgot-password` and `/reset-password` statically prerendered.
 - **CI Quality Gates**:
-  - 5/6 green (Tests, API E2E, Application Builds, Code Quality, Docker Build & Smoke); GitGuardian Security Checks failed on incident 39855557 (flagged value was 'mock-new-password-123!' test fixture in auth.controller.spec.ts; dashboard status is Triggered, pending owner resolution).
+  - 6/6 green (GitGuardian incident 39855557 closed as test credential — flagged value was the 'mock-new-password-123!' test fixture in the mocked controller spec, no real credential).
 
 ### 4. Release Gate & Next Steps
 
