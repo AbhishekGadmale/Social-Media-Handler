@@ -92,7 +92,9 @@ export class UserRepository {
           emailVerified: false,
           emailVerifiedAt: null,
           securityEpoch: 1,
-          termsAcceptedAt: input.termsAcceptedAt ?? null,
+          ...(input.termsAcceptedAt !== undefined && {
+            termsAcceptedAt: input.termsAcceptedAt,
+          }),
         },
       });
 
