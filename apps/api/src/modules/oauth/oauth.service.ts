@@ -21,6 +21,7 @@ import crypto from 'node:crypto';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { OAuthCallbackResult, DiscoverySession } from './oauth-discovery.types';
+import { EntitlementsService } from '../billing/entitlements.service';
 
 @Injectable()
 export class OAuthService {
@@ -30,6 +31,7 @@ export class OAuthService {
     @InjectQueue('sync') private readonly syncQueue: Queue,
     @InjectPinoLogger(OAuthService.name)
     private readonly logger: PinoLogger,
+    private readonly entitlementsService: EntitlementsService,
   ) {}
 
   private validateProvider(providerName: string): SocialProvider {
@@ -312,6 +314,8 @@ export class OAuthService {
     }
 
     const { workspaceId, codeVerifier } = stateData;
+
+    await this.entitlementsService.assertWorkspaceWritable(workspaceId);
 
     // Exchange code
     const credentials = await provider.exchangeAuthorizationCode({

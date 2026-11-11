@@ -3,8 +3,10 @@ import { MediaController } from './media.controller';
 import { MediaService } from './media.service';
 import { S3ObjectStorage } from '@agency-os/providers';
 import { validateStoragePublicEndpoint } from '../../config/storage-endpoint';
+import { BillingModule } from '../billing/billing.module';
 
 @Module({
+  imports: [BillingModule],
   controllers: [MediaController],
   providers: [
     MediaService,

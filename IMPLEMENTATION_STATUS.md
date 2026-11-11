@@ -3405,6 +3405,127 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
    - Independent Muse review required before any merge. Do not call merge-ready.
    - Do NOT merge on this prompt alone.
 
+---
+
+## 54. Phase A: Mutation Gaps Closed for Halted/Expired Tenants (2026-11-11)
+
+### 1. Context & Objectives
+
+- **Audit Origin**: Phase A item 5 from `docs/auth-production-readiness-report.md` ("Close Mutation Gaps for Halted/Expired Tenants", Size S).
+- **Vulnerability Closed**: While publishing post endpoints were guarded with `WorkspaceWritableGuard`, media file uploads and OAuth account mutations lacked write-entitlement checks. Halted or expired workspaces could previously initiate and complete S3 media asset storage uploads, initiate new OAuth account connections, select discovery profiles to persist new `SocialAccount` records, and complete OAuth redirect callbacks to bind accounts.
+- **Goal**: Apply `WorkspaceWritableGuard` and service-level write-entitlement checks to all state-mutating operations in Media and OAuth modules, enforce fail-closed denials for halted/expired workspaces, and preserve read operations and necessary account cleanup pathways.
+
+### 2. Architecture & Implementation
+
+#### A. Guard Placement & Module Wiring (Scopes 1 & 2)
+
+- **Media Uploads (`apps/api/src/modules/media`)**:
+  - `apps/api/src/modules/media/media.module.ts`:
+    - Added `BillingModule` to `imports: [BillingModule]` (previously had no imports array).
+  - `apps/api/src/modules/media/media.controller.ts`:
+    - Added method-level `@UseGuards(WorkspaceWritableGuard)` on `POST 'uploads'` (`initiateUpload`, `posts.create`).
+    - Added method-level `@UseGuards(WorkspaceWritableGuard)` on `POST ':mediaId/complete'` (`completeUpload`, `posts.create`).
+    - Method-level placement ensures future read endpoints on this controller remain unguarded by default.
+    - Preserved `MediaService` upload flow and presigned S3 URL generation without changes.
+- **OAuth Connect & Discovery Select (`apps/api/src/modules/oauth`)**:
+  - `apps/api/src/modules/oauth/oauth.module.ts`:
+    - Added `BillingModule` to imports alongside `BullModule.registerQueue({ name: 'sync' })`.
+  - `apps/api/src/modules/oauth/oauth.controller.ts`:
+    - Added `WorkspaceWritableGuard` appended after `AuthGuard`, `WorkspaceGuard`, and `PermissionGuard` on `POST 'v1/workspaces/:workspaceId/oauth/:provider/connect'` (`connectProvider`, `accounts.connect`).
+    - Added `WorkspaceWritableGuard` appended after `AuthGuard`, `WorkspaceGuard`, and `PermissionGuard` on `POST 'v1/workspaces/:workspaceId/oauth/discoveries/:discoveryId/select'` (`selectDiscoveryProfiles`, `accounts.connect`), closing the discovery selection mutation path that persists `SocialAccount` records from multi-profile sessions.
+
+#### B. Service-Level Callback Enforcement (Scope 3)
+
+- **Why Decorator Cannot Work on Callback**:
+  - Route `GET 'v1/oauth/:provider/callback'` (`callbackProvider`) contains no `:workspaceId` route parameter; the workspace context is encapsulated in the single-use OAuth `state` query parameter.
+  - `WorkspaceWritableGuard` reads `request.params?.workspaceId`. When `workspaceId` is missing, the guard returns `true` (fails open by design). Applying `@UseGuards(WorkspaceWritableGuard)` to the callback endpoint would be a silent no-op.
+- **Service Insertion Point (`apps/api/src/modules/oauth/oauth.service.ts`)**:
+  - Injected `EntitlementsService` (`private readonly entitlementsService: EntitlementsService`) into `OAuthService` constructor.
+  - In `handleOAuthCallback`, immediately after line 316 `const { workspaceId, codeVerifier } = stateData;` (the earliest point where `workspaceId` is known after single-use state validation and consumption) and before line 321 `const credentials = await provider.exchangeAuthorizationCode({...})`:
+    ```typescript
+    await this.entitlementsService.assertWorkspaceWritable(workspaceId);
+    ```
+  - This single check covers both single-profile direct persistence and multi-profile discovery session persistence before any external authorization code exchange or database writes occur.
+- **Honest Denial Surface & Single-Use State Consequence**:
+  - In `OAuthController.callbackProvider`, when `entitlementsService.assertWorkspaceWritable` throws `ForbiddenException`, the controller's existing `catch (err: any)` block logs the error, emits an `OAUTH_CONNECTION_FAILED` audit log, and performs a browser redirect:
+    `${frontendUrl}/dashboard?error=oauth_failed`
+  - Browser redirect to dashboard (rather than a 403 JSON body) is the authentic user-facing denial surface for this redirect-based OAuth flow.
+  - The OAuth state in Redis is single-use and already consumed (`await this.redis.del(stateKey)`) prior to the entitlement check. A denied user must restart the connection flow from the UI connect button—which is then blocked upfront with HTTP 403 by `WorkspaceWritableGuard`.
+
+#### C. Known Limitations of Guard Fail-Open Behavior
+
+- `WorkspaceWritableGuard` returns `true` if `request.params?.workspaceId` is falsy. Any mutation route lacking a `:workspaceId` path parameter cannot rely on the guard decorator and MUST perform an explicit service-level check (`entitlementsService.assertWorkspaceWritable(workspaceId)`).
+
+#### D. What Stays Unguarded by Design
+
+1. `GET 'v1/workspaces/:workspaceId/oauth/discoveries/:discoveryId'` (`getDiscoverySession`):
+   - Pure read endpoint returning available discovery profiles; performs no mutations.
+2. `POST 'v1/workspaces/:workspaceId/accounts/:accountId/disconnect'` (`accounts.disconnect`):
+   - Removal/cleanup operation. Blocking account disconnection would trap users in halted or expired workspaces with active third-party account authorizations they cannot revoke.
+3. `POST 'v1/workspaces/:workspaceId/accounts/:accountId/sync'`:
+   - Read-triggering telemetry sync operation; does not create accounts or publish new content.
+4. `Analytics GET endpoints`:
+   - Pure read queries.
+5. `PublicationsController` Mutations (`DELETE publications/:publicationId`, `DELETE publications/:publicationId/remote`, `POST validate`, `POST unschedule`, `POST cancel`, `POST reconcile`):
+   - Observed out of scope for this PR. Documented as a follow-up policy decision for the repository owner on whether deletion/cancellation/reconcile operations should remain permissible for read-only tenants.
+
+#### E. Exact 403 Denial Messages (`apps/api/src/modules/billing/entitlements.service.ts`)
+
+- **Halted**:
+  `'Workspace subscription is halted by payment provider. Please renew or update your payment method.'`
+- **Past due past period end**:
+  `'Subscription payment past due and billing period has expired. Workspace is in read-only mode.'`
+- **Cancelled/expired past period end**:
+  `'Subscription is expired or cancelled. Workspace is in read-only mode.'`
+- **Trial expired**:
+  `'Trial expired. Workspace is in read-only mode. Please subscribe to a plan to continue.'`
+- **Fallback**:
+  `'Workspace is in read-only mode due to expired trial or halted subscription.'`
+
+### 3. Verification & Test Evidence
+
+- **Backend Unit Tests (`apps/api`, 36/36 test files PASS, 462/462 tests PASS)**:
+  - `apps/api/src/modules/media/media.controller.spec.ts` (NEW, 4 tests PASS):
+    - Confirms `WorkspaceWritableGuard` decorator metadata on `initiateUpload` and `completeUpload`.
+    - `initiateUpload` on read-only workspace throws `ForbiddenException` with exact message `'Trial expired. Workspace is in read-only mode. Please subscribe to a plan to continue.'` and `MediaService.initiateUpload` is NOT called.
+    - `completeUpload` on read-only workspace throws `ForbiddenException` with exact message `'Trial expired. Workspace is in read-only mode. Please subscribe to a plan to continue.'` and `MediaService.completeUpload` is NOT called.
+    - Writable workspace passes through to `MediaService.initiateUpload` and `completeUpload`.
+  - `apps/api/src/modules/oauth/oauth.controller.spec.ts` (18 tests PASS, 3 new):
+    - Confirms `WorkspaceWritableGuard` decorator metadata on `connectProvider` and `selectDiscoveryProfiles`.
+    - `connectProvider` on read-only workspace is blocked with 403 before `OAuthService.generateAuthUrl` is called.
+    - `selectDiscoveryProfiles` on read-only workspace is blocked with 403 before `OAuthService.processDiscoverySelection` is called.
+    - `getDiscoverySession` is confirmed unguarded by `WorkspaceWritableGuard` and proceeds as a read.
+  - `apps/api/src/modules/oauth/oauth.service.spec.ts` (14 tests PASS, 2 new):
+    - `handleOAuthCallback` with mocked `EntitlementsService` rejecting (read-only workspace) throws `ForbiddenException` with exact message `'Trial expired. Workspace is in read-only mode. Please subscribe to a plan to continue.'`.
+    - Verifies `provider.exchangeAuthorizationCode` is NOT called, no discovery session is stored, and `socialAccountRepo.upsertWithConnection` is NOT called.
+    - Verifies single-use state in Redis is deleted.
+    - Writable workspace proceeds with authorization code exchange and account upsert.
+- **Backend E2E Tests (`apps/api/test`)**:
+  - `apps/api/test/media.storage.e2e-spec.ts` (10 tests PASS, 2 new):
+    - Extended with expired-trial workspace fixture (`trialEndsAt: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)`).
+    - Asserts `POST /api/v1/workspaces/:workspaceId/media/uploads` returns HTTP 403 with `{ error: { code: 'ForbiddenException', message: 'Trial expired. Workspace is in read-only mode. Please subscribe to a plan to continue.' } }`.
+    - Asserts `POST /api/v1/workspaces/:workspaceId/media/:mediaId/complete` returns HTTP 403 with `{ error: { code: 'ForbiddenException', message: 'Trial expired. Workspace is in read-only mode. Please subscribe to a plan to continue.' } }`.
+    - Existing writable workspace upload, range reads, and tenant isolation tests remain passing.
+  - **OAuth E2E Note**: No dedicated OAuth E2E test suite exists in the codebase today. Implementing an end-to-end OAuth suite would require spinning up mock OAuth provider servers and synthetic browser redirection harnesses. Comprehensive unit tests across controller and service levels cover all read-only denial branches, state validation, and guard placement without introducing unnecessary infrastructure overhead.
+- **Monorepo Quality & Build Checks**:
+  - `pnpm --filter @agency-os/api typecheck`: 0 errors.
+  - `pnpm --filter @agency-os/api exec eslint`: 0 errors across all modified production and test files.
+  - `pnpm --filter @agency-os/api test`: 36 test files passed, 462 tests passed.
+- **CI Quality Gates**:
+  - Verification on GitHub Actions pending PR push.
+
+### 4. Release Gate & Next Steps
+
+1. **Release Gate**:
+   - **Live Deployment**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending external infrastructure provisioning, live email delivery verification, live payment credentials, and disaster recovery rehearsals G18/G19).
+2. **Follow-Up Decision**:
+   - Repository owner review on whether `PublicationsController` deletion/unschedule/cancel endpoints should remain accessible for read-only workspaces.
+3. **Next Steps**:
+   - Push branch `fix/mutation-gaps` to remote.
+   - Open PR targeting `main`.
+   - Verify 6/6 green CI checks on GitHub Actions.
+   - Do NOT merge on this prompt alone.
+
 
 
 

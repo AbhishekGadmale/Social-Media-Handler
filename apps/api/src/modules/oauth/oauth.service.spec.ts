@@ -1,12 +1,14 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { OAuthService } from './oauth.service';
 import { ForbiddenException, BadRequestException } from '@nestjs/common';
+import { EntitlementsService } from '../billing/entitlements.service';
 import {
   SocialAccountRepository,
   encrypt,
   generateId,
   SocialProvider,
 } from '@agency-os/database';
+import { providerRegistry } from '@agency-os/providers';
 import nock from 'nock';
 import { vi } from 'vitest';
 import { getLoggerToken } from 'nestjs-pino';
@@ -16,6 +18,7 @@ describe('OAuthService', () => {
   let mockRedis: any;
   let mockPrisma: any;
   let mockSyncQueue: any;
+  let mockEntitlementsService: any;
 
   beforeAll(() => {
     process.env.TOKEN_ENCRYPTION_KEY =
@@ -52,6 +55,10 @@ describe('OAuthService', () => {
       add: vi.fn().mockResolvedValue({ id: 'job-123' }),
     };
 
+    mockEntitlementsService = {
+      assertWorkspaceWritable: vi.fn().mockResolvedValue(undefined),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         OAuthService,
@@ -66,6 +73,10 @@ describe('OAuthService', () => {
         {
           provide: 'BullQueue_sync',
           useValue: mockSyncQueue,
+        },
+        {
+          provide: EntitlementsService,
+          useValue: mockEntitlementsService,
         },
         {
           provide: getLoggerToken(OAuthService.name),
@@ -463,5 +474,109 @@ describe('OAuthService', () => {
     );
 
     expect(forwardedRedirectUri).toBe(customRedirect);
+  });
+
+  describe('handleOAuthCallback read-only tenant enforcement', () => {
+    it('handleOAuthCallback with a mocked EntitlementsService rejecting (read-only workspace) throws ForbiddenException with the exact trial-expired message, and provider.exchangeAuthorizationCode is NOT called and no discovery session is stored and no SocialAccount is upserted', async () => {
+      const userId = 'b0e4c6c0-6f0a-47b8-80e9-74f4b4c730e2';
+      const workspaceId = 'f3e098a0-2f94-4d89-9e8c-5a9d82136e09';
+      const url = await service.generateAuthUrl(
+        SocialProvider.LINKEDIN,
+        userId,
+        workspaceId,
+        'http://localhost/callback',
+      );
+      const parsedUrl = new URL(url);
+      const state = parsedUrl.searchParams.get('state')!;
+
+      mockEntitlementsService.assertWorkspaceWritable.mockRejectedValue(
+        new ForbiddenException(
+          'Trial expired. Workspace is in read-only mode. Please subscribe to a plan to continue.',
+        ),
+      );
+
+      const provider = providerRegistry.get('linkedin');
+      const exchangeSpy = vi.spyOn(provider!, 'exchangeAuthorizationCode');
+
+      await expect(
+        service.handleOAuthCallback(
+          SocialProvider.LINKEDIN,
+          userId,
+          state,
+          'auth-code-123',
+          'http://localhost/callback',
+        ),
+      ).rejects.toThrow(
+        new ForbiddenException(
+          'Trial expired. Workspace is in read-only mode. Please subscribe to a plan to continue.',
+        ),
+      );
+
+      expect(
+        mockEntitlementsService.assertWorkspaceWritable,
+      ).toHaveBeenCalledWith(workspaceId);
+      expect(exchangeSpy).not.toHaveBeenCalled();
+      expect(mockPrisma.upsertWithConnection).not.toHaveBeenCalled();
+
+      // Verify single-use state deletion occurred
+      const stateAfter = await mockRedis.get(`oauth_state:${state}`);
+      expect(stateAfter).toBeNull();
+
+      exchangeSpy.mockRestore();
+    });
+
+    it('writable workspace proceeds (existing behaviour unchanged)', async () => {
+      mockEntitlementsService.assertWorkspaceWritable.mockResolvedValue(
+        undefined,
+      );
+
+      const userId = 'b0e4c6c0-6f0a-47b8-80e9-74f4b4c730e2';
+      const workspaceId = 'f3e098a0-2f94-4d89-9e8c-5a9d82136e09';
+      const url = await service.generateAuthUrl(
+        SocialProvider.LINKEDIN,
+        userId,
+        workspaceId,
+        'http://localhost/callback',
+      );
+      const parsedUrl = new URL(url);
+      const state = parsedUrl.searchParams.get('state')!;
+
+      const provider = providerRegistry.get('linkedin');
+      const exchangeSpy = vi
+        .spyOn(provider!, 'exchangeAuthorizationCode')
+        .mockResolvedValue({
+          accessToken: 'mock-access-token',
+          refreshToken: 'mock-refresh-token',
+          expiresIn: 3600,
+        } as any);
+
+      const profilesSpy = vi.spyOn(provider!, 'getProfiles').mockResolvedValue([
+        {
+          profile: {
+            id: 'ext-prof-1',
+            name: 'LinkedIn Profile',
+            provider: SocialProvider.LINKEDIN,
+          },
+        },
+      ]);
+
+      const result = await service.handleOAuthCallback(
+        SocialProvider.LINKEDIN,
+        userId,
+        state,
+        'auth-code-123',
+        'http://localhost/callback',
+      );
+
+      expect(
+        mockEntitlementsService.assertWorkspaceWritable,
+      ).toHaveBeenCalledWith(workspaceId);
+      expect(result).toBeDefined();
+      expect(result.workspaceId).toBe(workspaceId);
+      expect(mockPrisma.upsertWithConnection).toHaveBeenCalled();
+
+      exchangeSpy.mockRestore();
+      profilesSpy.mockRestore();
+    });
   });
 });

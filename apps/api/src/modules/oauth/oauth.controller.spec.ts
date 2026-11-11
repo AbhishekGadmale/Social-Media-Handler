@@ -1,13 +1,14 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { OAuthController } from './oauth.controller';
 import { OAuthService } from './oauth.service';
-import { ForbiddenException } from '@nestjs/common';
+import { ExecutionContext, ForbiddenException } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { vi } from 'vitest';
 
 import { AuthGuard } from '../auth/guards/auth.guard';
 import { WorkspaceGuard } from '../auth/guards/workspace.guard';
 import { PermissionGuard } from '../auth/guards/permission.guard';
+import { WorkspaceWritableGuard } from '../billing/guards/workspace-writable.guard';
 import { SocialProvider } from '@agency-os/database';
 
 import { AuditService } from '../core/audit.service';
@@ -59,6 +60,8 @@ describe('OAuthController', () => {
       .overrideGuard(WorkspaceGuard)
       .useValue({ canActivate: () => true })
       .overrideGuard(PermissionGuard)
+      .useValue({ canActivate: () => true })
+      .overrideGuard(WorkspaceWritableGuard)
       .useValue({ canActivate: () => true })
       .compile();
 
@@ -530,6 +533,130 @@ describe('OAuthController', () => {
           },
         }),
       );
+    });
+  });
+
+  describe('WorkspaceWritableGuard mutation blocking', () => {
+    let guard: WorkspaceWritableGuard;
+    let mockEntitlementsService: any;
+
+    beforeEach(() => {
+      mockEntitlementsService = {
+        assertWorkspaceWritable: vi.fn(),
+      };
+      guard = new WorkspaceWritableGuard(mockEntitlementsService);
+    });
+
+    const createMockContext = (workspaceId?: string) => {
+      return {
+        switchToHttp: () => ({
+          getRequest: () => ({
+            params: { workspaceId },
+          }),
+        }),
+      } as unknown as ExecutionContext;
+    };
+
+    const executeGuarded = async <T>(
+      workspaceId: string,
+      action: () => Promise<T>,
+    ): Promise<T> => {
+      const ctx = createMockContext(workspaceId);
+      await guard.canActivate(ctx);
+      return action();
+    };
+
+    it('connect on a read-only workspace is blocked with 403 before OAuthService.generateAuthUrl is called', async () => {
+      const guards =
+        Reflect.getMetadata(
+          '__guards__',
+          (OAuthController.prototype as any).connectProvider,
+        ) || [];
+      expect(guards).toContain(WorkspaceWritableGuard);
+
+      mockEntitlementsService.assertWorkspaceWritable.mockRejectedValue(
+        new ForbiddenException(
+          'Trial expired. Workspace is in read-only mode. Please subscribe to a plan to continue.',
+        ),
+      );
+
+      await expect(
+        executeGuarded('ws-read-only', () =>
+          controller.connectProvider(
+            'ws-read-only',
+            SocialProvider.YOUTUBE,
+            undefined,
+            mockReq as Request,
+          ),
+        ),
+      ).rejects.toThrow(
+        new ForbiddenException(
+          'Trial expired. Workspace is in read-only mode. Please subscribe to a plan to continue.',
+        ),
+      );
+
+      expect(mockOAuthService.generateAuthUrl).not.toHaveBeenCalled();
+    });
+
+    it('selectDiscoveryProfiles on a read-only workspace is blocked before processDiscoverySelection is called', async () => {
+      const guards =
+        Reflect.getMetadata(
+          '__guards__',
+          (OAuthController.prototype as any).selectDiscoveryProfiles,
+        ) || [];
+      expect(guards).toContain(WorkspaceWritableGuard);
+
+      mockOAuthService.processDiscoverySelection = vi.fn();
+      mockEntitlementsService.assertWorkspaceWritable.mockRejectedValue(
+        new ForbiddenException(
+          'Trial expired. Workspace is in read-only mode. Please subscribe to a plan to continue.',
+        ),
+      );
+
+      const dto = { profileIds: ['prof-1'] };
+      await expect(
+        executeGuarded('ws-read-only', () =>
+          controller.selectDiscoveryProfiles(
+            'ws-read-only',
+            'disc-1',
+            dto,
+            mockReq as Request,
+          ),
+        ),
+      ).rejects.toThrow(
+        new ForbiddenException(
+          'Trial expired. Workspace is in read-only mode. Please subscribe to a plan to continue.',
+        ),
+      );
+
+      expect(mockOAuthService.processDiscoverySelection).not.toHaveBeenCalled();
+    });
+
+    it('getDiscoverySession is NOT blocked (read)', async () => {
+      const guards =
+        Reflect.getMetadata(
+          '__guards__',
+          (OAuthController.prototype as any).getDiscoverySession,
+        ) || [];
+      expect(guards).not.toContain(WorkspaceWritableGuard);
+
+      mockOAuthService.readDiscovery = vi.fn().mockResolvedValue({
+        discoveryId: 'disc-1',
+        workspaceId: 'ws-read-only',
+        userId: 'user-123',
+        provider: SocialProvider.YOUTUBE,
+        profiles: [],
+      });
+
+      const res = await controller.getDiscoverySession(
+        'ws-read-only',
+        'disc-1',
+        mockReq as Request,
+      );
+
+      expect(res).toBeDefined();
+      expect(res.id).toBe('disc-1');
+      expect(mockOAuthService.readDiscovery).toHaveBeenCalledWith('disc-1');
     });
   });
 });

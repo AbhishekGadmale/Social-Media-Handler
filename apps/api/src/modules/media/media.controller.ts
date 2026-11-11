@@ -13,6 +13,7 @@ import { AuthGuard } from '../auth/guards/auth.guard';
 import { WorkspaceGuard } from '../auth/guards/workspace.guard';
 import { PermissionGuard } from '../auth/guards/permission.guard';
 import { RequirePermission } from '../auth/decorators/permission.decorator';
+import { WorkspaceWritableGuard } from '../billing/guards/workspace-writable.guard';
 import type { Request } from 'express';
 
 @UseGuards(AuthGuard, WorkspaceGuard, PermissionGuard)
@@ -20,6 +21,7 @@ import type { Request } from 'express';
 export class MediaController {
   constructor(private readonly mediaService: MediaService) {}
 
+  @UseGuards(WorkspaceWritableGuard)
   @RequirePermission('posts.create')
   @Post('uploads')
   async initiateUpload(
@@ -31,6 +33,7 @@ export class MediaController {
     return this.mediaService.initiateUpload(workspaceId, userId, dto);
   }
 
+  @UseGuards(WorkspaceWritableGuard)
   @RequirePermission('posts.create')
   @Post(':mediaId/complete')
   async completeUpload(
