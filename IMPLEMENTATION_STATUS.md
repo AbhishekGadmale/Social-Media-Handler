@@ -3315,7 +3315,7 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
   - Unauthenticated visitors can view all legal documents directly without being redirected to `/login`.
 - **Structured Semantic JSX Rendering Approach**:
   - Rendered with semantic JSX elements (`<section>`, `<h2>`, `<p>`, `<table>`, `<ul>`, `<ol>`, `<code>`) and Tailwind typography classes (`max-w-4xl mx-auto bg-white p-8 sm:p-12 rounded-lg shadow space-y-6 text-gray-800 leading-relaxed`).
-  - Avoided installing external markdown rendering libraries (`react-markdown`, `remark`, `mdx`) to preserve minimal dependency footprint per Ponytail guidelines.
+  - Avoided installing external markdown rendering libraries (`react-markdown`, `remark`, `mdx`) to preserve minimal dependency footprint.
 - **Verbatim DRAFT Disclaimers & Bracketed Placeholders**:
   - Rendered amber draft alert banner on all three pages:
     - Status: `DRAFT` prepared 2026-11-10, updated 2026-11-11. Not legal advice; lawyer review required before publication.
@@ -3329,16 +3329,18 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
     - Checkbox element: `<input type="checkbox" id="termsAccepted" name="termsAccepted" checked={termsAccepted} onChange={(e) => setTermsAccepted(e.target.checked)} />`.
     - Label text: `'I agree to the '` with links `<Link href="/terms" target="_blank" rel="noopener noreferrer">Terms of Service</Link>` and `' and '` `<Link href="/privacy" target="_blank" rel="noopener noreferrer">Privacy Policy</Link>`.
   - Client-side validation:
-    - If `!termsAccepted`, form prevents submission, focuses checkbox, and sets `error`: `'You must accept the Terms of Service and Privacy Policy to create an account.'`.
+    - If `!termsAccepted`, form prevents submission and sets `error`: `'You must accept the Terms of Service and Privacy Policy to create an account.'`.
   - Payload submission:
     - Sends `{ email, password, organizationName, workspaceName, termsAccepted: true }` to `api.post('auth/signup', ...)`.
 - **API Signup DTO (`apps/api/src/modules/auth/dto/signup.dto.ts`)**:
   - Added field:
     ```typescript
-    @IsDefined({ message: 'You must accept the Terms of Service and Privacy Policy' })
-    @IsBoolean({ message: 'You must accept the Terms of Service and Privacy Policy' })
-    @Equals(true, { message: 'You must accept the Terms of Service and Privacy Policy' })
-    termsAccepted: boolean;
+    @IsDefined()
+    @IsBoolean()
+    @Equals(true, {
+      message: 'You must accept the Terms of Service and Privacy Policy',
+    })
+    termsAccepted!: boolean;
     ```
 - **Database Schema & Migration (`packages/database`)**:
   - Updated `User` model in `packages/database/prisma/schema.prisma` with nullable field `termsAcceptedAt DateTime?`.
@@ -3348,10 +3350,10 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
     ```
 - **Atomic Consent Recording (`UserRepository` & `AuthService`)**:
   - Updated `CreateUserWithTenantInput` in `packages/database/src/repositories/UserRepository.ts` to include optional `termsAcceptedAt?: Date | null`.
-  - In `createWithTenantTransaction`, maps `termsAcceptedAt: input.termsAcceptedAt ?? null` directly inside `tx.user.create`.
+  - In `createWithTenantTransaction`, the field is included via the conditional spread `...(input.termsAcceptedAt !== undefined && { termsAcceptedAt: input.termsAcceptedAt })` inside the `tx.user.create` data object, so the column is only set when a value was passed.
   - In `apps/api/src/modules/auth/auth.service.ts`: passes `termsAcceptedAt: new Date()` in `this.userRepository.createWithTenantTransaction(...)`.
   - Atomic guarantee: User record, Organization, Workspace, OWNER WorkspaceMember, and `termsAcceptedAt` timestamp are written within a single database transaction (`this.prisma.$transaction(...)`). If any step fails, entire provisioning is rolled back.
-  - Anti-enumeration protection: Duplicate email registrations terminate early with generic message `{ message: 'Registration request received. Please check your email to verify your account.' }` without creating a user or recording false consent.
+  - Anti-enumeration protection: Duplicate email registrations terminate early with generic message `{ message: 'Registration request received.' }` without creating a user or recording false consent.
 
 ### 3. Verification & Test Evidence
 
