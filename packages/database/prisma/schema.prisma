@@ -87,6 +87,7 @@ model User {
   emailVerified      Boolean                  @default(false)
   emailVerifiedAt    DateTime?
   securityEpoch      Int                      @default(1)
+  termsAcceptedAt    DateTime?
   createdAt          DateTime                 @default(now())
   updatedAt          DateTime                 @updatedAt
   memberships        WorkspaceMember[]

@@ -1,4 +1,7 @@
 import {
+  Equals,
+  IsBoolean,
+  IsDefined,
   IsEmail,
   IsNotEmpty,
   IsOptional,
@@ -17,6 +20,13 @@ export class SignupDto {
   @MinLength(8, { message: 'Password must be at least 8 characters long' })
   @MaxLength(128, { message: 'Password must not exceed 128 characters' })
   password!: string;
+
+  @IsDefined()
+  @IsBoolean()
+  @Equals(true, {
+    message: 'You must accept the Terms of Service and Privacy Policy',
+  })
+  termsAccepted!: boolean;
 
   @IsOptional()
   @IsString()

@@ -63,6 +63,7 @@ describe('SignupPage', () => {
     expect(screen.getByLabelText(/confirm password/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/organization name/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/workspace name/i)).toBeInTheDocument();
+    expect(screen.getByRole('checkbox', { name: /terms of service and privacy policy/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /create account/i })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /sign in/i })).toHaveAttribute('href', '/login');
   });
@@ -126,6 +127,71 @@ describe('SignupPage', () => {
     });
   });
 
+  describe('Terms and Privacy Policy consent', () => {
+    it('blocks submit and shows inline error when checkbox is unchecked (api.post not called)', async () => {
+      render(<SignupPage />);
+
+      fireEvent.change(screen.getByLabelText(/email address/i), {
+        target: { value: 'user@example.com' },
+      });
+      fireEvent.change(screen.getByLabelText(/^password/i), {
+        target: { value: 'SecurePass123!' },
+      });
+      fireEvent.change(screen.getByLabelText(/confirm password/i), {
+        target: { value: 'SecurePass123!' },
+      });
+
+      // Do NOT check the terms checkbox
+      fireEvent.click(screen.getByRole('button', { name: /create account/i }));
+
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        'You must accept the Terms of Service and Privacy Policy to create an account.',
+      );
+      expect(mockApiPost).not.toHaveBeenCalled();
+    });
+
+    it('submits signup payload with termsAccepted: true when checkbox is checked', async () => {
+      mockApiPost.mockResolvedValueOnce({
+        message: 'Registration request received.',
+      });
+
+      render(<SignupPage />);
+
+      fireEvent.change(screen.getByLabelText(/email address/i), {
+        target: { value: 'user@example.com' },
+      });
+      fireEvent.change(screen.getByLabelText(/^password/i), {
+        target: { value: 'SecurePass123!' },
+      });
+      fireEvent.change(screen.getByLabelText(/confirm password/i), {
+        target: { value: 'SecurePass123!' },
+      });
+      fireEvent.click(screen.getByRole('checkbox', { name: /terms of service and privacy policy/i }));
+
+      fireEvent.click(screen.getByRole('button', { name: /create account/i }));
+
+      await waitFor(() => {
+        expect(mockApiPost).toHaveBeenCalledWith('auth/signup', {
+          email: 'user@example.com',
+          password: 'SecurePass123!',
+          termsAccepted: true,
+        });
+      });
+    });
+
+    it('renders Terms of Service and Privacy Policy links with correct hrefs and target _blank', () => {
+      render(<SignupPage />);
+
+      const termsLink = screen.getByRole('link', { name: /terms of service/i });
+      expect(termsLink).toHaveAttribute('href', '/terms');
+      expect(termsLink).toHaveAttribute('target', '_blank');
+
+      const privacyLink = screen.getByRole('link', { name: /privacy policy/i });
+      expect(privacyLink).toHaveAttribute('href', '/privacy');
+      expect(privacyLink).toHaveAttribute('target', '_blank');
+    });
+  });
+
   describe('Form submission and Check Email screen', () => {
     it('submits signup payload and renders check email screen with honest trial copy', async () => {
       mockApiPost.mockResolvedValueOnce({
@@ -149,6 +215,7 @@ describe('SignupPage', () => {
       fireEvent.change(screen.getByLabelText(/workspace name/i), {
         target: { value: 'Acme Main' },
       });
+      fireEvent.click(screen.getByRole('checkbox', { name: /terms of service and privacy policy/i }));
 
       fireEvent.click(screen.getByRole('button', { name: /create account/i }));
 
@@ -156,6 +223,7 @@ describe('SignupPage', () => {
         expect(mockApiPost).toHaveBeenCalledWith('auth/signup', {
           email: 'newuser@example.com',
           password: 'SecurePass123!',
+          termsAccepted: true,
           organizationName: 'Acme Agency',
           workspaceName: 'Acme Main',
         });
@@ -192,6 +260,7 @@ describe('SignupPage', () => {
       fireEvent.change(screen.getByLabelText(/confirm password/i), {
         target: { value: 'SecurePass123!' },
       });
+      fireEvent.click(screen.getByRole('checkbox', { name: /terms of service and privacy policy/i }));
 
       fireEvent.click(screen.getByRole('button', { name: /create account/i }));
 
@@ -222,6 +291,7 @@ describe('SignupPage', () => {
       fireEvent.change(screen.getByLabelText(/confirm password/i), {
         target: { value: 'SecurePass123!' },
       });
+      fireEvent.click(screen.getByRole('checkbox', { name: /terms of service and privacy policy/i }));
 
       fireEvent.click(screen.getByRole('button', { name: /create account/i }));
 
@@ -264,6 +334,7 @@ describe('SignupPage', () => {
       fireEvent.change(screen.getByLabelText(/confirm password/i), {
         target: { value: 'password123' },
       });
+      fireEvent.click(screen.getByRole('checkbox', { name: /terms of service and privacy policy/i }));
 
       fireEvent.click(screen.getByRole('button', { name: /create account/i }));
 
@@ -289,6 +360,7 @@ describe('SignupPage', () => {
       fireEvent.change(screen.getByLabelText(/confirm password/i), {
         target: { value: 'password123' },
       });
+      fireEvent.click(screen.getByRole('checkbox', { name: /terms of service and privacy policy/i }));
 
       fireEvent.click(screen.getByRole('button', { name: /create account/i }));
 
@@ -316,6 +388,7 @@ describe('SignupPage', () => {
       fireEvent.change(screen.getByLabelText(/confirm password/i), {
         target: { value: 'password123' },
       });
+      fireEvent.click(screen.getByRole('checkbox', { name: /terms of service and privacy policy/i }));
 
       fireEvent.click(screen.getByRole('button', { name: /create account/i }));
 

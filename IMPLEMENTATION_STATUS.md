@@ -3298,5 +3298,113 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
    - Independent Muse review required before any merge. Do not call merge-ready.
    - Do NOT merge on this prompt alone.
 
+## 53. Legal Pages & Terms/Privacy Signup Consent (Branch feat/terms-consent — PR #66)
+
+### 1. Scope, Routes & Content Files
+
+- **Public Legal Routes (`apps/web`)**:
+  - `/terms` (`apps/web/src/app/terms/page.tsx`): renders `apps/web/src/content/legal/terms.md` verbatim.
+  - `/privacy` (`apps/web/src/app/privacy/page.tsx`): renders `apps/web/src/content/legal/privacy.md` verbatim.
+  - `/refund-cancellation` (`apps/web/src/app/refund-cancellation/page.tsx`): renders `apps/web/src/content/legal/refund-cancellation.md` verbatim.
+- **Content Files Written (`apps/web/src/content/legal/`)**:
+  - `terms.md`: Verbatim draft terms of service document including operator details, plans and founding lock pricing, payment mandates, cancellation grace period, acceptable use, and grievance officer.
+  - `privacy.md`: Verbatim draft privacy policy document covering DPDP Act 2023 / SPDI 2011 compliance, Data Fiduciary vs Data Processor roles, data categories, security, 72-hour breach reporting, 30-day grace retention, grievance redressal, and platform-specific disclosures (Meta, LinkedIn, YouTube).
+  - `refund-cancellation.md`: Verbatim draft refund and cancellation policy specifying the 14-day free trial (no card required), 7-day money-back guarantee on first paid payment, non-refundable renewals, and full refunds for duplicate/post-cancellation charges to original payment method within 5–7 business days.
+- **AuthGuard Public Routes Access (`apps/web/src/components/auth-guard.tsx:11-20`)**:
+  - Added `'/terms'`, `'/privacy'`, and `'/refund-cancellation'` to `PUBLIC_ROUTES`.
+  - Unauthenticated visitors can view all legal documents directly without being redirected to `/login`.
+- **Structured Semantic JSX Rendering Approach**:
+  - Rendered with semantic JSX elements (`<section>`, `<h2>`, `<p>`, `<table>`, `<ul>`, `<ol>`, `<code>`) and Tailwind typography classes (`max-w-4xl mx-auto bg-white p-8 sm:p-12 rounded-lg shadow space-y-6 text-gray-800 leading-relaxed`).
+  - Avoided installing external markdown rendering libraries (`react-markdown`, `remark`, `mdx`) to preserve minimal dependency footprint.
+- **Verbatim DRAFT Disclaimers & Bracketed Placeholders**:
+  - Rendered amber draft alert banner on all three pages:
+    - Status: `DRAFT` prepared 2026-11-10, updated 2026-11-11. Not legal advice; lawyer review required before publication.
+    - Operator: Gadmale Technologies, sole proprietorship, Maharashtra, India. Contact: `agadmale335@gmail.com`. Address: `Shihu, Tal-Pen, Dist-Raigad, Maharashtra, 402106, India`.
+  - Every bracketed note preserved verbatim without premature cleanup or guessing: `[TO CONFIRM]`, `[LAWYER TO CONFIRM]`, `[CA TO CONFIRM]`, `[GRIEVANCE OFFICER]`, `[COURT CITY]`, `[GSTIN]`, `[EFFECTIVE DATE]`, `[LAST UPDATED]`, and `[BRACKETS]`.
+
+### 2. Consent Enforcement & Schema Architecture
+
+- **Web Signup Form Consent (`apps/web/src/app/signup/page.tsx`)**:
+  - Checkbox added directly above submit button:
+    - Checkbox element: `<input type="checkbox" id="termsAccepted" name="termsAccepted" checked={termsAccepted} onChange={(e) => setTermsAccepted(e.target.checked)} />`.
+    - Label text: `'I agree to the '` with links `<Link href="/terms" target="_blank" rel="noopener noreferrer">Terms of Service</Link>` and `' and '` `<Link href="/privacy" target="_blank" rel="noopener noreferrer">Privacy Policy</Link>`.
+  - Client-side validation:
+    - If `!termsAccepted`, form prevents submission and sets `error`: `'You must accept the Terms of Service and Privacy Policy to create an account.'`.
+  - Payload submission:
+    - Sends `{ email, password, organizationName, workspaceName, termsAccepted: true }` to `api.post('auth/signup', ...)`.
+- **API Signup DTO (`apps/api/src/modules/auth/dto/signup.dto.ts`)**:
+  - Added field:
+    ```typescript
+    @IsDefined()
+    @IsBoolean()
+    @Equals(true, {
+      message: 'You must accept the Terms of Service and Privacy Policy',
+    })
+    termsAccepted!: boolean;
+    ```
+- **Database Schema & Migration (`packages/database`)**:
+  - Updated `User` model in `packages/database/prisma/schema.prisma` with nullable field `termsAcceptedAt DateTime?`.
+  - Migration created: `packages/database/prisma/migrations/20261111000000_add_terms_accepted_at/migration.sql`:
+    ```sql
+    ALTER TABLE "User" ADD COLUMN "termsAcceptedAt" TIMESTAMP(3);
+    ```
+- **Atomic Consent Recording (`UserRepository` & `AuthService`)**:
+  - Updated `CreateUserWithTenantInput` in `packages/database/src/repositories/UserRepository.ts` to include optional `termsAcceptedAt?: Date | null`.
+  - In `createWithTenantTransaction`, the field is included via the conditional spread `...(input.termsAcceptedAt !== undefined && { termsAcceptedAt: input.termsAcceptedAt })` inside the `tx.user.create` data object, so the column is only set when a value was passed.
+  - In `apps/api/src/modules/auth/auth.service.ts`: passes `termsAcceptedAt: new Date()` in `this.userRepository.createWithTenantTransaction(...)`.
+  - Atomic guarantee: User record, Organization, Workspace, OWNER WorkspaceMember, and `termsAcceptedAt` timestamp are written within a single database transaction (`this.prisma.$transaction(...)`). If any step fails, entire provisioning is rolled back.
+  - Anti-enumeration protection: Duplicate email registrations terminate early with generic message `{ message: 'Registration request received.' }` without creating a user or recording false consent.
+
+### 3. Verification & Test Evidence
+
+- **Web Unit Tests (`apps/web`, 20/20 test files PASS, 213/213 tests PASS)**:
+  - `apps/web/src/app/signup/page.spec.tsx` (13 tests PASS):
+    - Rejection when terms checkbox is unchecked: asserts `'You must accept the Terms of Service and Privacy Policy to create an account.'` is displayed and no API call is made.
+    - Checkbox toggle state changes.
+    - Submission includes `termsAccepted: true` in API POST body.
+    - Handles 400 validation error with specific API error message.
+    - Handles 429 rate limit and 500 server error states.
+  - `apps/web/src/components/auth-guard.spec.tsx` (20 tests PASS):
+    - Confirms `PUBLIC_ROUTES` contains 8 routes: `['/login', '/signup', '/verify-email', '/forgot-password', '/reset-password', '/terms', '/privacy', '/refund-cancellation']`.
+    - Confirms unauthenticated users can access `/terms`, `/privacy`, and `/refund-cancellation` without redirection.
+  - `apps/web/src/app/terms/page.spec.tsx` (3 tests PASS):
+    - Asserts heading `'Agency OS — Terms of Service (DRAFT)'`.
+    - Asserts DRAFT disclaimer banner with `agadmale335@gmail.com`.
+    - Asserts Section 1 content.
+  - `apps/web/src/app/privacy/page.spec.tsx` (1 test PASS):
+    - Asserts heading `'Agency OS — Privacy Policy (DRAFT)'` and Data Fiduciary role text.
+  - `apps/web/src/app/refund-cancellation/page.spec.tsx` (1 test PASS):
+    - Asserts heading `'Agency OS — Refund & Cancellation Policy (DRAFT)'` and 7-day refund window text.
+- **Backend Unit & E2E Tests (`apps/api`, 35/35 test files PASS, 453/453 tests PASS)**:
+  - `apps/api/src/modules/auth/auth.service.spec.ts` (33 tests PASS):
+    - Passes `termsAcceptedAt: expect.any(Date)` to `userRepository.createWithTenantTransaction`.
+    - DTO validation asserts rejection when `termsAccepted` is missing or false.
+  - `apps/api/src/modules/auth/auth.controller.spec.ts` (32 tests PASS):
+    - Controller test fixtures supply `termsAccepted: true`.
+  - `apps/api/test/auth.e2e-spec.ts`:
+    - E2E tests send `termsAccepted: true` on signup.
+    - Database verification: verifies `signedUpUser.termsAcceptedAt` is populated with a valid `Date`.
+    - Negative validation tests: verifies 400 rejection with message `'You must accept the Terms of Service and Privacy Policy'` when `termsAccepted` is omitted or false.
+- **Monorepo Quality & Build Checks**:
+  - `pnpm turbo run lint typecheck`: 15/15 tasks passed, 0 errors.
+  - `pnpm turbo run test`: tests passed across all packages.
+  - `pnpm turbo run build`: 7/7 tasks passed; Next.js 16.3.1 static pages `/terms`, `/privacy`, and `/refund-cancellation` built successfully.
+- **CI Quality Gates**:
+  - 6/6 verified green (Tests, API E2E, Application Builds, Code Quality, Docker Build & Smoke, GitGuardian Security Checks).
+
+### 4. Release Gate & Next Steps
+
+1. **Release Gate**:
+   - **Live Deployment**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending lawyer review of DRAFT legal documents, placeholder resolution, external infrastructure provisioning, live email delivery verification, live payment credentials, and disaster recovery rehearsals G18/G19).
+2. **Known Follow-Ups**:
+   - Standalone DPDP plain-language consent notice UI (as separate modal/screen per DPDP Rules 2025).
+   - Meta data-deletion-instructions public page and callback endpoint (required by Meta App Review).
+   - Lawyer and CA verification of bracketed placeholders (`[COURT CITY]`, `[GSTIN]`, `[EFFECTIVE DATE]`, `[LAST UPDATED]`, SAC code 998314 vs 997331).
+3. **Next Steps**:
+   - Open PR #66 targeting `main`.
+   - Independent Muse review required before any merge. Do not call merge-ready.
+   - Do NOT merge on this prompt alone.
+
+
 
 

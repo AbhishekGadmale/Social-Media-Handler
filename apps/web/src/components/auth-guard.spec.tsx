@@ -49,13 +49,16 @@ describe('AuthGuard Route Logic & Protection', () => {
   });
 
   describe('PUBLIC_ROUTES list', () => {
-    it('defines exactly the 5 public routes', () => {
+    it('defines exactly the 8 public routes', () => {
       expect(PUBLIC_ROUTES).toEqual([
         '/login',
         '/signup',
         '/verify-email',
         '/forgot-password',
         '/reset-password',
+        '/terms',
+        '/privacy',
+        '/refund-cancellation',
       ]);
     });
   });
@@ -111,6 +114,36 @@ describe('AuthGuard Route Logic & Protection', () => {
 
       await waitFor(() => {
         expect(screen.getByTestId('reset-password-page')).toBeInTheDocument();
+      });
+      expect(mockReplace).not.toHaveBeenCalled();
+    });
+
+    it('renders terms page on /terms without redirecting to login', async () => {
+      currentPathname = '/terms';
+      renderWithGuard(<div data-testid="terms-page">Terms of Service</div>);
+
+      await waitFor(() => {
+        expect(screen.getByTestId('terms-page')).toBeInTheDocument();
+      });
+      expect(mockReplace).not.toHaveBeenCalled();
+    });
+
+    it('renders privacy page on /privacy without redirecting to login', async () => {
+      currentPathname = '/privacy';
+      renderWithGuard(<div data-testid="privacy-page">Privacy Policy</div>);
+
+      await waitFor(() => {
+        expect(screen.getByTestId('privacy-page')).toBeInTheDocument();
+      });
+      expect(mockReplace).not.toHaveBeenCalled();
+    });
+
+    it('renders refund-cancellation page on /refund-cancellation without redirecting to login', async () => {
+      currentPathname = '/refund-cancellation';
+      renderWithGuard(<div data-testid="refund-cancellation-page">Refund & Cancellation Policy</div>);
+
+      await waitFor(() => {
+        expect(screen.getByTestId('refund-cancellation-page')).toBeInTheDocument();
       });
       expect(mockReplace).not.toHaveBeenCalled();
     });

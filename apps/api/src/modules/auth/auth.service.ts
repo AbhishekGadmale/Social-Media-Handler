@@ -102,6 +102,7 @@ export class AuthService {
           hashedPassword,
           organizationName: dto.organizationName,
           workspaceName: dto.workspaceName,
+          termsAcceptedAt: new Date(),
           verificationToken: {
             tokenHash,
             expiresAt,

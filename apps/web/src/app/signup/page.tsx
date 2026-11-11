@@ -10,6 +10,7 @@ export default function SignupPage() {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [organizationName, setOrganizationName] = useState('');
   const [workspaceName, setWorkspaceName] = useState('');
+  const [termsAccepted, setTermsAccepted] = useState(false);
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -35,6 +36,9 @@ export default function SignupPage() {
     if (password !== confirmPassword) {
       return 'Passwords do not match.';
     }
+    if (!termsAccepted) {
+      return 'You must accept the Terms of Service and Privacy Policy to create an account.';
+    }
     return null;
   };
 
@@ -54,11 +58,13 @@ export default function SignupPage() {
       const payload: {
         email: string;
         password: string;
+        termsAccepted: boolean;
         organizationName?: string;
         workspaceName?: string;
       } = {
         email: email.trim(),
         password,
+        termsAccepted,
       };
 
       if (organizationName.trim()) {
@@ -327,6 +333,42 @@ export default function SignupPage() {
                 disabled={loading}
                 placeholder="Default Workspace"
               />
+            </div>
+          </div>
+
+          <div className="flex items-start">
+            <div className="flex h-5 items-center">
+              <input
+                id="termsAccepted"
+                name="termsAccepted"
+                type="checkbox"
+                checked={termsAccepted}
+                onChange={(e) => setTermsAccepted(e.target.checked)}
+                disabled={loading}
+                className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+              />
+            </div>
+            <div className="ml-3 text-sm">
+              <label htmlFor="termsAccepted" className="text-gray-600">
+                I agree to the{' '}
+                <Link
+                  href="/terms"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="font-medium text-blue-600 hover:text-blue-500 underline"
+                >
+                  Terms of Service
+                </Link>{' '}
+                and{' '}
+                <Link
+                  href="/privacy"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="font-medium text-blue-600 hover:text-blue-500 underline"
+                >
+                  Privacy Policy
+                </Link>
+              </label>
             </div>
           </div>
 
