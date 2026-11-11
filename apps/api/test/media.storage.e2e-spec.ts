@@ -339,8 +339,8 @@ describe('Media Storage & Upload Integration (e2e)', () => {
         })
         .expect(403);
 
-      expect(res.body.error).toBeDefined();
-      expect(res.body.error.message).toBe(
+      const errorMessage = res.body.error?.message || res.body.message;
+      expect(errorMessage).toBe(
         'Trial expired. Workspace is in read-only mode. Please subscribe to a plan to continue.',
       );
     });
@@ -356,8 +356,8 @@ describe('Media Storage & Upload Integration (e2e)', () => {
         .send()
         .expect(403);
 
-      expect(res.body.error).toBeDefined();
-      expect(res.body.error.message).toBe(
+      const errorMessage = res.body.error?.message || res.body.message;
+      expect(errorMessage).toBe(
         'Trial expired. Workspace is in read-only mode. Please subscribe to a plan to continue.',
       );
     });

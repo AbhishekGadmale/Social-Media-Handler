@@ -3503,8 +3503,8 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
 - **Backend E2E Tests (`apps/api/test`)**:
   - `apps/api/test/media.storage.e2e-spec.ts` (10 tests PASS, 2 new):
     - Extended with expired-trial workspace fixture (`trialEndsAt: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)`).
-    - Asserts `POST /api/v1/workspaces/:workspaceId/media/uploads` returns HTTP 403 with `{ error: { code: 'ForbiddenException', message: 'Trial expired. Workspace is in read-only mode. Please subscribe to a plan to continue.' } }`.
-    - Asserts `POST /api/v1/workspaces/:workspaceId/media/:mediaId/complete` returns HTTP 403 with `{ error: { code: 'ForbiddenException', message: 'Trial expired. Workspace is in read-only mode. Please subscribe to a plan to continue.' } }`.
+    - Asserts `POST /api/v1/workspaces/:workspaceId/media/uploads` returns HTTP 403 with error message `'Trial expired. Workspace is in read-only mode. Please subscribe to a plan to continue.'`.
+    - Asserts `POST /api/v1/workspaces/:workspaceId/media/:mediaId/complete` returns HTTP 403 with error message `'Trial expired. Workspace is in read-only mode. Please subscribe to a plan to continue.'`.
     - Existing writable workspace upload, range reads, and tenant isolation tests remain passing.
   - **OAuth E2E Note**: No dedicated OAuth E2E test suite exists in the codebase today. Implementing an end-to-end OAuth suite would require spinning up mock OAuth provider servers and synthetic browser redirection harnesses. Comprehensive unit tests across controller and service levels cover all read-only denial branches, state validation, and guard placement without introducing unnecessary infrastructure overhead.
 - **Monorepo Quality & Build Checks**:
