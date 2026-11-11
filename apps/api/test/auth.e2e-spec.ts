@@ -689,6 +689,7 @@ describe('AuthController (e2e)', () => {
         .send({
           email: signedUpEmail,
           password: 'correctpassword',
+          termsAccepted: true,
           organizationName: 'Signup Org E2E',
           workspaceName: 'Signup Workspace E2E',
         });
@@ -709,6 +710,8 @@ describe('AuthController (e2e)', () => {
       expect(signedUpUser.emailVerified).toBe(false);
       expect(signedUpUser.emailVerifiedAt).toBeNull();
       expect(signedUpUser.securityEpoch).toBe(1);
+      expect(signedUpUser.termsAcceptedAt).toBeDefined();
+      expect(signedUpUser.termsAcceptedAt).not.toBeNull();
 
       // Verify email verification token was provisioned in the same database transaction
       const tokenRecord = await prisma.emailVerificationToken.findFirst({
@@ -746,6 +749,7 @@ describe('AuthController (e2e)', () => {
         .send({
           email: signedUpEmail,
           password: 'DifferentPassword456!',
+          termsAccepted: true,
         });
 
       // Identical status and response payload
@@ -754,6 +758,34 @@ describe('AuthController (e2e)', () => {
         message: 'Registration request received.',
       });
       expect(res.headers['set-cookie']).toBeUndefined();
+    });
+
+    it('rejects signup with 400 when termsAccepted is missing from body', async () => {
+      const res = await request(app.getHttpServer())
+        .post('/api/v1/auth/signup')
+        .send({
+          email: `missing-terms-${generateId()}@example.com`,
+          password: 'ValidPassword123!',
+        });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBeDefined();
+    });
+
+    it('rejects signup with 400 and exact validation message when termsAccepted is false', async () => {
+      const res = await request(app.getHttpServer())
+        .post('/api/v1/auth/signup')
+        .send({
+          email: `false-terms-${generateId()}@example.com`,
+          password: 'ValidPassword123!',
+          termsAccepted: false,
+        });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBeDefined();
+      expect(JSON.stringify(res.body)).toContain(
+        'You must accept the Terms of Service and Privacy Policy',
+      );
     });
 
     it('Scenario 14: full email verification lifecycle, 403 guard gating, token consumption, and resend parity', async () => {

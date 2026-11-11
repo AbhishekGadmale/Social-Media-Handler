@@ -13,6 +13,7 @@ export interface CreateUserWithTenantInput {
   hashedPassword: string;
   organizationName?: string;
   workspaceName?: string;
+  termsAcceptedAt?: Date | null;
   verificationToken?: {
     tokenHash: string;
     expiresAt: Date;
@@ -91,6 +92,7 @@ export class UserRepository {
           emailVerified: false,
           emailVerifiedAt: null,
           securityEpoch: 1,
+          termsAcceptedAt: input.termsAcceptedAt ?? null,
         },
       });
 

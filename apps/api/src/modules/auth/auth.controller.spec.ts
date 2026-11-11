@@ -73,6 +73,7 @@ describe('AuthController', () => {
       const body = {
         email: 'newuser@example.com',
         password: 'Password123!',
+        termsAccepted: true,
         organizationName: 'New Org',
         workspaceName: 'New WS',
       };
@@ -93,6 +94,7 @@ describe('AuthController', () => {
       const body = {
         email: 'duplicate@example.com',
         password: 'Password123!',
+        termsAccepted: true,
       };
 
       const result = await controller.signup(body, reqMock as Request);
@@ -115,7 +117,11 @@ describe('AuthController', () => {
 
       await expect(
         controller.signup(
-          { email: 'user@example.com', password: 'Password123!' },
+          {
+            email: 'user@example.com',
+            password: 'Password123!',
+            termsAccepted: true,
+          },
           insecureReq as Request,
         ),
       ).rejects.toThrow(BadRequestException);

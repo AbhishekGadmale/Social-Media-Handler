@@ -2,6 +2,9 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { Test, TestingModule } from '@nestjs/testing';
 import { BadRequestException } from '@nestjs/common';
 import { AuthService, InvalidCredentialsException } from './auth.service';
+import { SignupDto } from './dto/signup.dto';
+import { validate } from 'class-validator';
+import { plainToInstance } from 'class-transformer';
 import {
   UserRepository,
   EmailVerificationTokenRepository,
@@ -122,6 +125,44 @@ describe('AuthService', () => {
   });
 
   describe('signup', () => {
+    describe('SignupDto validation', () => {
+      it('rejects signup payload when termsAccepted is missing (400 validation error)', async () => {
+        const dto = plainToInstance(SignupDto, {
+          email: 'user@example.com',
+          password: 'Password123!',
+        });
+        const errors = await validate(dto);
+        expect(errors.length).toBeGreaterThan(0);
+        const termsError = errors.find((e) => e.property === 'termsAccepted');
+        expect(termsError).toBeDefined();
+      });
+
+      it('rejects signup payload when termsAccepted is false with exact message', async () => {
+        const dto = plainToInstance(SignupDto, {
+          email: 'user@example.com',
+          password: 'Password123!',
+          termsAccepted: false,
+        });
+        const errors = await validate(dto);
+        expect(errors.length).toBeGreaterThan(0);
+        const termsError = errors.find((e) => e.property === 'termsAccepted');
+        expect(termsError).toBeDefined();
+        expect(termsError?.constraints?.equals).toBe(
+          'You must accept the Terms of Service and Privacy Policy',
+        );
+      });
+
+      it('accepts signup payload when termsAccepted is true', async () => {
+        const dto = plainToInstance(SignupDto, {
+          email: 'user@example.com',
+          password: 'Password123!',
+          termsAccepted: true,
+        });
+        const errors = await validate(dto);
+        expect(errors.length).toBe(0);
+      });
+    });
+
     it('successfully provisions user and workspace tenant on new registration', async () => {
       userRepoMock.findByEmail.mockResolvedValueOnce(null);
       vi.mocked(argon2.hash).mockResolvedValueOnce('$argon2id$hashed');
@@ -133,6 +174,7 @@ describe('AuthService', () => {
         {
           email: '  Alice@Example.com  ',
           password: 'Password123!',
+          termsAccepted: true,
           organizationName: 'Alice Org',
           workspaceName: 'Alice WS',
         },
@@ -148,6 +190,7 @@ describe('AuthService', () => {
         hashedPassword: '$argon2id$hashed',
         organizationName: 'Alice Org',
         workspaceName: 'Alice WS',
+        termsAcceptedAt: expect.any(Date),
         verificationToken: {
           tokenHash: expect.any(String),
           expiresAt: expect.any(Date),
@@ -178,6 +221,7 @@ describe('AuthService', () => {
         {
           email: 'alice@example.com',
           password: 'Password123!',
+          termsAccepted: true,
         },
         'req-duplicate',
       );
@@ -215,7 +259,11 @@ describe('AuthService', () => {
       );
 
       const result = await service.signup(
-        { email: 'race@example.com', password: 'Password123!' },
+        {
+          email: 'race@example.com',
+          password: 'Password123!',
+          termsAccepted: true,
+        },
         'req-race',
       );
 
@@ -251,6 +299,7 @@ describe('AuthService', () => {
         service.signup({
           email: 'other@example.com',
           password: 'Password123!',
+          termsAccepted: true,
         }),
       ).rejects.toThrow(p2002OtherError);
     });

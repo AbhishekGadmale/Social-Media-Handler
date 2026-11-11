@@ -11,6 +11,9 @@ export const PUBLIC_ROUTES = [
   '/verify-email',
   '/forgot-password',
   '/reset-password',
+  '/terms',
+  '/privacy',
+  '/refund-cancellation',
 ];
 
 export function AuthGuard({ children }: { children: React.ReactNode }) {
