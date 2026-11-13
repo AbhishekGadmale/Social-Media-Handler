@@ -3512,7 +3512,7 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
   - `pnpm --filter @agency-os/api exec eslint`: 0 errors across all modified production and test files.
   - `pnpm --filter @agency-os/api test`: 36 test files passed, 462 tests passed.
 - **CI Quality Gates**:
-  - Verification on GitHub Actions pending PR push.
+  - 6/6 verified green on reviewed head 5bded454 (GitGuardian Security Checks 10:22:19Z, Application Builds 10:23:18Z, Code Quality (Lint & Typecheck) 10:23:23Z, Tests 10:23:44Z, API E2E Tests 10:23:57Z, Docker Build & Smoke Test 10:30:56Z, all 2026-11-11 UTC). CI must be re-verified on the new head after this docs fix.
 
 ### 4. Release Gate & Next Steps
 
@@ -3521,9 +3521,8 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
 2. **Follow-Up Decision**:
    - Repository owner review on whether `PublicationsController` deletion/unschedule/cancel endpoints should remain accessible for read-only workspaces.
 3. **Next Steps**:
-   - Push branch `fix/mutation-gaps` to remote.
-   - Open PR targeting `main`.
-   - Verify 6/6 green CI checks on GitHub Actions.
+   - Branch `fix/mutation-gaps` pushed; PR #67 open targeting `main`.
+   - Verify 6/6 green CI checks on GitHub Actions on the new head after this docs fix.
    - Do NOT merge on this prompt alone.
 
 
