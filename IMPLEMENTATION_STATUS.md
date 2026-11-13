@@ -3525,6 +3525,89 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
    - Verify 6/6 green CI checks on GitHub Actions on the new head after this docs fix.
    - Do NOT merge on this prompt alone.
 
+---
+
+## 55. Meta (Facebook & Instagram) Connect Buttons on Accounts Page (2026-11-13)
+
+### 1. Context & Objectives
+
+- **Audit Origin**: Social Account Management & Multi-Platform Integration (`apps/web/src/app/[workspaceId]/accounts/page.tsx`).
+- **Background**: The backend implementation for Meta (`packages/providers/meta/meta.provider.ts`, `packages/providers/core/provider-registry.ts`, and `apps/api/src/modules/oauth`) was already fully functional for `facebook` and `instagram` providers. Discovery UI (`discovery-client.tsx`) and account cards (`account-card.tsx`) were already built to format and manage `FACEBOOK` and `INSTAGRAM` accounts. However, the accounts page previously only rendered state, handlers, and buttons for YouTube and LinkedIn.
+- **Goal**: Add dedicated 'Connect Facebook' and 'Connect Instagram' buttons to the accounts page in both empty state and header row, wire up independent connection state and error handling, maintain disabled synchronization during pending requests, and establish a dedicated page specification test suite.
+
+### 2. Architecture & Design Decisions
+
+#### A. Single Meta Flow vs. Two Actionable Buttons
+- **One OAuth Flow Underneath**: Meta's OAuth 2.0 flow is unified. Both Facebook and Instagram connect endpoints initiate the same underlying Facebook OAuth dialogue (`https://www.facebook.com/v20.0/dialog/oauth`). MetaProvider queries `/me/accounts?fields=...,instagram_business_account`, returning both Facebook Pages and linked Instagram Business/Professional accounts in a single discovery session.
+- **Two Distinct Buttons by Design**: Rather than combining them into a single 'Connect Facebook & Instagram' button, two distinct buttons ('Connect Facebook' and 'Connect Instagram') are provided. This preserves the established per-provider pattern and ensures that each provider's connection state remains independently observable and actionable through has-checks:
+  ```typescript
+  const hasFacebook = accounts.some(a => a.provider === 'FACEBOOK' && a.status !== 'DISCONNECTED');
+  const hasInstagram = accounts.some(a => a.provider === 'INSTAGRAM' && a.status !== 'DISCONNECTED');
+  ```
+  If a workspace has an active Facebook page connected but lacks Instagram (or vice versa), the unlinked provider remains visible in the header row for immediate action.
+
+#### B. Exact Endpoints & Fixed Server-Side Scopes
+- **Endpoints Called**:
+  - Facebook: `workspaces/${workspaceId}/oauth/facebook/connect`
+  - Instagram: `workspaces/${workspaceId}/oauth/instagram/connect`
+- **No `?scopes` Query Parameter**: Unlike LinkedIn's connect call (`workspaces/${workspaceId}/oauth/linkedin/connect?scopes=w_member_social`), neither Meta endpoint appends a `?scopes` parameter. Meta's authorization scopes are fixed server-side in `MetaProvider.getAuthorizationUrl` (`packages/providers/meta/meta.provider.ts`), which defines and requests exactly five fixed scopes:
+  1. `pages_show_list`
+  2. `pages_read_engagement`
+  3. `pages_manage_posts`
+  4. `instagram_basic`
+  5. `instagram_content_publish`
+  Any client-supplied `?scopes` query parameter is ignored by `MetaProvider`.
+
+#### C. State, Handlers, and Button Placements
+- **State Added**:
+  - `const [isConnectingFb, setIsConnectingFb] = useState(false);`
+  - `const [isConnectingIg, setIsConnectingIg] = useState(false);`
+- **Error Messages**:
+  - Facebook failure: `'Failed to initiate Facebook connection. Please try again.'`
+  - Instagram failure: `'Failed to initiate Instagram connection. Please try again.'`
+- **Disabled Synchronization**:
+  - All four buttons in both the header row and the empty state are disabled when any connection request is in flight:
+    `disabled={isConnectingYt || isConnectingLi || isConnectingFb || isConnectingIg}`
+- **Render Locations**:
+  1. **Header Row (`accounts.length > 0`)**: Rendered inside `{ !hasFacebook && (...) }` and `{ !hasInstagram && (...) }`, alongside YouTube and LinkedIn.
+  2. **Empty State (`accounts.length === 0`)**: All four connect buttons rendered side-by-side.
+
+### 3. Verification & Test Evidence
+
+- **Frontend Spec Suite (`apps/web/src/app/[workspaceId]/accounts/page.spec.tsx`)**:
+  - New dedicated accounts page test suite following repo standards (`QueryClientProvider`, `vi.mock('next/navigation')`, `vi.mock('../../../lib/api/client')` with faithful `ApiError` class).
+  - **Test Count**: Exactly 11 tests across 11 `it()` blocks (verified by code count):
+    1. `(a) empty state renders all four buttons: Connect YouTube, Connect LinkedIn, Connect Facebook, Connect Instagram`: Verifies empty state displays all 4 platform connect buttons.
+    2. `(b) clicking Connect Facebook calls api.post with exactly workspaces/<workspaceId>/oauth/facebook/connect (no query string) and assigns window.location.href`: Verifies exact endpoint call without query parameters and browser redirect.
+    3. `(c) clicking Connect Instagram calls api.post with exactly workspaces/<workspaceId>/oauth/instagram/connect and assigns window.location.href`: Verifies exact endpoint call without query parameters and browser redirect.
+    4. `(d) api.post rejecting on the Facebook click shows Failed to initiate Facebook connection. Please try again.`: Verifies Facebook-specific error message on API rejection.
+    5. `(d) api.post rejecting on the Instagram click shows Failed to initiate Instagram connection. Please try again.`: Verifies Instagram-specific error message on API rejection.
+    6. `(e) with an ACTIVE FACEBOOK account in the list, Connect Facebook is NOT rendered and Connect Instagram IS rendered (header row)`: Verifies header row has-check hides Facebook when already active.
+    7. `(e) with an ACTIVE INSTAGRAM account in the list, Connect Facebook IS rendered and Connect Instagram is NOT rendered (header row)`: Verifies header row has-check hides Instagram when already active.
+    8. `(f) a DISCONNECTED FACEBOOK account does NOT hide Connect Facebook (header row)`: Verifies `status !== 'DISCONNECTED'` rule keeps connect button visible for reconnecting.
+    9. `(g) regression: Connect YouTube still posts to workspaces/<workspaceId>/oauth/youtube/connect`: Verifies YouTube connect regression parity.
+    10. `(g) regression: Connect LinkedIn still posts to workspaces/<workspaceId>/oauth/linkedin/connect?scopes=w_member_social`: Verifies LinkedIn connect regression parity with required scopes query.
+    11. `(h) disables all connect buttons while any connect is in flight`: Verifies multi-button disabled synchronization during in-flight requests.
+- **Monorepo Quality & Build Checks**:
+  - `pnpm --filter @agency-os/web test`: 21 test files passed, 224 tests passed (including all 11 accounts page tests).
+  - `pnpm turbo run lint typecheck`: 15 successful, 0 errors across monorepo.
+- **CI Quality Gates**:
+  - 6/6 verified green on reviewed head f3eaa75f (GitGuardian Security Checks 07:22:49Z, Application Builds 07:23:36Z, Tests 07:24:22Z, API E2E Tests 07:24:29Z, Code Quality (Lint & Typecheck) 07:24:34Z, Docker Build & Smoke Test 07:31:20Z, all 2026-11-13 UTC). CI must be re-verified on the new head after this docs fix.
+
+### 4. Live-Function Dependencies & Release Gate
+
+1. **Honest Live-Function Dependency**:
+   - The UI buttons connect to real, implemented backend endpoints (`POST /api/v1/workspaces/:workspaceId/oauth/facebook/connect` and `.../instagram/connect`).
+   - However, completing a real Meta login round-trip in production requires `META_CLIENT_ID` and `META_CLIENT_SECRET` configured on the server, plus Meta App Review approval for the Meta Developer App (the repository owner's external platform-application track).
+   - The buttons are not conditionally hidden or disabled based on server credential availability, as the API exposes no such configuration flag to the web client.
+2. **Release Gate**:
+   - **Live Deployment**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending external infrastructure provisioning, live email delivery verification, live payment credentials, Meta App Review approval, and disaster recovery rehearsals G18/G19).
+3. **Next Steps**:
+   - Branch `feat/meta-connect-buttons` pushed; PR #68 open targeting `main`.
+   - Verify 6/6 green CI checks on GitHub Actions on the new head after this docs fix.
+   - Do NOT merge on this prompt alone.
+
+
 
 
 

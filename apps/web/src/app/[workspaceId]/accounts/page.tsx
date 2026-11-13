@@ -16,6 +16,8 @@ export default function AccountsPage() {
 
   const [isConnectingYt, setIsConnectingYt] = useState(false);
   const [isConnectingLi, setIsConnectingLi] = useState(false);
+  const [isConnectingFb, setIsConnectingFb] = useState(false);
+  const [isConnectingIg, setIsConnectingIg] = useState(false);
   const [connectError, setConnectError] = useState<string | null>(null);
 
   const {
@@ -29,6 +31,8 @@ export default function AccountsPage() {
   const accounts = data?.accounts || [];
   const hasYoutube = accounts.some(a => a.provider === 'YOUTUBE' && a.status !== 'DISCONNECTED');
   const hasLinkedin = accounts.some(a => a.provider === 'LINKEDIN' && a.status !== 'DISCONNECTED');
+  const hasFacebook = accounts.some(a => a.provider === 'FACEBOOK' && a.status !== 'DISCONNECTED');
+  const hasInstagram = accounts.some(a => a.provider === 'INSTAGRAM' && a.status !== 'DISCONNECTED');
 
   const handleConnectYoutube = async () => {
     try {
@@ -62,6 +66,38 @@ export default function AccountsPage() {
     }
   };
 
+  const handleConnectFacebook = async () => {
+    try {
+      setIsConnectingFb(true);
+      setConnectError(null);
+      const res = await api.post<{ url: string }>(`workspaces/${workspaceId}/oauth/facebook/connect`);
+      if (res.url) {
+        window.location.href = res.url;
+      } else {
+        throw new Error('No authorization URL returned');
+      }
+    } catch {
+      setConnectError('Failed to initiate Facebook connection. Please try again.');
+      setIsConnectingFb(false);
+    }
+  };
+
+  const handleConnectInstagram = async () => {
+    try {
+      setIsConnectingIg(true);
+      setConnectError(null);
+      const res = await api.post<{ url: string }>(`workspaces/${workspaceId}/oauth/instagram/connect`);
+      if (res.url) {
+        window.location.href = res.url;
+      } else {
+        throw new Error('No authorization URL returned');
+      }
+    } catch {
+      setConnectError('Failed to initiate Instagram connection. Please try again.');
+      setIsConnectingIg(false);
+    }
+  };
+
   return (
     <div className="p-8 max-w-5xl mx-auto">
       <div className="mb-8 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -76,7 +112,7 @@ export default function AccountsPage() {
           <div className="flex flex-col items-end gap-2">
             <div className="flex gap-2">
               {!hasYoutube && (
-                <Button onClick={handleConnectYoutube} disabled={isConnectingYt || isConnectingLi}>
+                <Button onClick={handleConnectYoutube} disabled={isConnectingYt || isConnectingLi || isConnectingFb || isConnectingIg}>
                   {isConnectingYt ? (
                     <RefreshCw className="w-4 h-4 mr-2 animate-spin" aria-hidden="true" />
                   ) : (
@@ -86,13 +122,33 @@ export default function AccountsPage() {
                 </Button>
               )}
               {!hasLinkedin && (
-                <Button onClick={handleConnectLinkedin} disabled={isConnectingYt || isConnectingLi}>
+                <Button onClick={handleConnectLinkedin} disabled={isConnectingYt || isConnectingLi || isConnectingFb || isConnectingIg}>
                   {isConnectingLi ? (
                     <RefreshCw className="w-4 h-4 mr-2 animate-spin" aria-hidden="true" />
                   ) : (
                     <Plus className="w-4 h-4 mr-2" aria-hidden="true" />
                   )}
                   Connect LinkedIn
+                </Button>
+              )}
+              {!hasFacebook && (
+                <Button onClick={handleConnectFacebook} disabled={isConnectingYt || isConnectingLi || isConnectingFb || isConnectingIg}>
+                  {isConnectingFb ? (
+                    <RefreshCw className="w-4 h-4 mr-2 animate-spin" aria-hidden="true" />
+                  ) : (
+                    <Plus className="w-4 h-4 mr-2" aria-hidden="true" />
+                  )}
+                  Connect Facebook
+                </Button>
+              )}
+              {!hasInstagram && (
+                <Button onClick={handleConnectInstagram} disabled={isConnectingYt || isConnectingLi || isConnectingFb || isConnectingIg}>
+                  {isConnectingIg ? (
+                    <RefreshCw className="w-4 h-4 mr-2 animate-spin" aria-hidden="true" />
+                  ) : (
+                    <Plus className="w-4 h-4 mr-2" aria-hidden="true" />
+                  )}
+                  Connect Instagram
                 </Button>
               )}
             </div>
@@ -155,7 +211,7 @@ export default function AccountsPage() {
           </p>
           <div className="mt-6 flex flex-col items-center gap-2">
             <div className="flex gap-2">
-              <Button onClick={handleConnectYoutube} disabled={isConnectingYt || isConnectingLi}>
+              <Button onClick={handleConnectYoutube} disabled={isConnectingYt || isConnectingLi || isConnectingFb || isConnectingIg}>
                 {isConnectingYt ? (
                   <RefreshCw className="w-4 h-4 mr-2 animate-spin" aria-hidden="true" />
                 ) : (
@@ -163,13 +219,29 @@ export default function AccountsPage() {
                 )}
                 Connect YouTube
               </Button>
-              <Button onClick={handleConnectLinkedin} disabled={isConnectingYt || isConnectingLi}>
+              <Button onClick={handleConnectLinkedin} disabled={isConnectingYt || isConnectingLi || isConnectingFb || isConnectingIg}>
                 {isConnectingLi ? (
                   <RefreshCw className="w-4 h-4 mr-2 animate-spin" aria-hidden="true" />
                 ) : (
                   <Plus className="w-4 h-4 mr-2" aria-hidden="true" />
                 )}
                 Connect LinkedIn
+              </Button>
+              <Button onClick={handleConnectFacebook} disabled={isConnectingYt || isConnectingLi || isConnectingFb || isConnectingIg}>
+                {isConnectingFb ? (
+                  <RefreshCw className="w-4 h-4 mr-2 animate-spin" aria-hidden="true" />
+                ) : (
+                  <Plus className="w-4 h-4 mr-2" aria-hidden="true" />
+                )}
+                Connect Facebook
+              </Button>
+              <Button onClick={handleConnectInstagram} disabled={isConnectingYt || isConnectingLi || isConnectingFb || isConnectingIg}>
+                {isConnectingIg ? (
+                  <RefreshCw className="w-4 h-4 mr-2 animate-spin" aria-hidden="true" />
+                ) : (
+                  <Plus className="w-4 h-4 mr-2" aria-hidden="true" />
+                )}
+                Connect Instagram
               </Button>
             </div>
             {connectError && <p className="text-xs text-red-600">{connectError}</p>}
