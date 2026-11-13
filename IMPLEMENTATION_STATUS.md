@@ -3799,7 +3799,7 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
 ### 4. Release Gate & Next Steps
 
 1. **CI Quality Gates**:
-   - Verification pending PR push on branch `fix/guard-publications-mutations`.
+   - 6/6 verified green on reviewed head 83ab473 (GitGuardian Security Checks 12:22:31Z, Application Builds 12:23:22Z, Code Quality (Lint & Typecheck) 12:23:57Z, API E2E Tests 12:24:04Z, Tests 12:24:04Z, Docker Build & Smoke Test 12:31:00Z, all 2026-11-13 UTC). CI must be re-verified on the new head after this docs update.
 2. **Release Gate**:
    - **Live Deployment**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending external infrastructure provisioning, live email delivery verification, live payment credentials, and disaster recovery rehearsals G18/G19).
 
