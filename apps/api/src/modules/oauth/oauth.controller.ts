@@ -18,6 +18,7 @@ import { OAuthService } from './oauth.service';
 import { AuthGuard } from '../auth/guards/auth.guard';
 import { WorkspaceGuard } from '../auth/guards/workspace.guard';
 import { PermissionGuard } from '../auth/guards/permission.guard';
+import { WorkspaceWritableGuard } from '../billing/guards/workspace-writable.guard';
 import { RequirePermission } from '../auth/decorators/permission.decorator';
 import type { Request, Response } from 'express';
 import { SocialProvider } from '@agency-os/database';
@@ -44,7 +45,7 @@ export class OAuthController {
 
   @Throttle({ default: RateLimitPolicies.expensive })
   @Post('v1/workspaces/:workspaceId/oauth/:provider/connect')
-  @UseGuards(AuthGuard, WorkspaceGuard, PermissionGuard)
+  @UseGuards(AuthGuard, WorkspaceGuard, PermissionGuard, WorkspaceWritableGuard)
   @RequirePermission('accounts.connect')
   async connectProvider(
     @Param('workspaceId', ParseUUIDPipe) workspaceId: string,
@@ -235,7 +236,7 @@ export class OAuthController {
   }
 
   @Post('v1/workspaces/:workspaceId/oauth/discoveries/:discoveryId/select')
-  @UseGuards(AuthGuard, WorkspaceGuard, PermissionGuard)
+  @UseGuards(AuthGuard, WorkspaceGuard, PermissionGuard, WorkspaceWritableGuard)
   @RequirePermission('accounts.connect')
   async selectDiscoveryProfiles(
     @Param('workspaceId', ParseUUIDPipe) workspaceId: string,

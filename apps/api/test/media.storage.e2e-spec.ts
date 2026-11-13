@@ -17,6 +17,7 @@ describe('Media Storage & Upload Integration (e2e)', () => {
   let testUser: any;
   let wsA: string;
   let wsB: string;
+  let wsExpired: string;
 
   beforeAll(async () => {
     process.env.OBJECT_STORAGE_ENDPOINT = 'http://127.0.0.1:9000';
@@ -107,6 +108,16 @@ describe('Media Storage & Upload Integration (e2e)', () => {
     });
     wsB = wB.id;
 
+    const wExpired = await prisma.workspace.create({
+      data: {
+        id: generateId(),
+        name: 'Workspace Expired',
+        organizationId: org.id,
+        trialEndsAt: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000),
+      },
+    });
+    wsExpired = wExpired.id;
+
     await prisma.workspaceMember.create({
       data: {
         id: generateId(),
@@ -120,6 +131,15 @@ describe('Media Storage & Upload Integration (e2e)', () => {
       data: {
         id: generateId(),
         workspaceId: wsB,
+        userId: testUser.id,
+        role: 'OWNER',
+      },
+    });
+
+    await prisma.workspaceMember.create({
+      data: {
+        id: generateId(),
+        workspaceId: wsExpired,
         userId: testUser.id,
         role: 'OWNER',
       },
@@ -303,6 +323,43 @@ describe('Media Storage & Upload Integration (e2e)', () => {
 
         .send()
         .expect(404); // Not found in workspace A
+    });
+  });
+
+  describe('Read-Only Expired Trial Workspace Mutation Blocking', () => {
+    it('should return 403 when initiating upload on an expired trial workspace', async () => {
+      const res = await request(app.getHttpServer())
+        .post(`/api/v1/workspaces/${wsExpired}/media/uploads`)
+        .set('Cookie', `${sessionCookie}; csrfToken=${csrfToken}`)
+        .set('x-csrf-token', csrfToken)
+        .send({
+          filename: 'test-expired.mp4',
+          mimeType: 'video/mp4',
+          byteSize: 1000,
+        })
+        .expect(403);
+
+      const errorMessage = res.body.error?.message || res.body.message;
+      expect(errorMessage).toBe(
+        'Trial expired. Workspace is in read-only mode. Please subscribe to a plan to continue.',
+      );
+    });
+
+    it('should return 403 when completing upload on an expired trial workspace', async () => {
+      const dummyMediaAssetId = crypto.randomUUID();
+      const res = await request(app.getHttpServer())
+        .post(
+          `/api/v1/workspaces/${wsExpired}/media/${dummyMediaAssetId}/complete`,
+        )
+        .set('Cookie', `${sessionCookie}; csrfToken=${csrfToken}`)
+        .set('x-csrf-token', csrfToken)
+        .send()
+        .expect(403);
+
+      const errorMessage = res.body.error?.message || res.body.message;
+      expect(errorMessage).toBe(
+        'Trial expired. Workspace is in read-only mode. Please subscribe to a plan to continue.',
+      );
     });
   });
 });
