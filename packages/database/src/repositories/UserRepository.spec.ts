@@ -260,4 +260,68 @@ describe('UserRepository', () => {
       expect(result.securityEpoch).toBe(3);
     });
   });
+
+  describe('incrementFailedLoginAttempts', () => {
+    it('increments failedLoginAttempts in the database', async () => {
+      prismaMock.user.update.mockResolvedValue({
+        id: 'user-1',
+        failedLoginAttempts: 1,
+      });
+
+      const result = await repo.incrementFailedLoginAttempts('user-1');
+
+      expect(prismaMock.user.update).toHaveBeenCalledWith({
+        where: { id: 'user-1' },
+        data: {
+          failedLoginAttempts: { increment: 1 },
+        },
+      });
+      expect(result.failedLoginAttempts).toBe(1);
+    });
+  });
+
+  describe('lockUserAccount', () => {
+    it('sets lockedUntil and resets failedLoginAttempts to 0', async () => {
+      const lockedUntil = new Date(Date.now() + 15 * 60 * 1000);
+      prismaMock.user.update.mockResolvedValue({
+        id: 'user-1',
+        lockedUntil,
+        failedLoginAttempts: 0,
+      });
+
+      const result = await repo.lockUserAccount('user-1', lockedUntil);
+
+      expect(prismaMock.user.update).toHaveBeenCalledWith({
+        where: { id: 'user-1' },
+        data: {
+          lockedUntil,
+          failedLoginAttempts: 0,
+        },
+      });
+      expect(result.lockedUntil).toEqual(lockedUntil);
+      expect(result.failedLoginAttempts).toBe(0);
+    });
+  });
+
+  describe('clearFailedLoginAttempts', () => {
+    it('resets failedLoginAttempts to 0 and clears lockedUntil to null', async () => {
+      prismaMock.user.update.mockResolvedValue({
+        id: 'user-1',
+        failedLoginAttempts: 0,
+        lockedUntil: null,
+      });
+
+      const result = await repo.clearFailedLoginAttempts('user-1');
+
+      expect(prismaMock.user.update).toHaveBeenCalledWith({
+        where: { id: 'user-1' },
+        data: {
+          failedLoginAttempts: 0,
+          lockedUntil: null,
+        },
+      });
+      expect(result.failedLoginAttempts).toBe(0);
+      expect(result.lockedUntil).toBeNull();
+    });
+  });
 });

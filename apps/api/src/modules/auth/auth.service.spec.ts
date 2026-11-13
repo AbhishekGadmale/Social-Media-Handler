@@ -1,7 +1,12 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { Test, TestingModule } from '@nestjs/testing';
 import { BadRequestException } from '@nestjs/common';
-import { AuthService, InvalidCredentialsException } from './auth.service';
+import {
+  AuthService,
+  InvalidCredentialsException,
+  ACCOUNT_LOCKOUT_MS,
+  MAX_FAILED_LOGIN_ATTEMPTS,
+} from './auth.service';
 import { SignupDto } from './dto/signup.dto';
 import { validate } from 'class-validator';
 import { plainToInstance } from 'class-transformer';
@@ -31,6 +36,9 @@ describe('AuthService', () => {
     updatePasswordAndIncrementEpoch: any;
     incrementSecurityEpoch: any;
     createWithTenantTransaction: any;
+    incrementFailedLoginAttempts: any;
+    lockUserAccount: any;
+    clearFailedLoginAttempts: any;
   };
   let sessionManagerMock: {
     createSession: any;
@@ -68,6 +76,15 @@ describe('AuthService', () => {
       updatePasswordAndIncrementEpoch: vi.fn(),
       incrementSecurityEpoch: vi.fn(),
       createWithTenantTransaction: vi.fn(),
+      incrementFailedLoginAttempts: vi
+        .fn()
+        .mockResolvedValue({ failedLoginAttempts: 1 }),
+      lockUserAccount: vi
+        .fn()
+        .mockResolvedValue({ failedLoginAttempts: 0, lockedUntil: new Date() }),
+      clearFailedLoginAttempts: vi
+        .fn()
+        .mockResolvedValue({ failedLoginAttempts: 0, lockedUntil: null }),
     };
 
     sessionManagerMock = {
@@ -481,6 +498,8 @@ describe('AuthService', () => {
         email: 'user@example.com',
         hashedPassword: '$argon2id$mockedhash',
         securityEpoch: 3,
+        failedLoginAttempts: 0,
+        lockedUntil: null,
       };
       userRepoMock.findByEmail.mockResolvedValueOnce(mockUser);
       vi.mocked(argon2.verify).mockResolvedValueOnce(true);
@@ -523,6 +542,9 @@ describe('AuthService', () => {
       expect(caughtError.name).toBe('UnauthorizedException');
       expect(argon2.verify).not.toHaveBeenCalled();
       expect(sessionManagerMock.createSession).not.toHaveBeenCalled();
+      expect(userRepoMock.incrementFailedLoginAttempts).not.toHaveBeenCalled();
+      expect(userRepoMock.lockUserAccount).not.toHaveBeenCalled();
+      expect(userRepoMock.clearFailedLoginAttempts).not.toHaveBeenCalled();
     });
 
     it('throws InvalidCredentialsException with INVALID_PASSWORD and resolvedUserId when password check fails', async () => {
@@ -531,6 +553,8 @@ describe('AuthService', () => {
         email: 'existing@example.com',
         hashedPassword: '$argon2id$validuserhash',
         securityEpoch: 1,
+        failedLoginAttempts: 0,
+        lockedUntil: null,
       };
       userRepoMock.findByEmail.mockResolvedValueOnce(mockUser);
       vi.mocked(argon2.verify).mockResolvedValueOnce(false);
@@ -552,7 +576,192 @@ describe('AuthService', () => {
         '$argon2id$validuserhash',
         'wrongpassword',
       );
+      expect(userRepoMock.incrementFailedLoginAttempts).toHaveBeenCalledWith(
+        'user-exists-2',
+      );
+      expect(userRepoMock.lockUserAccount).not.toHaveBeenCalled();
       expect(sessionManagerMock.createSession).not.toHaveBeenCalled();
+    });
+
+    it('wrong password calls incrementFailedLoginAttempts and throws INVALID_PASSWORD without locking below threshold', async () => {
+      const mockUser = {
+        id: 'user-fail-1',
+        email: 'fail@example.com',
+        hashedPassword: '$argon2id$validuserhash',
+        securityEpoch: 1,
+        failedLoginAttempts: 1,
+        lockedUntil: null,
+      };
+      userRepoMock.findByEmail.mockResolvedValueOnce(mockUser);
+      vi.mocked(argon2.verify).mockResolvedValueOnce(false);
+      userRepoMock.incrementFailedLoginAttempts.mockResolvedValueOnce({
+        ...mockUser,
+        failedLoginAttempts: 2,
+      });
+
+      let caughtError: any;
+      try {
+        await service.login('fail@example.com', 'wrongpassword');
+      } catch (err) {
+        caughtError = err;
+      }
+
+      expect(caughtError).toBeInstanceOf(InvalidCredentialsException);
+      expect(caughtError.reason).toBe('INVALID_PASSWORD');
+      expect(caughtError.resolvedUserId).toBe('user-fail-1');
+      expect(userRepoMock.incrementFailedLoginAttempts).toHaveBeenCalledWith(
+        'user-fail-1',
+      );
+      expect(userRepoMock.lockUserAccount).not.toHaveBeenCalled();
+      expect(sessionManagerMock.createSession).not.toHaveBeenCalled();
+    });
+
+    it('the failure that reaches threshold (5) calls lockUserAccount with lockedUntil ~15m in future and still throws INVALID_PASSWORD', async () => {
+      const mockUser = {
+        id: 'user-threshold-1',
+        email: 'threshold@example.com',
+        hashedPassword: '$argon2id$validuserhash',
+        securityEpoch: 1,
+        failedLoginAttempts: 4,
+        lockedUntil: null,
+      };
+      userRepoMock.findByEmail.mockResolvedValueOnce(mockUser);
+      vi.mocked(argon2.verify).mockResolvedValueOnce(false);
+      userRepoMock.incrementFailedLoginAttempts.mockResolvedValueOnce({
+        ...mockUser,
+        failedLoginAttempts: 5,
+      });
+
+      const before = Date.now();
+      let caughtError: any;
+      try {
+        await service.login('threshold@example.com', 'wrongpassword');
+      } catch (err) {
+        caughtError = err;
+      }
+      const after = Date.now();
+
+      expect(caughtError).toBeInstanceOf(InvalidCredentialsException);
+      expect(caughtError.reason).toBe('INVALID_PASSWORD');
+      expect(caughtError.resolvedUserId).toBe('user-threshold-1');
+      expect(userRepoMock.incrementFailedLoginAttempts).toHaveBeenCalledWith(
+        'user-threshold-1',
+      );
+      expect(userRepoMock.lockUserAccount).toHaveBeenCalledTimes(1);
+
+      const [lockUserId, lockDate] = userRepoMock.lockUserAccount.mock.calls[0];
+      expect(lockUserId).toBe('user-threshold-1');
+      expect(lockDate).toBeInstanceOf(Date);
+      const expectedLock = before + ACCOUNT_LOCKOUT_MS;
+      expect(lockDate.getTime()).toBeGreaterThanOrEqual(expectedLock - 1000);
+      expect(lockDate.getTime()).toBeLessThanOrEqual(
+        after + ACCOUNT_LOCKOUT_MS + 1000,
+      );
+      expect(sessionManagerMock.createSession).not.toHaveBeenCalled();
+    });
+
+    it('locked account (lockedUntil in future) with CORRECT password throws ACCOUNT_LOCKED without calling argon2.verify or creating session', async () => {
+      const lockedUntil = new Date(Date.now() + 10 * 60 * 1000);
+      const lockedUser = {
+        id: 'user-locked-1',
+        email: 'locked@example.com',
+        hashedPassword: '$argon2id$validuserhash',
+        securityEpoch: 1,
+        failedLoginAttempts: 0,
+        lockedUntil,
+      };
+      userRepoMock.findByEmail.mockResolvedValueOnce(lockedUser);
+
+      let caughtError: any;
+      try {
+        await service.login('locked@example.com', 'correctpassword');
+      } catch (err) {
+        caughtError = err;
+      }
+
+      expect(caughtError).toBeInstanceOf(InvalidCredentialsException);
+      expect(caughtError.reason).toBe('ACCOUNT_LOCKED');
+      expect(caughtError.resolvedUserId).toBe('user-locked-1');
+      expect(caughtError.getStatus()).toBe(401);
+      expect(caughtError.message).toBe('Invalid credentials');
+      expect(argon2.verify).not.toHaveBeenCalled();
+      expect(sessionManagerMock.createSession).not.toHaveBeenCalled();
+      expect(userRepoMock.incrementFailedLoginAttempts).not.toHaveBeenCalled();
+      expect(userRepoMock.clearFailedLoginAttempts).not.toHaveBeenCalled();
+    });
+
+    it('lockedUntil in the PAST with correct password proceeds to successful login (verify called, session created)', async () => {
+      const pastLockedUntil = new Date(Date.now() - 5 * 60 * 1000);
+      const user = {
+        id: 'user-expired-lock-1',
+        email: 'expiredlock@example.com',
+        hashedPassword: '$argon2id$validuserhash',
+        securityEpoch: 1,
+        failedLoginAttempts: 0,
+        lockedUntil: pastLockedUntil,
+      };
+      userRepoMock.findByEmail.mockResolvedValueOnce(user);
+      vi.mocked(argon2.verify).mockResolvedValueOnce(true);
+      sessionManagerMock.createSession.mockResolvedValueOnce('sess-unlocked-1');
+      userRepoMock.findById.mockResolvedValueOnce(user);
+
+      const result = await service.login(
+        'expiredlock@example.com',
+        'correctpassword',
+      );
+
+      expect(argon2.verify).toHaveBeenCalledWith(
+        '$argon2id$validuserhash',
+        'correctpassword',
+      );
+      expect(userRepoMock.clearFailedLoginAttempts).toHaveBeenCalledWith(
+        'user-expired-lock-1',
+      );
+      expect(sessionManagerMock.createSession).toHaveBeenCalledWith(
+        'user-expired-lock-1',
+        1,
+      );
+      expect(result.sessionId).toBe('sess-unlocked-1');
+    });
+
+    it('successful login with failedLoginAttempts > 0 calls clearFailedLoginAttempts', async () => {
+      const dirtyUser = {
+        id: 'user-dirty-1',
+        email: 'dirty@example.com',
+        hashedPassword: '$argon2id$validuserhash',
+        securityEpoch: 1,
+        failedLoginAttempts: 3,
+        lockedUntil: null,
+      };
+      userRepoMock.findByEmail.mockResolvedValueOnce(dirtyUser);
+      vi.mocked(argon2.verify).mockResolvedValueOnce(true);
+      sessionManagerMock.createSession.mockResolvedValueOnce('sess-clean-1');
+      userRepoMock.findById.mockResolvedValueOnce(dirtyUser);
+
+      await service.login('dirty@example.com', 'correctpassword');
+
+      expect(userRepoMock.clearFailedLoginAttempts).toHaveBeenCalledWith(
+        'user-dirty-1',
+      );
+    });
+
+    it('successful login with clean state (failedLoginAttempts = 0 and lockedUntil = null) does NOT call clearFailedLoginAttempts', async () => {
+      const cleanUser = {
+        id: 'user-clean-1',
+        email: 'clean@example.com',
+        hashedPassword: '$argon2id$validuserhash',
+        securityEpoch: 1,
+        failedLoginAttempts: 0,
+        lockedUntil: null,
+      };
+      userRepoMock.findByEmail.mockResolvedValueOnce(cleanUser);
+      vi.mocked(argon2.verify).mockResolvedValueOnce(true);
+      sessionManagerMock.createSession.mockResolvedValueOnce('sess-clean-2');
+      userRepoMock.findById.mockResolvedValueOnce(cleanUser);
+
+      await service.login('clean@example.com', 'correctpassword');
+
+      expect(userRepoMock.clearFailedLoginAttempts).not.toHaveBeenCalled();
     });
 
     it('detects in-flight securityEpoch change and destroys newly created session', async () => {
@@ -561,12 +770,16 @@ describe('AuthService', () => {
         email: 'race@example.com',
         hashedPassword: '$argon2id$passwordhash',
         securityEpoch: 1,
+        failedLoginAttempts: 0,
+        lockedUntil: null,
       };
       const updatedUser = {
         id: 'user-race-1',
         email: 'race@example.com',
         hashedPassword: '$argon2id$passwordhash',
         securityEpoch: 2, // epoch changed mid-flight due to concurrent password change!
+        failedLoginAttempts: 0,
+        lockedUntil: null,
       };
 
       userRepoMock.findByEmail.mockResolvedValueOnce(originalUser);
@@ -592,6 +805,8 @@ describe('AuthService', () => {
         email: 'reread@example.com',
         hashedPassword: '$argon2id$passwordhash',
         securityEpoch: 1,
+        failedLoginAttempts: 0,
+        lockedUntil: null,
       };
 
       userRepoMock.findByEmail.mockResolvedValueOnce(originalUser);

@@ -72,6 +72,35 @@ export class UserRepository {
     });
   }
 
+  async incrementFailedLoginAttempts(id: string): Promise<User> {
+    return this.prisma.user.update({
+      where: { id },
+      data: {
+        failedLoginAttempts: { increment: 1 },
+      },
+    });
+  }
+
+  async lockUserAccount(id: string, lockedUntil: Date): Promise<User> {
+    return this.prisma.user.update({
+      where: { id },
+      data: {
+        lockedUntil,
+        failedLoginAttempts: 0,
+      },
+    });
+  }
+
+  async clearFailedLoginAttempts(id: string): Promise<User> {
+    return this.prisma.user.update({
+      where: { id },
+      data: {
+        failedLoginAttempts: 0,
+        lockedUntil: null,
+      },
+    });
+  }
+
   /**
    * Atomically provisions a new User, Organization, Workspace, and OWNER WorkspaceMember.
    * If any step fails or an email uniqueness conflict occurs, rolls back the entire transaction.
