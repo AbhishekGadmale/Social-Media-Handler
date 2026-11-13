@@ -58,6 +58,7 @@ describe('SignupPage', () => {
     render(<SignupPage />);
 
     expect(screen.getByRole('heading', { name: /create your account/i })).toBeInTheDocument();
+    expect(screen.getByLabelText(/full name/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/email address/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/^password/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/confirm password/i)).toBeInTheDocument();
@@ -157,6 +158,9 @@ describe('SignupPage', () => {
 
       render(<SignupPage />);
 
+      fireEvent.change(screen.getByLabelText(/full name/i), {
+        target: { value: 'Test User' },
+      });
       fireEvent.change(screen.getByLabelText(/email address/i), {
         target: { value: 'user@example.com' },
       });
@@ -172,7 +176,46 @@ describe('SignupPage', () => {
 
       await waitFor(() => {
         expect(mockApiPost).toHaveBeenCalledWith('auth/signup', {
+          name: 'Test User',
           email: 'user@example.com',
+          password: 'SecurePass123!',
+          termsAccepted: true,
+        });
+      });
+    });
+
+    it('renders the Full name field and submitting posts trimmed name in payload', async () => {
+      mockApiPost.mockResolvedValueOnce({
+        message: 'Registration request received.',
+      });
+
+      render(<SignupPage />);
+
+      const nameInput = screen.getByLabelText(/full name/i);
+      expect(nameInput).toBeInTheDocument();
+      expect(nameInput).toHaveAttribute('type', 'text');
+      expect(nameInput).toHaveAttribute('required');
+
+      fireEvent.change(nameInput, {
+        target: { value: '   Jane Doe   ' },
+      });
+      fireEvent.change(screen.getByLabelText(/email address/i), {
+        target: { value: 'jane@example.com' },
+      });
+      fireEvent.change(screen.getByLabelText(/^password/i), {
+        target: { value: 'SecurePass123!' },
+      });
+      fireEvent.change(screen.getByLabelText(/confirm password/i), {
+        target: { value: 'SecurePass123!' },
+      });
+      fireEvent.click(screen.getByRole('checkbox', { name: /terms of service and privacy policy/i }));
+
+      fireEvent.click(screen.getByRole('button', { name: /create account/i }));
+
+      await waitFor(() => {
+        expect(mockApiPost).toHaveBeenCalledWith('auth/signup', {
+          name: 'Jane Doe',
+          email: 'jane@example.com',
           password: 'SecurePass123!',
           termsAccepted: true,
         });
@@ -200,6 +243,9 @@ describe('SignupPage', () => {
 
       render(<SignupPage />);
 
+      fireEvent.change(screen.getByLabelText(/full name/i), {
+        target: { value: 'New User' },
+      });
       fireEvent.change(screen.getByLabelText(/email address/i), {
         target: { value: 'newuser@example.com' },
       });
@@ -221,6 +267,7 @@ describe('SignupPage', () => {
 
       await waitFor(() => {
         expect(mockApiPost).toHaveBeenCalledWith('auth/signup', {
+          name: 'New User',
           email: 'newuser@example.com',
           password: 'SecurePass123!',
           termsAccepted: true,

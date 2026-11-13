@@ -122,7 +122,7 @@ export default function Dashboard() {
 
         <div className="space-y-4">
           <p className="text-gray-600">
-            Welcome back, <span className="font-semibold text-gray-900">{authData?.user.name}</span>
+            Welcome back, <span className="font-semibold text-gray-900">{authData?.user.name || authData?.user.email}</span>
           </p>
 
           {authData?.memberships?.length ? (

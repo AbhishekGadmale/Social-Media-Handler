@@ -91,11 +91,31 @@ describe('Dashboard Page', () => {
 
     await waitFor(() => {
       expect(screen.getByText(/Welcome back,/i)).toBeInTheDocument();
+      expect(screen.getByText('Verified User')).toBeInTheDocument();
     });
 
     expect(
       screen.queryByText(/Verify your email to unlock your workspace/i),
     ).not.toBeInTheDocument();
+  });
+
+  it('displays user email in greeting fallback when user.name is null', async () => {
+    mockApiGet.mockResolvedValueOnce({
+      user: {
+        id: 'user-null-name',
+        email: 'noname@example.com',
+        name: null,
+        emailVerified: true,
+      },
+      memberships: [],
+    });
+
+    renderDashboard();
+
+    await waitFor(() => {
+      expect(screen.getByText(/Welcome back,/i)).toBeInTheDocument();
+      expect(screen.getByText('noname@example.com')).toBeInTheDocument();
+    });
   });
 
   it('displays email verification banner and resends verification link when user is unverified', async () => {

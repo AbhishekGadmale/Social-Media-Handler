@@ -71,6 +71,7 @@ describe('AuthController', () => {
       });
 
       const body = {
+        name: 'New User',
         email: 'newuser@example.com',
         password: 'Password123!',
         termsAccepted: true,
@@ -92,6 +93,7 @@ describe('AuthController', () => {
       });
 
       const body = {
+        name: 'Duplicate User',
         email: 'duplicate@example.com',
         password: 'Password123!',
         termsAccepted: true,
@@ -118,6 +120,7 @@ describe('AuthController', () => {
       await expect(
         controller.signup(
           {
+            name: 'User',
             email: 'user@example.com',
             password: 'Password123!',
             termsAccepted: true,

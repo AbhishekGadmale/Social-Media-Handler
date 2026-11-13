@@ -11,6 +11,11 @@ import {
 } from 'class-validator';
 
 export class SignupDto {
+  @IsString()
+  @IsNotEmpty({ message: 'Name is required' })
+  @MaxLength(100, { message: 'Name must not exceed 100 characters' })
+  name!: string;
+
   @IsEmail({}, { message: 'Invalid email format' })
   @IsNotEmpty({ message: 'Email is required' })
   email!: string;

@@ -3607,6 +3607,112 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
    - Verify 6/6 green CI checks on GitHub Actions on the new head after this docs fix.
    - Do NOT merge on this prompt alone.
 
+---
+
+## 56. User Name Collection on Signup & Dashboard Fallback (2026-11-13)
+
+### 1. Root Cause & Context
+
+- **Gap Origin**: Phase A follow-up work closing the last Oct-12 re-grade UI gap.
+- **Root Cause**:
+  - The Prisma `User` model (`packages/database/prisma/schema.prisma`) had NO `name` field. Its fields were: `id`, `email`, `hashedPassword`, `emailVerified`, `emailVerifiedAt`, `securityEpoch`, `termsAcceptedAt`, `createdAt`, `updatedAt`, plus relations.
+  - The web client already declared `name: string` in the `User` interface (`apps/web/src/lib/query/auth.ts`) and rendered it in two places:
+    1. `apps/web/src/app/dashboard/page.tsx` line 125 (`Welcome back, {authData?.user.name}`)
+    2. `apps/web/src/components/dashboard-shell.tsx` line 235 (`{authData.user.name}` in the sidebar)
+  - At runtime the API never returned a `name`, so both sites rendered blank without any fallback.
+  - `GET /auth/me` (`apps/api/src/modules/auth/auth.controller.ts` `getMe`) returns the full Prisma user row minus `hashedPassword`. Once the database column exists and is populated, `GET /auth/me` returns it automatically without requiring any change to the controller.
+
+### 2. Design Decisions
+
+1. **Name is REQUIRED at signup**: Users must provide a full name during registration. Validated client-side and server-side.
+2. **Database column is NULLABLE (`name String?`)**: The column is nullable so existing rows are valid without a migration backfill.
+3. **Web `User` type becomes `name: string | null`**: Both render sites fall back to the user's email when `name` is null or empty (`{authData?.user.name || authData?.user.email}` and `{authData.user.name || authData.user.email}`).
+4. **Scope boundary**: No profile/settings page and no name-edit endpoint in this PR — out of scope.
+
+### 3. Implementation Details
+
+#### A. Database Schema & Migration
+- Added `name String?` to the `User` model immediately after `email` in `packages/database/prisma/schema.prisma`.
+- Created migration directory `packages/database/prisma/migrations/20261113000000_add_user_name/` with exact SQL:
+  ```sql
+  -- AlterTable
+  ALTER TABLE "User" ADD COLUMN "name" TEXT;
+  ```
+- No other schema changes. No backfill.
+
+#### B. Backend API & Repositories
+- **`packages/database/src/repositories/UserRepository.ts`**:
+  - Extended `CreateUserWithTenantInput` with required field `name: string;`.
+  - In `createWithTenantTransaction`, added `name: input.name.trim(),` to `tx.user.create` data.
+- **`apps/api/src/modules/auth/dto/signup.dto.ts`**:
+  - Added `name` as FIRST field in `SignupDto` with validation:
+    ```typescript
+    @IsString()
+    @IsNotEmpty({ message: 'Name is required' })
+    @MaxLength(100, { message: 'Name must not exceed 100 characters' })
+    name!: string;
+    ```
+- **`apps/api/src/modules/auth/auth.service.ts`**:
+  - In `signup()`, passed `name: dto.name` in the payload passed to `userRepository.createWithTenantTransaction`. Anti-enumeration timing mitigation and duplicate-email flows preserved unchanged.
+- **`apps/api/src/modules/auth/auth.controller.ts`**:
+  - Kept completely untouched; `getMe()` automatically returns `name` from the Prisma row.
+
+#### C. Web Frontend
+- **`apps/web/src/lib/query/auth.ts`**:
+  - Updated `User` interface to declare `name: string | null;`.
+- **`apps/web/src/app/signup/page.tsx`**:
+  - Added `const [name, setName] = useState('');`.
+  - Added "Full name" field as FIRST form field above Email (`label htmlFor="name"`, `input id="name" name="name" type="text" autoComplete="name" required`).
+  - Added `name: string;` to `payload` and set `name: name.trim()` unconditionally.
+- **`apps/web/src/app/dashboard/page.tsx`**:
+  - Render fallback: `{authData?.user.name || authData?.user.email}` in the greeting span.
+- **`apps/web/src/components/dashboard-shell.tsx`**:
+  - Render fallback: `{authData.user.name || authData.user.email}` in the sidebar user block name position.
+
+### 4. Verification & Test Evidence
+
+- **Database Unit Tests (`packages/database`, 13/13 files PASS, 110/110 tests PASS)**:
+  - `packages/database/src/repositories/UserRepository.spec.ts` (6 tests PASS):
+    - All 4 calls to `createWithTenantTransaction` updated with `name`.
+    - Verifies `txMock.user.create` receives trimmed `name: 'Alice Smith'` when provided `'  Alice Smith  '`.
+- **Backend API Unit Tests (`apps/api`, 36/36 files PASS, 464/464 tests PASS)**:
+  - `apps/api/src/modules/auth/auth.service.spec.ts` (35 tests PASS):
+    - Added tests for `SignupDto` validation rejecting missing name and empty string name with message `'Name is required'`.
+    - Verified all existing signup test fixtures include `name`.
+    - Verified `userRepository.createWithTenantTransaction` is called with `name: 'Alice Smith'`.
+  - `apps/api/src/modules/auth/auth.controller.spec.ts` (32 tests PASS):
+    - Added `name` to all signup test payloads.
+- **Backend API E2E Tests (`apps/api/test`, 6/6 suites PASS, 127/127 tests PASS)**:
+  - `apps/api/test/auth.e2e-spec.ts` (30 tests PASS):
+    - Signup happy path asserts stored `user.name === submittedName` in PostgreSQL database.
+    - Asserts `GET /api/v1/auth/me` returns `user.name === submittedName`.
+    - Added validation test: signup with name missing returns HTTP 400.
+    - Added validation test: signup with name empty string returns HTTP 400.
+    - Added `name` to all other signup payloads in E2E.
+- **Frontend Spec Suites (`apps/web`, 21/21 files PASS, 227/227 tests PASS)**:
+  - `apps/web/src/app/signup/page.spec.tsx` (14 tests PASS):
+    - Verifies 'Full name' field renders with required attribute.
+    - Verifies form submission posts trimmed name in payload.
+    - All existing payload assertions updated to include `name`.
+  - `apps/web/src/app/dashboard/page.spec.tsx` (6 tests PASS):
+    - Existing test verified with named fixture.
+    - Added test verifying greeting falls back to user email when `user.name` is null.
+  - `apps/web/src/components/dashboard-shell.spec.tsx` (5 tests PASS):
+    - Added test verifying sidebar displays user email in name position when `user.name` is null.
+- **Monorepo Quality & Build Checks**:
+  - `pnpm turbo run lint typecheck`: 15 tasks successful, 0 errors across entire repository.
+- **CI Quality Gates**:
+  - 6/6 verified green on reviewed head 28a6e4d (GitGuardian Security Checks 08:48:05Z, Application Builds 08:48:47Z, Code Quality (Lint & Typecheck) 08:49:18Z, Tests 08:49:26Z, API E2E Tests 08:49:41Z, Docker Build & Smoke Test 08:56:42Z, all 2026-11-13 UTC). CI must be re-verified on the new head after this docs fix.
+
+### 5. Release Gate & Next Steps
+
+1. **Release Gate**:
+   - **Live Deployment**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending external infrastructure provisioning, live email delivery verification, live payment credentials, and disaster recovery rehearsals G18/G19).
+2. **Next Steps**:
+   - Branch `feat/signup-name-field` pushed; PR #69 open targeting `main`.
+   - Verify 6/6 green CI checks on GitHub Actions on the new head after this docs fix.
+   - Do NOT merge on this prompt alone.
+
 
 
 

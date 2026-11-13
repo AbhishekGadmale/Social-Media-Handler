@@ -126,8 +126,36 @@ describe('AuthService', () => {
 
   describe('signup', () => {
     describe('SignupDto validation', () => {
+      it('rejects signup payload when name is missing (400 validation error)', async () => {
+        const dto = plainToInstance(SignupDto, {
+          email: 'user@example.com',
+          password: 'Password123!',
+          termsAccepted: true,
+        });
+        const errors = await validate(dto);
+        expect(errors.length).toBeGreaterThan(0);
+        const nameError = errors.find((e) => e.property === 'name');
+        expect(nameError).toBeDefined();
+        expect(nameError?.constraints?.isNotEmpty).toBe('Name is required');
+      });
+
+      it('rejects signup payload when name is empty string', async () => {
+        const dto = plainToInstance(SignupDto, {
+          name: '',
+          email: 'user@example.com',
+          password: 'Password123!',
+          termsAccepted: true,
+        });
+        const errors = await validate(dto);
+        expect(errors.length).toBeGreaterThan(0);
+        const nameError = errors.find((e) => e.property === 'name');
+        expect(nameError).toBeDefined();
+        expect(nameError?.constraints?.isNotEmpty).toBe('Name is required');
+      });
+
       it('rejects signup payload when termsAccepted is missing (400 validation error)', async () => {
         const dto = plainToInstance(SignupDto, {
+          name: 'Jane Doe',
           email: 'user@example.com',
           password: 'Password123!',
         });
@@ -139,6 +167,7 @@ describe('AuthService', () => {
 
       it('rejects signup payload when termsAccepted is false with exact message', async () => {
         const dto = plainToInstance(SignupDto, {
+          name: 'Jane Doe',
           email: 'user@example.com',
           password: 'Password123!',
           termsAccepted: false,
@@ -154,6 +183,7 @@ describe('AuthService', () => {
 
       it('accepts signup payload when termsAccepted is true', async () => {
         const dto = plainToInstance(SignupDto, {
+          name: 'Jane Doe',
           email: 'user@example.com',
           password: 'Password123!',
           termsAccepted: true,
@@ -172,6 +202,7 @@ describe('AuthService', () => {
 
       const result = await service.signup(
         {
+          name: 'Alice Smith',
           email: '  Alice@Example.com  ',
           password: 'Password123!',
           termsAccepted: true,
@@ -186,6 +217,7 @@ describe('AuthService', () => {
       );
       expect(argon2.hash).toHaveBeenCalledWith('Password123!');
       expect(userRepoMock.createWithTenantTransaction).toHaveBeenCalledWith({
+        name: 'Alice Smith',
         email: 'alice@example.com',
         hashedPassword: '$argon2id$hashed',
         organizationName: 'Alice Org',
@@ -219,6 +251,7 @@ describe('AuthService', () => {
 
       const result = await service.signup(
         {
+          name: 'Alice Smith',
           email: 'alice@example.com',
           password: 'Password123!',
           termsAccepted: true,
@@ -260,6 +293,7 @@ describe('AuthService', () => {
 
       const result = await service.signup(
         {
+          name: 'Race User',
           email: 'race@example.com',
           password: 'Password123!',
           termsAccepted: true,
@@ -297,6 +331,7 @@ describe('AuthService', () => {
 
       await expect(
         service.signup({
+          name: 'Other User',
           email: 'other@example.com',
           password: 'Password123!',
           termsAccepted: true,
