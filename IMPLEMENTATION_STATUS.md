@@ -3972,10 +3972,10 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
 ### 4. Release Gate & Next Steps
 
 1. **CI Quality Gates**:
-   - Verification on GitHub Actions pending PR push on branch `feat/password-policy-hibp`.
+   - 6/6 verified green on reviewed head 59aaea8 (GitGuardian Security Checks 15:39:49Z, Application Builds 15:42:12Z, API E2E Tests 15:42:31Z, Code Quality (Lint & Typecheck) 15:42:49Z, Tests 15:42:59Z, Docker Build & Smoke Test 15:49:47Z, all 2026-11-13 UTC). CI must be re-verified on the new head after this docs update.
 2. **Release Gate**:
    - **Live Deployment**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending external infrastructure provisioning, live email delivery verification, live payment credentials, and disaster recovery rehearsals G18/G19).
 3. **Next Steps**:
-   - Branch `feat/password-policy-hibp` pushed; PR open targeting `main`.
+   - Branch `feat/password-policy-hibp` pushed; PR #73 open targeting `main`.
    - Do NOT merge on this prompt alone.
 
