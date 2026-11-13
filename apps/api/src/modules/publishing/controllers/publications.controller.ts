@@ -62,6 +62,7 @@ export class PublicationsController {
   }
 
   @Delete('publications/:publicationId')
+  @UseGuards(WorkspaceWritableGuard)
   @RequirePermission('posts.update')
   async removeTarget(
     @Param('workspaceId') workspaceId: string,
@@ -76,6 +77,7 @@ export class PublicationsController {
   }
 
   @Delete('publications/:publicationId/remote')
+  @UseGuards(WorkspaceWritableGuard)
   @RequirePermission('posts.delete')
   @HttpCode(202)
   async requestRemoteDelete(
@@ -91,6 +93,7 @@ export class PublicationsController {
   }
 
   @Post('publications/:publicationId/validate')
+  @UseGuards(WorkspaceWritableGuard)
   @RequirePermission('publishing.validate')
   @HttpCode(200)
   async validateTarget(
@@ -169,6 +172,7 @@ export class PublicationsController {
   }
 
   @Post('publications/:publicationId/unschedule')
+  @UseGuards(WorkspaceWritableGuard)
   @RequirePermission('publishing.schedule')
   @HttpCode(200)
   async unscheduleTarget(
@@ -184,6 +188,7 @@ export class PublicationsController {
   }
 
   @Post('publications/:publicationId/cancel')
+  @UseGuards(WorkspaceWritableGuard)
   @RequirePermission('publishing.cancel')
   @HttpCode(200)
   async cancelTarget(
@@ -199,6 +204,7 @@ export class PublicationsController {
   }
 
   @Post('publications/:publicationId/reconcile')
+  @UseGuards(WorkspaceWritableGuard)
   @RequirePermission('publishing.reconcile')
   @HttpCode(200)
   async reconcileTarget(

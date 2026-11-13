@@ -3747,3 +3747,59 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
 - **Live Deployment Release Gate**:
   - **Live Deployment**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending external infrastructure provisioning, live email delivery verification, live payment credentials, and disaster recovery rehearsals G18/G19).
 
+---
+
+## 58. Guard Publications & Post Mutations for Read-Only Workspaces (2026-11-13)
+
+### 1. Context & Objectives
+
+- **Owner Decision (2026-11-13)**: The publications mutations left unguarded by PR #67 (recorded as an open follow-up in §54) are now guarded.
+- **Rationale**: In the Agency OS multi-tenant lifecycle, "read-only" status for a halted, past-due, cancelled, or trial-expired workspace means strictly read-only for every state-altering mutation. Read-only workspaces must not be allowed to execute deletes, cancellations, unscheduling, validation, or stuck publication reconciliation until writable status is restored.
+- **Discovery Beyond §54 List**: During comprehensive routing audit of `apps/api/src/modules/publishing`, `deletePost` (`DELETE v1/workspaces/:workspaceId/posts/:postId`) in `PostsController` was identified as lacking `WorkspaceWritableGuard`, despite draft creation and update being guarded. This mutation was included in the hardening scope alongside the 6 publication mutations.
+
+### 2. Architecture & Implementation
+
+#### A. Guard Placement & Route Verification
+
+- **Publications Controller (`apps/api/src/modules/publishing/controllers/publications.controller.ts`)**:
+  - Attached `@UseGuards(WorkspaceWritableGuard)` immediately following method-level route decorators across 6 mutation endpoints:
+    1. `removeTarget`: `DELETE :publicationId` (`DELETE v1/workspaces/:workspaceId/publications/:publicationId`)
+    2. `requestRemoteDelete`: `DELETE :publicationId/remote` (`DELETE v1/workspaces/:workspaceId/publications/:publicationId/remote`)
+    3. `validateTarget`: `POST :publicationId/validate` (`POST v1/workspaces/:workspaceId/publications/:publicationId/validate`)
+    4. `unscheduleTarget`: `POST :publicationId/unschedule` (`POST v1/workspaces/:workspaceId/publications/:publicationId/unschedule`)
+    5. `cancelTarget`: `POST :publicationId/cancel` (`POST v1/workspaces/:workspaceId/publications/:publicationId/cancel`)
+    6. `reconcileTarget`: `POST :publicationId/reconcile` (`POST v1/workspaces/:workspaceId/publications/:publicationId/reconcile`)
+- **Posts Controller (`apps/api/src/modules/publishing/controllers/posts.controller.ts`)**:
+  - Attached `@UseGuards(WorkspaceWritableGuard)` immediately following `@Delete(':postId')` on `deletePost`:
+    7. `deletePost`: `DELETE :postId` (`DELETE v1/workspaces/:workspaceId/posts/:postId`)
+- **Deterministic Route Parameter Resolution**:
+  - `PublicationsController` is mounted at `v1/workspaces/:workspaceId` and `PostsController` is mounted at `v1/workspaces/:workspaceId/posts`.
+  - Because all 7 route paths include `:workspaceId`, `request.params.workspaceId` is always populated on incoming requests. `WorkspaceWritableGuard` evaluates write entitlement deterministically; its missing-param fail-open fallback does not trigger, and no service-level fallback is required (contrasting with the OAuth callback in §54 where route lacked `:workspaceId`).
+
+#### B. System Behaviors & Boundary Preservations
+
+- **Reconciliation Consequence**:
+  - The operator reconcile action (`POST .../reconcile`) for resolving stuck or ambiguous publication records is now fenced for read-only tenants. Operators cannot reconcile stuck publications in halted/expired workspaces until subscription or trial entitlement is restored.
+- **Validation Endpoint vs. Internal Publishing Pipeline**:
+  - The external HTTP endpoint `POST .../validate` is guarded to reject validation calls for read-only workspaces with HTTP 403.
+  - The internal service call `PublishingApplicationService.validateTarget` invoked during `requestPublish` is unaffected, as NestJS controller method guards only intercept inbound HTTP requests.
+- **Untouched Components**:
+  - `WorkspaceWritableGuard`, `EntitlementsService`, `PublishingApplicationService`, `BillingModule`, and frontend applications remain completely unmodified, adhering to minimal-diff discipline.
+
+### 3. Verification & Test Evidence
+
+- **Unit Tests**:
+  - `apps/api/src/modules/publishing/controllers/publications.controller.spec.ts`: 12/12 PASS (5 existing + 7 new asserting `WorkspaceWritableGuard` decoration across all 6 new handlers and 6 pre-existing handlers).
+  - `apps/api/src/modules/publishing/controllers/posts.controller.spec.ts`: 2/2 PASS (NEW unit test suite asserting `deletePost`, `createDraft`, and `updateDraft` carry `WorkspaceWritableGuard`).
+- **E2E Integration Tests**:
+  - `apps/api/test/publishing.e2e-spec.ts`: 55/55 PASS (51 existing + 4 new integration tests in `Read-Only Expired Trial Workspace Mutation Blocking (Publications & Posts)` asserting HTTP 403 denials with trial-expired messages for `removeTarget`, `cancelTarget`, `unscheduleTarget`, and `deletePost`).
+- **Monorepo Code Quality**:
+  - `pnpm turbo run lint typecheck`: All 15 tasks successful across 9 packages (0 errors).
+
+### 4. Release Gate & Next Steps
+
+1. **CI Quality Gates**:
+   - 6/6 verified green on reviewed head 83ab473 (GitGuardian Security Checks 12:22:31Z, Application Builds 12:23:22Z, Code Quality (Lint & Typecheck) 12:23:57Z, API E2E Tests 12:24:04Z, Tests 12:24:04Z, Docker Build & Smoke Test 12:31:00Z, all 2026-11-13 UTC). CI must be re-verified on the new head after this docs update.
+2. **Release Gate**:
+   - **Live Deployment**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending external infrastructure provisioning, live email delivery verification, live payment credentials, and disaster recovery rehearsals G18/G19).
+

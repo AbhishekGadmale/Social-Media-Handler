@@ -2,10 +2,12 @@ import { vi, describe, it, expect, beforeEach } from 'vitest';
 import { PublicationsController } from './publications.controller';
 import { ExecutionMetadataInterceptor } from '../../core/interceptors/execution-metadata.interceptor';
 import { ValidationPipe } from '@nestjs/common';
+import { GUARDS_METADATA } from '@nestjs/common/constants';
 import { AddPublicationTargetDto } from '../dto/publication.dto';
 import { Reflector } from '@nestjs/core';
 import { PERMISSION_KEY } from '../../auth/decorators/permission.decorator';
 import { PermissionMatrix } from '../../auth/guards/permission.guard';
+import { WorkspaceWritableGuard } from '../../billing/guards/workspace-writable.guard';
 
 describe('PublicationsController Security & Interceptor', () => {
   let controller: PublicationsController;
@@ -132,6 +134,82 @@ describe('PublicationsController Security & Interceptor', () => {
         dto,
       );
       expect(result).toEqual({ id: 'variant-1', status: 'PUBLISHED' });
+    });
+  });
+
+  describe('WorkspaceWritableGuard decoration and enforcement', () => {
+    it('decorates removeTarget with WorkspaceWritableGuard', () => {
+      const guards =
+        Reflect.getMetadata(
+          GUARDS_METADATA,
+          (PublicationsController.prototype as any).removeTarget,
+        ) || [];
+      expect(guards).toContain(WorkspaceWritableGuard);
+    });
+
+    it('decorates requestRemoteDelete with WorkspaceWritableGuard', () => {
+      const guards =
+        Reflect.getMetadata(
+          GUARDS_METADATA,
+          (PublicationsController.prototype as any).requestRemoteDelete,
+        ) || [];
+      expect(guards).toContain(WorkspaceWritableGuard);
+    });
+
+    it('decorates validateTarget with WorkspaceWritableGuard', () => {
+      const guards =
+        Reflect.getMetadata(
+          GUARDS_METADATA,
+          (PublicationsController.prototype as any).validateTarget,
+        ) || [];
+      expect(guards).toContain(WorkspaceWritableGuard);
+    });
+
+    it('decorates unscheduleTarget with WorkspaceWritableGuard', () => {
+      const guards =
+        Reflect.getMetadata(
+          GUARDS_METADATA,
+          (PublicationsController.prototype as any).unscheduleTarget,
+        ) || [];
+      expect(guards).toContain(WorkspaceWritableGuard);
+    });
+
+    it('decorates cancelTarget with WorkspaceWritableGuard', () => {
+      const guards =
+        Reflect.getMetadata(
+          GUARDS_METADATA,
+          (PublicationsController.prototype as any).cancelTarget,
+        ) || [];
+      expect(guards).toContain(WorkspaceWritableGuard);
+    });
+
+    it('decorates reconcileTarget with WorkspaceWritableGuard', () => {
+      const guards =
+        Reflect.getMetadata(
+          GUARDS_METADATA,
+          (PublicationsController.prototype as any).reconcileTarget,
+        ) || [];
+      expect(guards).toContain(WorkspaceWritableGuard);
+    });
+
+    it('preserves WorkspaceWritableGuard on the six previously guarded handlers (regression)', () => {
+      const previouslyGuardedMethods = [
+        'addTarget',
+        'updateTarget',
+        'publishTarget',
+        'retryTarget',
+        'scheduleTarget',
+        'rescheduleTarget',
+      ] as const;
+
+      for (const method of previouslyGuardedMethods) {
+        const guards =
+          Reflect.getMetadata(
+            GUARDS_METADATA,
+            (PublicationsController.prototype as any)[method],
+          ) || [];
+        expect(guards).toContain(WorkspaceWritableGuard);
+      }
     });
   });
 });

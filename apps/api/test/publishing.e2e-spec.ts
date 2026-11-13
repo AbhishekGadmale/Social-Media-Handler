@@ -2043,6 +2043,135 @@ describe('Publishing API (e2e)', () => {
       expect(audits.length).toBe(1); // Only 1 audit log should have been created!
     });
   });
+
+  describe('Read-Only Expired Trial Workspace Mutation Blocking (Publications & Posts)', () => {
+    let wsExpired: string;
+    let expiredPostId: string;
+    let expiredAccountId: string;
+    let expiredVariantId: string;
+
+    beforeAll(async () => {
+      wsExpired = generateId();
+      await prisma.workspace.create({
+        data: {
+          id: wsExpired,
+          organizationId: testOrg,
+          name: 'Workspace Expired',
+          trialEndsAt: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000),
+          members: {
+            create: { userId: testUser.id, role: 'OWNER', id: generateId() },
+          },
+        },
+      });
+
+      expiredAccountId = generateId();
+      await prisma.socialAccount.create({
+        data: {
+          id: expiredAccountId,
+          workspaceId: wsExpired,
+          provider: 'LINKEDIN',
+          name: 'Expired Account',
+          externalId: 'ext-expired',
+          status: SocialAccountStatus.ACTIVE,
+          capabilities: ['POST_PUBLISH'],
+        },
+      });
+
+      expiredPostId = generateId();
+      await prisma.post.create({
+        data: {
+          id: expiredPostId,
+          workspaceId: wsExpired,
+          authorId: testUser.id,
+          content: 'Expired draft content',
+          status: PostStatus.DRAFT,
+        },
+      });
+
+      expiredVariantId = generateId();
+      await prisma.postPlatformVariant.create({
+        data: {
+          id: expiredVariantId,
+          postId: expiredPostId,
+          socialAccountId: expiredAccountId,
+          workspaceId: wsExpired,
+          status: 'QUEUED',
+          scheduledAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+          dispatchVersion: 1,
+        },
+      });
+    });
+
+    afterAll(async () => {
+      await prisma.postPlatformVariant.deleteMany({
+        where: { workspaceId: wsExpired },
+      });
+      await prisma.post.deleteMany({
+        where: { workspaceId: wsExpired },
+      });
+      await prisma.socialAccount.deleteMany({
+        where: { workspaceId: wsExpired },
+      });
+      await prisma.workspaceMember.deleteMany({
+        where: { workspaceId: wsExpired },
+      });
+      await prisma.workspace.deleteMany({
+        where: { id: wsExpired },
+      });
+    });
+
+    it('should return 403 when removing target (DELETE publications/:publicationId) on an expired trial workspace', async () => {
+      const res = await request(app.getHttpServer())
+        .delete(`/api/v1/workspaces/${wsExpired}/publications/${expiredVariantId}`)
+        .set('Cookie', session1.combinedCookie)
+        .set('x-csrf-token', session1.csrfToken)
+        .expect(403);
+
+      const errorMessage = res.body.error?.message || res.body.message;
+      expect(errorMessage).toBe(
+        'Trial expired. Workspace is in read-only mode. Please subscribe to a plan to continue.',
+      );
+    });
+
+    it('should return 403 when cancelling target (POST publications/:publicationId/cancel) on an expired trial workspace', async () => {
+      const res = await request(app.getHttpServer())
+        .post(`/api/v1/workspaces/${wsExpired}/publications/${expiredVariantId}/cancel`)
+        .set('Cookie', session1.combinedCookie)
+        .set('x-csrf-token', session1.csrfToken)
+        .expect(403);
+
+      const errorMessage = res.body.error?.message || res.body.message;
+      expect(errorMessage).toBe(
+        'Trial expired. Workspace is in read-only mode. Please subscribe to a plan to continue.',
+      );
+    });
+
+    it('should return 403 when unscheduling target (POST publications/:publicationId/unschedule) on an expired trial workspace', async () => {
+      const res = await request(app.getHttpServer())
+        .post(`/api/v1/workspaces/${wsExpired}/publications/${expiredVariantId}/unschedule`)
+        .set('Cookie', session1.combinedCookie)
+        .set('x-csrf-token', session1.csrfToken)
+        .expect(403);
+
+      const errorMessage = res.body.error?.message || res.body.message;
+      expect(errorMessage).toBe(
+        'Trial expired. Workspace is in read-only mode. Please subscribe to a plan to continue.',
+      );
+    });
+
+    it('should return 403 when deleting post (DELETE posts/:postId) on an expired trial workspace', async () => {
+      const res = await request(app.getHttpServer())
+        .delete(`/api/v1/workspaces/${wsExpired}/posts/${expiredPostId}`)
+        .set('Cookie', session1.combinedCookie)
+        .set('x-csrf-token', session1.csrfToken)
+        .expect(403);
+
+      const errorMessage = res.body.error?.message || res.body.message;
+      expect(errorMessage).toBe(
+        'Trial expired. Workspace is in read-only mode. Please subscribe to a plan to continue.',
+      );
+    });
+  });
 });
 
 
