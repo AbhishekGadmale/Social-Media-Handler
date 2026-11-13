@@ -3882,3 +3882,100 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
    - Branch `feat/login-lockout` pushed; PR #72 open targeting `main`.
    - Do NOT merge on this prompt alone.
 
+---
+
+## 60. Password Security Policy & Breach Checking (2026-11-13)
+
+### 1. Context & Objectives
+
+- **Origin**: `docs/auth-production-readiness-report.md` (PR #62), Phase B item 3: "Add complexity requirements (minimum 1 uppercase, 1 lowercase, 1 number, 1 special character). Integrate HaveIBeenPwned k-Anonymity API check during password creation and change."
+- **Problem Statement**: Prior to this change, user passwords only had length bounds (8-128 characters) enforced in DTOs. Trivial passwords (e.g. `password`, `12345678`) or compromised credentials known from historical data breaches were accepted during signup, self-serve password reset, and password change.
+- **Scope & Boundaries**:
+  - Implements service-layer password complexity requirements and real-time HaveIBeenPwned k-Anonymity breach verification across all three password creation/mutation routes (`signup`, `resetPassword`, `changePassword`).
+  - DTOs remain completely untouched (length validation 8-128 remains in DTOs via `@MinLength` and `@MaxLength`). No custom class-validator decorators, no frontend changes.
+  - Zero schema or database migrations required.
+  - Existing users are not retro-checked or invalidated. The policy applies strictly during new password creation and updates.
+  - Deferred sub-item: Session-ID rotation on password change is deliberately deferred (relying on PR #48's `securityEpoch` increment and `destroyOtherSessionsForUser` which immediately invalidates all existing sessions).
+
+### 2. Architecture & Design Decisions
+
+#### A. Service Architecture & Modularity
+- **`PwnedPasswordService` (`apps/api/src/modules/auth/pwned-password.service.ts`)**:
+  - Encapsulates k-Anonymity breach checking against the HaveIBeenPwned Range API.
+  - Computes the UPPERCASE SHA-1 hexadecimal hash of the password using Node's standard `crypto.createHash('sha1')`.
+  - Sends only the first 5 hexadecimal characters (the prefix) to `GET ${baseUrl}/range/${prefix}` (defaulting to `https://api.pwnedpasswords.com`).
+  - Neither the plain-text password nor the full SHA-1 hash is ever transmitted across the network, stored, or logged.
+  - Receives the list of matching 35-character suffixes and counts (`<SUFFIX>:<COUNT>`). Scans the list case-insensitively for the matching suffix. If found with count > 0, returns `true` (breached).
+  - Uses native global `fetch` with an `AbortController` enforcing a strict 2000ms timeout.
+  - **Fail-Open Semantics**: Any network error, timeout, 5xx status, or parsing failure logs a warning (`[PwnedPasswordService] HIBP range check failed: ...`) via NestJS `Logger` and returns `false` (not breached), ensuring external API downtime does not block user registration or password reset.
+  - **Environment Controls**:
+    - `PASSWORD_BREACH_CHECK_ENABLED === 'false'`: Immediate kill-switch bypassing network calls and returning `false`.
+    - `HIBP_API_BASE_URL`: Overridable base URL allowing zero-network, deterministic integration testing.
+- **`PasswordPolicyService` (`apps/api/src/modules/auth/password-policy.service.ts`)**:
+  - Orchestrates password complexity validation followed by breach checking via `assertPasswordAcceptable(password: string): Promise<void>`.
+  - Validates complexity using regular expressions:
+    - Lowercase letter: `/[a-z]/`
+    - Uppercase letter: `/[A-Z]/`
+    - Digit: `/[0-9]/`
+    - Special character: `/[^A-Za-z0-9]/`
+  - Throws `BadRequestException('Password must include at least one uppercase letter, one lowercase letter, one number, and one special character.')` if complexity is not met.
+  - Calls `this.pwnedPasswordService.isBreached(password)`. If breached, throws `BadRequestException('This password has appeared in a known data breach. Please choose a different password.')`.
+
+#### B. Execution Ordering & Security Rationale
+1. **`AuthService.signup(dto)`**:
+   - Executes duplicate account check (`userRepo.findByEmail(dto.email)`) FIRST.
+   - If user exists, generates an anti-enumeration token and returns without evaluating the password policy. This prevents an external attacker from using complexity/breach error differences as an oracle to enumerate registered accounts.
+   - Evaluates `await this.passwordPolicyService.assertPasswordAcceptable(dto.password)` before Argon2 hashing and tenant provisioning transaction.
+2. **`AuthService.resetPassword(dto)`**:
+   - Consumes reset token (`consumeToken(dto.token)`) FIRST.
+   - Checks `isSamePassword = await argon2.verify(user.hashedPassword, dto.newPassword)`. If true, rejects with `New password cannot be the same as current password`.
+   - Evaluates `await this.passwordPolicyService.assertPasswordAcceptable(dto.newPassword)`. If rejected, the token remains consumed (matching existing behavior and preventing replay of consumed tokens).
+   - Hashes new password with Argon2, updates user, and bumps `securityEpoch`.
+3. **`AuthService.changePassword(userId, currentPasswordPlain, newPasswordPlain)`**:
+   - Verifies `currentPasswordPlain` against user hash.
+   - Checks `currentPasswordPlain === newPasswordPlain`. If identical, rejects with `New password cannot be the same as current password`.
+   - Evaluates `await this.passwordPolicyService.assertPasswordAcceptable(newPasswordPlain)` before Argon2 hashing and epoch increment.
+
+### 3. Verification & Test Evidence
+
+- **Unit Tests**:
+  - `apps/api/src/modules/auth/pwned-password.service.spec.ts`: 5/5 PASS
+    - Verifies detection when suffix exists in range response (mixed-case handling).
+    - Verifies pass when suffix is absent from range response.
+    - Verifies fail-open on network timeout / fetch rejection with warning log.
+    - Verifies kill-switch `PASSWORD_BREACH_CHECK_ENABLED='false'` bypasses fetch.
+    - Verifies custom `HIBP_API_BASE_URL` routing.
+  - `apps/api/src/modules/auth/password-policy.service.spec.ts`: 6/6 PASS
+    - Verifies rejection when lowercase letter is missing.
+    - Verifies rejection when uppercase letter is missing.
+    - Verifies rejection when digit is missing.
+    - Verifies rejection when special character is missing.
+    - Verifies rejection when password appears in breach list.
+    - Verifies acceptance when compliant and not breached.
+  - `apps/api/src/modules/auth/auth.service.spec.ts`: 45/45 PASS (41 existing + 4 new)
+    - Verifies signup rejection on policy failure prevents user and organization creation.
+    - Verifies signup with existing email returns anti-enumeration token without calling policy service.
+    - Verifies resetPassword consumes token and rejects on policy failure.
+    - Verifies changePassword rejects on policy failure without updating securityEpoch.
+  - Full `@agency-os/api` unit test suite: 39/39 test files PASS, 494/494 tests PASS.
+- **E2E Integration Tests**:
+  - `apps/api/test/auth.e2e-spec.ts`: 34/34 PASS (31 existing + 3 new integration tests in `Password Security Policy & Breach Checking (e2e)` suite):
+    - Rejects signup with non-complex password with HTTP 400.
+    - Rejects signup with breached password with HTTP 400.
+    - Permits signup with compliant, non-breached password with HTTP 201.
+    - Fixture sweep: Updated test fixture passwords in `auth.e2e-spec.ts` (`testUser`, signup, resetPassword) to compliant credentials (`CorrectPassword123!`, etc.) and set up an ephemeral local HTTP stub server (`http.createServer`) routing `/range/:prefix` to ensure networkless, deterministic HIBP testing.
+- **Database Tests**:
+  - Full `@agency-os/database` test suite: 13/13 test files PASS, 113/113 tests PASS.
+- **Monorepo Code Quality**:
+  - `pnpm turbo run lint typecheck`: All 15 tasks successful across 9 packages (0 errors).
+
+### 4. Release Gate & Next Steps
+
+1. **CI Quality Gates**:
+   - Verification on GitHub Actions pending PR push on branch `feat/password-policy-hibp`.
+2. **Release Gate**:
+   - **Live Deployment**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending external infrastructure provisioning, live email delivery verification, live payment credentials, and disaster recovery rehearsals G18/G19).
+3. **Next Steps**:
+   - Branch `feat/password-policy-hibp` pushed; PR open targeting `main`.
+   - Do NOT merge on this prompt alone.
+

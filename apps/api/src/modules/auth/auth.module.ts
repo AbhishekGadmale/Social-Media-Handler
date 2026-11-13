@@ -7,11 +7,15 @@ import {
   NoopEmailDeliveryService,
   ResendEmailDeliveryService,
 } from './email-delivery.service';
+import { PasswordPolicyService } from './password-policy.service';
+import { PwnedPasswordService } from './pwned-password.service';
 
 @Module({
   controllers: [AuthController, WorkspaceTestController],
   providers: [
     AuthService,
+    PwnedPasswordService,
+    PasswordPolicyService,
     {
       provide: EMAIL_DELIVERY_SERVICE,
       useFactory: () => {
