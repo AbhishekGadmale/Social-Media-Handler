@@ -3845,9 +3845,9 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
      - If clean (0 and null), skips the database write to avoid unnecessary write IO.
 
 #### D. Zero-Disclosure & Timing Characteristics
-- **Client Invariance**: Both `ACCOUNT_LOCKED` and `INVALID_PASSWORD` (as well as `USER_NOT_FOUND`) map to identical HTTP 401 responses (`{ "statusCode": 401, "message": "Invalid credentials", "error": "Unauthorized" }`).
-- **Audit Logging**: The internal failure reason (`ACCOUNT_LOCKED` vs `INVALID_PASSWORD`) is passed through `InvalidCredentialsException` and captured by `AuthService.login` / `AuthController.login` in the server-side `AUTH_LOGIN_FAILED` audit log without disclosing state to external callers.
-- **Controller Boundary**: `AuthController.login` was already structured to catch `InvalidCredentialsException` and emit `AUTH_LOGIN_FAILED` with `err.reason` and `err.userId`; zero controller modifications were required.
+- **Client Invariance**: Both `ACCOUNT_LOCKED` and `INVALID_PASSWORD` (as well as `USER_NOT_FOUND`) map to identical HTTP 401 responses (`{ "error": { "code": "UnauthorizedException", "message": "Invalid credentials", "requestId": "<request-id>" } }`).
+- **Audit Logging**: The internal failure reason (`ACCOUNT_LOCKED` vs `INVALID_PASSWORD`) is passed through `InvalidCredentialsException` and captured by `AuthController.login`'s catch block (`AuthService.login` throws; it does not audit) in the server-side `AUTH_LOGIN_FAILED` audit log without disclosing state to external callers.
+- **Controller Boundary**: `AuthController.login` was already structured to catch `InvalidCredentialsException` and emit `AUTH_LOGIN_FAILED` reading `e.reason` (into audit metadata `{ reason }`) and `e.resolvedUserId` (into `targetId`, when present); zero controller modifications were required.
 
 #### E. Stated Tradeoffs & Threat Model
 1. **Targeted Lockout Denial-of-Service (Account DoS)**:
