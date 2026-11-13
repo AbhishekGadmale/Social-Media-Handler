@@ -21,6 +21,7 @@ import {
   EMAIL_DELIVERY_SERVICE,
   type EmailDeliveryService,
 } from './email-delivery.service';
+import { PasswordPolicyService } from './password-policy.service';
 
 export interface ChangePasswordResult {
   success: boolean;
@@ -58,6 +59,7 @@ export class AuthService {
     @Inject(EMAIL_DELIVERY_SERVICE)
     private readonly emailDeliveryService: EmailDeliveryService,
     private readonly passwordResetTokenRepo: PasswordResetTokenRepository,
+    private readonly passwordPolicyService: PasswordPolicyService,
     @Optional() private readonly auditService?: AuditService,
   ) {}
 
@@ -89,6 +91,8 @@ export class AuthService {
       }
       return { message: 'Registration request received.' };
     }
+
+    await this.passwordPolicyService.assertPasswordAcceptable(dto.password);
 
     // 2. Hash password with argon2id
     const hashedPassword = await argon2.hash(dto.password);
@@ -373,6 +377,8 @@ export class AuthService {
       );
     }
 
+    await this.passwordPolicyService.assertPasswordAcceptable(newPasswordPlain);
+
     const hashedPassword = await argon2.hash(newPasswordPlain);
     await this.userRepository.updatePasswordAndIncrementEpoch(
       result.user.id,
@@ -530,6 +536,8 @@ export class AuthService {
         'New password cannot be the same as the current password',
       );
     }
+
+    await this.passwordPolicyService.assertPasswordAcceptable(newPasswordPlain);
 
     const newHashedPassword = await argon2.hash(newPasswordPlain);
     const updatedUser =
