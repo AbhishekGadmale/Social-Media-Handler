@@ -2878,14 +2878,14 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
 
 ---
 
-## 48. Self-Serve Signup & Email Verification Onboarding Frontend (Branch `feat/signup-onboarding-ui` — PR #60)
+## 48. Self-Serve Signup & Email Verification Onboarding Frontend (Branch `feat/signup-onboarding-ui` — PR #60) — MERGED
 
 ### 1. Summary & Motivation
 
-- **Status**: **IN REVIEW** (Branch `feat/signup-onboarding-ui`, PR #60 pending independent Muse review)
+- **Status**: **MERGED** (PR #60, merged 2026-11-07, merge commit [`18d2d0404cf81696d191c2f1b3eb86b18c6c984a`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/18d2d0404cf81696d191c2f1b3eb86b18c6c984a), approved head `c80ad503f58d3f42a6b11429d73c3d157f4d6aa6`)
 - **Branch**: `feat/signup-onboarding-ui`
 - **Base Commit**: `be3441998658bb00dd6a8035b9438f79f9ec4761` (`main`)
-- **Reviewer**: Muse (Independent review required; do not call merge-ready)
+- **Reviewer**: Muse (APPROVED at head `c80ad503f58d3f42a6b11429d73c3d157f4d6aa6`)
 - **Live Deployment Release Gate**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending external infrastructure provisioning, live email delivery verification, live payment credentials, and disaster recovery rehearsals G18/G19).
 - **Next Milestone**: TBD
 - **Problem & Motivation**:
@@ -2953,14 +2953,14 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
 
 ---
 
-## 49. AuthGuard Fix: Make /signup and /verify-email Public Routes (Branch `fix/auth-guard-public-routes` — PR #61)
+## 49. AuthGuard Fix: Make /signup and /verify-email Public Routes (Branch `fix/auth-guard-public-routes` — PR #61) — MERGED
 
 ### 1. Summary & Motivation
 
-- **Status**: **IN REVIEW** (Branch `fix/auth-guard-public-routes`, PR #61 pending independent Muse review)
+- **Status**: **MERGED** (PR #61, merged 2026-11-07, merge commit [`85deaf0dbfdce358b1498ba4fc96141b20a63c5e`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/85deaf0dbfdce358b1498ba4fc96141b20a63c5e), approved head `ee6839b4bc428ecbe1ba8eff58373e2ad0da0d7f`)
 - **Branch**: `fix/auth-guard-public-routes`
 - **Base Commit**: `18d2d0404cf81696d191c2f1b3eb86b18c6c984a` (`main`, post-PR #60 merge)
-- **Reviewer**: Muse (Independent review required; do not call merge-ready)
+- **Reviewer**: Muse (APPROVED at head `ee6839b4bc428ecbe1ba8eff58373e2ad0da0d7f`)
 - **Live Deployment Release Gate**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending external infrastructure provisioning, live email delivery verification, live payment credentials, and disaster recovery rehearsals G18/G19).
 - **Next Milestone**: TBD
 - **Problem & Root Cause**:
@@ -3020,14 +3020,14 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
 
 ---
 
-## 50. Self-Serve Password Reset Flow (Branch feat/password-reset — PR #63)
+## 50. Self-Serve Password Reset Flow (Branch feat/password-reset — PR #63) — MERGED
 
 ### 1. Summary & Motivation
 
-- **Status**: **IN REVIEW** (Branch `feat/password-reset`, PR #63 pending independent Muse review)
+- **Status**: **MERGED** (PR #63, merged 2026-11-10, merge commit [`1b40954c939409c03ad11a7282ab49304b9460d1`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/1b40954c939409c03ad11a7282ab49304b9460d1), approved head `d136dd3587738fe7f8e9c3a7bf21f83f2e16af42`)
 - **Branch**: `feat/password-reset`
 - **Base Commit**: `430972432dee797d582e426e4b1e33e2d0749c5e` (`main`, includes PR #62 auth readiness audit)
-- **Reviewer**: Muse (Independent review required before any merge; do not call merge-ready)
+- **Reviewer**: Muse (APPROVED at head `d136dd3587738fe7f8e9c3a7bf21f83f2e16af42`)
 - **Live Deployment Release Gate**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending external infrastructure provisioning, live email delivery verification, live payment credentials, and disaster recovery rehearsals G18/G19).
 - **Next Milestone**: TBD
 - **Problem & Motivation**:
@@ -3133,14 +3133,14 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
 
 ---
 
-## 51. Frontend API Error Shape Normalization (Branch fix/frontend-error-shape — PR #64)
+## 51. Frontend API Error Shape Normalization (Branch fix/frontend-error-shape — PR #64) — MERGED
 
 ### 1. Summary & Motivation
 
-- **Status**: **IN REVIEW** (Branch `fix/frontend-error-shape`, PR #64 pending independent Muse review)
+- **Status**: **MERGED** (PR #64, merged 2026-11-10, merge commit [`f484b0cd875851bf5c1f40bdc441a8f8144f81d6`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/f484b0cd875851bf5c1f40bdc441a8f8144f81d6), approved head `b6190a5f1d768a301bc8bb5533a20d8d0b43c578`)
 - **Branch**: `fix/frontend-error-shape`
 - **Base Commit**: `1b40954c939409c03ad11a7282ab49304b9460d1` (`main`, PR #63 password-reset merge)
-- **Reviewer**: Muse (Independent review required before any merge; do not call merge-ready)
+- **Reviewer**: Muse (APPROVED at head `b6190a5f1d768a301bc8bb5533a20d8d0b43c578`)
 - **Live Deployment Release Gate**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending external infrastructure provisioning, live email delivery verification, live payment credentials, and disaster recovery rehearsals G18/G19).
 - **Next Milestone**: TBD
 - **Problem & Root Cause**:
@@ -3223,7 +3223,9 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
    - Independent Muse review required before any merge. Do not call merge-ready.
    - Next Milestone: TBD.
 
-## 52. Unverified-User Routing Trap Remediation (Branch fix/unverified-user-routing — PR #65)
+## 52. Unverified-User Routing Trap Remediation (Branch fix/unverified-user-routing — PR #65) — MERGED
+
+- **Status**: **MERGED** (PR #65, merged 2026-11-10, merge commit [`eb9b93494df1df95b5a6dd53d22715f79ec75670`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/eb9b93494df1df95b5a6dd53d22715f79ec75670), approved head `c53a9762a42d11cdec653f95cc8f587c42f01762`)
 
 ### 1. Root Cause & Real File:Line Citations
 
@@ -3298,7 +3300,9 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
    - Independent Muse review required before any merge. Do not call merge-ready.
    - Do NOT merge on this prompt alone.
 
-## 53. Legal Pages & Terms/Privacy Signup Consent (Branch feat/terms-consent — PR #66)
+## 53. Legal Pages & Terms/Privacy Signup Consent (Branch feat/terms-consent — PR #66) — MERGED
+
+- **Status**: **MERGED** (PR #66, merged 2026-11-11, merge commit [`a36e1f83f652b97b7dadda2566fec6ee7e8c7aba`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/a36e1f83f652b97b7dadda2566fec6ee7e8c7aba), approved head `2d98f67592f37472d47ede5736f79263a51d4a47`)
 
 ### 1. Scope, Routes & Content Files
 
@@ -3407,7 +3411,9 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
 
 ---
 
-## 54. Phase A: Mutation Gaps Closed for Halted/Expired Tenants (2026-11-11)
+## 54. Phase A: Mutation Gaps Closed for Halted/Expired Tenants (2026-11-11) — MERGED
+
+- **Status**: **MERGED** (PR #67, merged 2026-11-13, merge commit [`6977330dfd4132b6dcd66ba5d8a5f8e2b4c4a353`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/6977330dfd4132b6dcd66ba5d8a5f8e2b4c4a353), approved head `7a886eb9cd5b5d107c5be1afa8ae197783143415`)
 
 ### 1. Context & Objectives
 
@@ -3527,7 +3533,9 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
 
 ---
 
-## 55. Meta (Facebook & Instagram) Connect Buttons on Accounts Page (2026-11-13)
+## 55. Meta (Facebook & Instagram) Connect Buttons on Accounts Page (2026-11-13) — MERGED
+
+- **Status**: **MERGED** (PR #68, merged 2026-11-13, merge commit [`9645776f2e4b36bab8c1e8dbdec05dcf5702cbed`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/9645776f2e4b36bab8c1e8dbdec05dcf5702cbed), approved head `8a1547d0413b0982f3312ea0c7bef6f226e4dc2d`)
 
 ### 1. Context & Objectives
 
@@ -3609,7 +3617,9 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
 
 ---
 
-## 56. User Name Collection on Signup & Dashboard Fallback (2026-11-13)
+## 56. User Name Collection on Signup & Dashboard Fallback (2026-11-13) — MERGED
+
+- **Status**: **MERGED** (PR #69, merged 2026-11-13, merge commit [`fc1541691e829576c7b7eb196a651f0101eb451a`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/fc1541691e829576c7b7eb196a651f0101eb451a), approved head `e9b02137a6413aa16e326579d948e98f9d15fd05`)
 
 ### 1. Root Cause & Context
 
@@ -3713,7 +3723,27 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
    - Verify 6/6 green CI checks on GitHub Actions on the new head after this docs fix.
    - Do NOT merge on this prompt alone.
 
+---
 
+## 57. Auth Production Readiness Report (PR #62) — MERGED
 
+- **Status**: **MERGED** (PR #62, merged 2026-11-09, merge commit [`430972432dee797d582e426e4b1e33e2d0749c5e`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/430972432dee797d582e426e4b1e33e2d0749c5e), approved head `6408232e06a0cef9b112a6f3e9e2811f039b25ca`)
 
+### 1. Context & Scope
+
+- PR #62 was a report-only PR: it added `docs/auth-production-readiness-report.md` and changed no production code.
+- The report's three P0 findings were:
+  1. No password reset / account recovery anywhere.
+  2. The unverified-login redirect trap.
+  3. Rate limiting is IP-only with no per-account lockout.
+- The report's phased plan defined Phase A (before first paying customer), Phase B (before 1,000 users), and Phase C.
+- Phase A was completed by PRs #63 (password reset), #64 (error-shape fix), #65 (unverified routing), #66 (terms consent), and #67 (mutation gaps) — recorded in sections 50, 51, 52, 53, and 54 respectively.
+- This section and the §§48-56 merge records were backfilled by the docs PR on branch `docs/merge-records-48-56` because PR #62 was merged without a section and sections 48-56 were merged without merge records.
+
+### 2. CI Quality Gates & Release Gate
+
+- **CI Quality Gates**:
+  - 6/6 verified green on reviewed head f2269ab (GitGuardian Security Checks 09:27:11Z, Application Builds 09:27:53Z, Code Quality (Lint & Typecheck) 09:28:22Z, API E2E Tests 09:28:45Z, Tests 09:29:03Z, Docker Build & Smoke Test 09:35:37Z, all 2026-11-13 UTC). CI must be re-verified on the new head after this docs update.
+- **Live Deployment Release Gate**:
+  - **Live Deployment**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending external infrastructure provisioning, live email delivery verification, live payment credentials, and disaster recovery rehearsals G18/G19).
 
