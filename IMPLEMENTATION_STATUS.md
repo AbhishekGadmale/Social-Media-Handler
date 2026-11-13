@@ -3592,7 +3592,7 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
   - `pnpm --filter @agency-os/web test`: 21 test files passed, 224 tests passed (including all 11 accounts page tests).
   - `pnpm turbo run lint typecheck`: 15 successful, 0 errors across monorepo.
 - **CI Quality Gates**:
-  - GitHub Actions CI verification pending PR push on branch `feat/meta-connect-buttons`.
+  - 6/6 verified green on reviewed head f3eaa75f (GitGuardian Security Checks 07:22:49Z, Application Builds 07:23:36Z, Tests 07:24:22Z, API E2E Tests 07:24:29Z, Code Quality (Lint & Typecheck) 07:24:34Z, Docker Build & Smoke Test 07:31:20Z, all 2026-11-13 UTC). CI must be re-verified on the new head after this docs fix.
 
 ### 4. Live-Function Dependencies & Release Gate
 
@@ -3603,9 +3603,8 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
 2. **Release Gate**:
    - **Live Deployment**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending external infrastructure provisioning, live email delivery verification, live payment credentials, Meta App Review approval, and disaster recovery rehearsals G18/G19).
 3. **Next Steps**:
-   - Push branch `feat/meta-connect-buttons` to remote.
-   - Open PR targeting `main`.
-   - Verify 6/6 green CI checks on GitHub Actions.
+   - Branch `feat/meta-connect-buttons` pushed; PR #68 open targeting `main`.
+   - Verify 6/6 green CI checks on GitHub Actions on the new head after this docs fix.
    - Do NOT merge on this prompt alone.
 
 
