@@ -81,18 +81,20 @@ enum InvoiceStatus {
 }
 
 model User {
-  id                 String                   @id @db.Uuid
-  email              String                   @unique
-  name               String?
-  hashedPassword     String
-  emailVerified      Boolean                  @default(false)
-  emailVerifiedAt    DateTime?
-  securityEpoch      Int                      @default(1)
-  termsAcceptedAt    DateTime?
-  createdAt          DateTime                 @default(now())
-  updatedAt          DateTime                 @updatedAt
-  memberships        WorkspaceMember[]
-  posts              Post[]                   @relation("PostAuthor")
+  id                  String                   @id @db.Uuid
+  email               String                   @unique
+  name                String?
+  failedLoginAttempts Int                      @default(0)
+  lockedUntil         DateTime?
+  hashedPassword      String
+  emailVerified       Boolean                  @default(false)
+  emailVerifiedAt     DateTime?
+  securityEpoch       Int                      @default(1)
+  termsAcceptedAt     DateTime?
+  createdAt           DateTime                 @default(now())
+  updatedAt           DateTime                 @updatedAt
+  memberships         WorkspaceMember[]
+  posts               Post[]                   @relation("PostAuthor")
   verificationTokens  EmailVerificationToken[]
   passwordResetTokens PasswordResetToken[]
 }
@@ -240,7 +242,7 @@ model PostPlatformVariant {
   content         String?
   providerOptions Json?
 
-  dispatchVersion         Int       @default(0)
+  dispatchVersion         Int     @default(0)
   providerProcessingState String?
   executionMetadata       Json?
 
@@ -250,8 +252,8 @@ model PostPlatformVariant {
   publishedAt         DateTime?
   cancelledAt         DateTime?
 
-  reconciledAt        DateTime?
-  reconciledBy        String?
+  reconciledAt         DateTime?
+  reconciledBy         String?
   reconciliationReason String?
 
   createdAt DateTime @default(now())
@@ -270,13 +272,13 @@ model PostPlatformVariant {
 }
 
 model PublicationAttempt {
-  id               String           @id @db.Uuid
-  variantId        String           @db.Uuid
-  attemptNumber    Int
-  status           String
-  failureCategory  FailureCategory?
-  failureCode      String?
-  providerResponse Json?
+  id                   String           @id @db.Uuid
+  variantId            String           @db.Uuid
+  attemptNumber        Int
+  status               String
+  failureCategory      FailureCategory?
+  failureCode          String?
+  providerResponse     Json?
   executionHeartbeatAt DateTime?
 
   startedAt   DateTime  @default(now())
@@ -296,15 +298,15 @@ enum MediaAssetStatus {
 }
 
 model MediaAsset {
-  id          String           @id @db.Uuid
-  workspaceId String           @db.Uuid
-  filename    String
-  mimeType    String
-  byteSize    Int
-  storageKey  String
-  status      MediaAssetStatus
+  id                  String           @id @db.Uuid
+  workspaceId         String           @db.Uuid
+  filename            String
+  mimeType            String
+  byteSize            Int
+  storageKey          String
+  status              MediaAssetStatus
   processingStartedAt DateTime?
-  createdAt   DateTime         @default(now())
+  createdAt           DateTime         @default(now())
 
   workspace Workspace   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   posts     PostMedia[]
@@ -378,21 +380,21 @@ model AuditLog {
 }
 
 model Plan {
-  id                String         @id @db.Uuid
-  code              String         @unique
-  name              String
-  monthlyPricePaise Int
-  annualPricePaise  Int
-  seats             Int
-  features          Json?
-  isFounding        Boolean        @default(false)
-  isActive          Boolean        @default(true)
-  razorpayPlanId    String?
+  id                   String   @id @db.Uuid
+  code                 String   @unique
+  name                 String
+  monthlyPricePaise    Int
+  annualPricePaise     Int
+  seats                Int
+  features             Json?
+  isFounding           Boolean  @default(false)
+  isActive             Boolean  @default(true)
+  razorpayPlanId       String?
   razorpayAnnualPlanId String?
-  createdAt         DateTime       @default(now())
-  updatedAt         DateTime       @updatedAt
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
 
-  subscriptions     Subscription[]
+  subscriptions Subscription[]
 }
 
 model Subscription {
@@ -410,9 +412,9 @@ model Subscription {
   createdAt              DateTime           @default(now())
   updatedAt              DateTime           @updatedAt
 
-  workspace              Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  plan                   Plan               @relation(fields: [planId], references: [id])
-  invoices               Invoice[]
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  plan      Plan      @relation(fields: [planId], references: [id])
+  invoices  Invoice[]
 
   @@index([status])
   @@index([isFounding, status])
@@ -437,8 +439,8 @@ model Invoice {
   createdAt              DateTime      @default(now())
   updatedAt              DateTime      @updatedAt
 
-  workspace              Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  subscription           Subscription? @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
+  workspace    Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  subscription Subscription? @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
 
   @@index([workspaceId])
   @@index([createdAt])

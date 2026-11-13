@@ -28,7 +28,11 @@ export interface ChangePasswordResult {
   message?: string;
 }
 
-export type AuthFailureReason = 'USER_NOT_FOUND' | 'INVALID_PASSWORD';
+export type AuthFailureReason =
+  'USER_NOT_FOUND' | 'INVALID_PASSWORD' | 'ACCOUNT_LOCKED';
+
+export const MAX_FAILED_LOGIN_ATTEMPTS = 5;
+export const ACCOUNT_LOCKOUT_MS = 15 * 60 * 1000;
 
 export class InvalidCredentialsException extends UnauthorizedException {
   readonly reason: AuthFailureReason;
@@ -402,9 +406,26 @@ export class AuthService {
       throw new InvalidCredentialsException('USER_NOT_FOUND');
     }
 
+    if (user.lockedUntil && user.lockedUntil.getTime() > Date.now()) {
+      throw new InvalidCredentialsException('ACCOUNT_LOCKED', user.id);
+    }
+
     const isValid = await argon2.verify(user.hashedPassword, passwordPlain);
     if (!isValid) {
+      const updated = await this.userRepository.incrementFailedLoginAttempts(
+        user.id,
+      );
+      if (updated.failedLoginAttempts >= MAX_FAILED_LOGIN_ATTEMPTS) {
+        await this.userRepository.lockUserAccount(
+          user.id,
+          new Date(Date.now() + ACCOUNT_LOCKOUT_MS),
+        );
+      }
       throw new InvalidCredentialsException('INVALID_PASSWORD', user.id);
+    }
+
+    if (user.failedLoginAttempts > 0 || user.lockedUntil) {
+      await this.userRepository.clearFailedLoginAttempts(user.id);
     }
 
     const sessionId = await this.sessionManager.createSession(

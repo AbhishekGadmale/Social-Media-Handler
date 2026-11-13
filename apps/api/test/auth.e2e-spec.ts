@@ -1213,4 +1213,152 @@ describe('AuthController (e2e)', () => {
       );
     });
   });
+
+  describe('Per-Account Login Lockout (e2e)', () => {
+    let lockoutUserEmail: string;
+    const correctPassword = 'LockoutPassword123!';
+    const wrongPassword = 'WrongPassword999!';
+
+    beforeAll(async () => {
+      lockoutUserEmail = `lockout-${generateId()}@example.com`;
+      const signupRes = await request(app.getHttpServer())
+        .post('/api/v1/auth/signup')
+        .send({
+          name: 'Lockout Test User',
+          email: lockoutUserEmail,
+          password: correctPassword,
+          termsAccepted: true,
+          organizationName: 'Lockout Org',
+          workspaceName: 'Lockout Workspace',
+        });
+      expect(signupRes.status).toBe(201);
+
+      await prisma.user.update({
+        where: { email: lockoutUserEmail },
+        data: { emailVerified: true, emailVerifiedAt: new Date() },
+      });
+    });
+
+    afterAll(async () => {
+      const user = await prisma.user.findUnique({
+        where: { email: lockoutUserEmail },
+      });
+      if (user) {
+        await prisma.passwordResetToken.deleteMany({
+          where: { userId: user.id },
+        });
+        await prisma.emailVerificationToken.deleteMany({
+          where: { userId: user.id },
+        });
+        await prisma.workspaceMember.deleteMany({
+          where: { userId: user.id },
+        });
+        await prisma.workspace.deleteMany({
+          where: { organization: { name: 'Lockout Org' } },
+        });
+        await prisma.organization.deleteMany({
+          where: { name: 'Lockout Org' },
+        });
+        await prisma.user.delete({ where: { id: user.id } });
+      }
+    });
+
+    it('enforces lockout journey: 5 wrong attempts lock the account, correct password rejected while locked without disclosure, past lock allows login and clears state', async () => {
+      // 1. Attempts 1-4: wrong password -> 401 with standard invalid-credentials body
+      for (let attempt = 1; attempt <= 4; attempt++) {
+        const res = await request(app.getHttpServer())
+          .post('/api/v1/auth/login')
+          .send({
+            email: lockoutUserEmail,
+            password: wrongPassword,
+          });
+
+        expect(res.status).toBe(401);
+        expect(res.body.error).toBeDefined();
+        expect(res.body.error.code).toBe('UnauthorizedException');
+        expect(res.body.error.message).toBe('Invalid credentials');
+
+        const dbUser = await prisma.user.findUnique({
+          where: { email: lockoutUserEmail },
+        });
+        expect(dbUser!.failedLoginAttempts).toBe(attempt);
+        expect(dbUser!.lockedUntil).toBeNull();
+      }
+
+      // 2. 5th attempt: wrong password -> 401 with standard invalid-credentials body
+      const fifthRes = await request(app.getHttpServer())
+        .post('/api/v1/auth/login')
+        .send({
+          email: lockoutUserEmail,
+          password: wrongPassword,
+        });
+
+      expect(fifthRes.status).toBe(401);
+      expect(fifthRes.body.error).toBeDefined();
+      expect(fifthRes.body.error.code).toBe('UnauthorizedException');
+      expect(fifthRes.body.error.message).toBe('Invalid credentials');
+
+      // Assert user row now has lockedUntil in the future and failedLoginAttempts = 0
+      const lockedUser = await prisma.user.findUnique({
+        where: { email: lockoutUserEmail },
+      });
+      expect(lockedUser!.failedLoginAttempts).toBe(0);
+      expect(lockedUser!.lockedUntil).not.toBeNull();
+      expect(lockedUser!.lockedUntil!.getTime()).toBeGreaterThan(Date.now());
+
+      // 3. CORRECT-password login immediately after returns 401 (locked) with identical body (no disclosure)
+      const correctWhileLockedRes = await request(app.getHttpServer())
+        .post('/api/v1/auth/login')
+        .send({
+          email: lockoutUserEmail,
+          password: correctPassword,
+        });
+
+      expect(correctWhileLockedRes.status).toBe(401);
+      expect(correctWhileLockedRes.body.error).toBeDefined();
+      expect(correctWhileLockedRes.body.error.code).toBe(
+        'UnauthorizedException',
+      );
+      expect(correctWhileLockedRes.body.error.message).toBe(
+        'Invalid credentials',
+      );
+      expect(correctWhileLockedRes.headers['set-cookie']).toBeUndefined();
+
+      // Ensure locked state did not extend or change
+      const stillLockedUser = await prisma.user.findUnique({
+        where: { email: lockoutUserEmail },
+      });
+      expect(stillLockedUser!.failedLoginAttempts).toBe(0);
+      expect(stillLockedUser!.lockedUntil).toEqual(lockedUser!.lockedUntil);
+
+      // 4. Via Prisma, set lockedUntil to the past
+      await prisma.user.update({
+        where: { email: lockoutUserEmail },
+        data: {
+          lockedUntil: new Date(Date.now() - 60 * 1000), // 1 minute in the past
+        },
+      });
+
+      // 5. A correct-password login then returns 200 with a session cookie
+      const unlockedLoginRes = await request(app.getHttpServer())
+        .post('/api/v1/auth/login')
+        .send({
+          email: lockoutUserEmail,
+          password: correctPassword,
+        });
+
+      expect(unlockedLoginRes.status).toBe(200);
+      const cookies = unlockedLoginRes.headers['set-cookie'] as string[];
+      expect(cookies).toBeDefined();
+      const sessCookie = cookies.find((c: string) => c.startsWith('session='));
+      expect(sessCookie).toBeDefined();
+
+      // Assert user row afterwards has failedLoginAttempts = 0 and lockedUntil = null
+      const cleanUser = await prisma.user.findUnique({
+        where: { email: lockoutUserEmail },
+      });
+      expect(cleanUser!.failedLoginAttempts).toBe(0);
+      expect(cleanUser!.lockedUntil).toBeNull();
+    });
+  });
 });

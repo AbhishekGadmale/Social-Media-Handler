@@ -3803,3 +3803,82 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
 2. **Release Gate**:
    - **Live Deployment**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending external infrastructure provisioning, live email delivery verification, live payment credentials, and disaster recovery rehearsals G18/G19).
 
+---
+
+## 59. Per-Account Login Lockout (2026-11-13)
+
+### 1. Context & Objectives
+
+- **Origin**: `docs/auth-production-readiness-report.md` (PR #62) P0 Finding 3 — Phase B Item 1 ("Rate limiting is IP-only with no per-account lockout").
+- **Problem Statement**: Prior to this change, rate limiting on login was strictly IP-based (5 attempts per 15 minutes via `@Throttle(RateLimitPolicies.auth)`). An adversary rotating proxy IP addresses could attempt unlimited dictionary or credential-stuffing attacks against a single user account without triggering IP-scoped throttles.
+- **Dual-Layer Defense**: This implementation introduces a persistent, per-account failed attempt counter and timed lockout layer. The existing IP throttle remains completely untouched and complementary, throttling volumetric attacks from single origins while per-account lockout halts distributed password guessing targeting specific accounts.
+
+### 2. Architecture & Design Decisions
+
+#### A. Database-Backed Counters vs. Redis
+- **Chosen Architecture**: Persistent columns on the `User` table (`failedLoginAttempts Int @default(0)`, `lockedUntil DateTime?`).
+- **Rationale**:
+  - Durability across infrastructure events: in-memory or Redis-backed keys can be flushed, evicted under memory pressure, or lost during cluster failover, wiping lockout counters and re-opening attack windows.
+  - Consistency: utilizes Prisma update semantics and collocated relational state already established in the repository layer (`UserRepository`).
+  - No new infrastructure dependencies or schema indirection.
+
+#### B. Thresholds & Temporal Rules
+- `MAX_FAILED_LOGIN_ATTEMPTS = 5`
+- `ACCOUNT_LOCKOUT_MS = 15 * 60 * 1000` (15 minutes)
+
+#### C. Authentication Flow Lifecycle
+1. **Lookup & Pre-Verification Lock Check**:
+   - `AuthService.login()` queries `UserRepository.findByEmail(email)`.
+   - If user does not exist, throws `InvalidCredentialsException('USER_NOT_FOUND')` without recording failed attempts.
+   - If user exists, evaluates `user.lockedUntil && user.lockedUntil.getTime() > Date.now()`.
+   - If locked, immediately throws `InvalidCredentialsException('ACCOUNT_LOCKED', user.id)` without invoking `argon2.verify` (conserving server CPU).
+2. **Password Verification & Post-Failure Handling**:
+   - On password mismatch (`isValid === false`):
+     - Calls `userRepo.incrementFailedLoginAttempts(user.id)`, which atomically increments `failedLoginAttempts` by 1.
+     - If the updated `failedLoginAttempts >= MAX_FAILED_LOGIN_ATTEMPTS`:
+       - Sets `lockedUntil = new Date(Date.now() + ACCOUNT_LOCKOUT_MS)` and resets `failedLoginAttempts = 0` via `userRepo.lockUserAccount(user.id, lockedUntil)`. The account is locked for subsequent attempts.
+     - Throws `InvalidCredentialsException('INVALID_PASSWORD', user.id)`.
+3. **Post-Success Cleanup**:
+   - On password match (`isValid === true`):
+     - Checks if dirty (`user.failedLoginAttempts > 0 || user.lockedUntil !== null`).
+     - If dirty, calls `userRepo.clearFailedLoginAttempts(user.id)` to reset `failedLoginAttempts = 0` and `lockedUntil = null`.
+     - If clean (0 and null), skips the database write to avoid unnecessary write IO.
+
+#### D. Zero-Disclosure & Timing Characteristics
+- **Client Invariance**: Both `ACCOUNT_LOCKED` and `INVALID_PASSWORD` (as well as `USER_NOT_FOUND`) map to identical HTTP 401 responses (`{ "error": { "code": "UnauthorizedException", "message": "Invalid credentials", "requestId": "<request-id>" } }`).
+- **Audit Logging**: The internal failure reason (`ACCOUNT_LOCKED` vs `INVALID_PASSWORD`) is passed through `InvalidCredentialsException` and captured by `AuthController.login`'s catch block (`AuthService.login` throws; it does not audit) in the server-side `AUTH_LOGIN_FAILED` audit log without disclosing state to external callers.
+- **Controller Boundary**: `AuthController.login` was already structured to catch `InvalidCredentialsException` and emit `AUTH_LOGIN_FAILED` reading `e.reason` (into audit metadata `{ reason }`) and `e.resolvedUserId` (into `targetId`, when present); zero controller modifications were required.
+
+#### E. Stated Tradeoffs & Threat Model
+1. **Targeted Lockout Denial-of-Service (Account DoS)**:
+   - *Risk*: An attacker who knows a target user's email address can intentionally submit 5 incorrect passwords to temporarily deny login access to the legitimate user for 15 minutes.
+   - *Mitigation*: Lockout is time-bounded (15 minutes) rather than permanent/operator-intervention-required; IP throttle continues to restrict rapid-fire submissions from single hosts; counter is reset on lock application and does not extend the window on further failed attempts.
+2. **Timing Discrepancies**:
+   - *Risk*: Locked accounts return HTTP 401 faster because `argon2.verify` is bypassed.
+   - *Mitigation*: This behavior is identical to the pre-existing `USER_NOT_FOUND` flow, where non-existent accounts return prior to password hashing. Eliminating Argon2 hashing on locked accounts is intentional to prevent CPU exhaustion denial-of-service against the API during credential-stuffing floods.
+3. **Deliberate Scope Boundary**:
+   - Current-password verification in `AuthService.changePassword` does NOT increment or evaluate login lockout counters in this PR; it remains scoped strictly to the public `AuthService.login` authentication gateway.
+
+### 3. Verification & Test Evidence
+
+- **Database Repository Tests (`packages/database/src/repositories/UserRepository.spec.ts`)**:
+  - 9/9 PASS (3 new unit tests covering `incrementFailedLoginAttempts`, `lockUserAccount`, and `clearFailedLoginAttempts`).
+  - Full `@agency-os/database` test suite: 13/13 test files PASS, 113/113 tests PASS.
+- **Auth Service Unit Tests (`apps/api/src/modules/auth/auth.service.spec.ts`)**:
+  - 41/41 PASS (6 new unit tests verifying attempt incrementing, threshold tripping, active lockout rejection, expired lockout recovery, dirty counter clearing, clean counter write-skipping, and unknown user bypass).
+  - Full `@agency-os/api` unit test suite: 37/37 test files PASS, 479/479 tests PASS.
+- **API E2E Tests (`apps/api/test/auth.e2e-spec.ts`)**:
+  - 31/31 PASS (New `Per-Account Login Lockout (e2e)` suite verifying 4 failed attempts allow continued retries, 5th failed attempt triggers lock, locked account returns identical HTTP 401 with no disclosure, DB contains future `lockedUntil` and 0 attempts, expired lock allows successful login with session cookie, and DB counters reset to 0/null).
+- **Monorepo Code Quality**:
+  - `pnpm turbo run lint typecheck`: 15/15 tasks PASS (0 errors across all monorepo packages).
+
+### 4. Release Gate & Next Steps
+
+1. **CI Quality Gates**:
+   - 6/6 verified green on reviewed head 76707ec (GitGuardian Security Checks 13:29:26Z, Application Builds 13:32:19Z, Code Quality (Lint & Typecheck) 13:32:37Z, API E2E Tests 13:32:50Z, Tests 13:33:05Z, Docker Build & Smoke Test 13:40:09Z, all 2026-11-13 UTC). CI must be re-verified on the new head after this docs update.
+2. **Release Gate**:
+   - **Live Deployment**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending external infrastructure provisioning, live email delivery verification, live payment credentials, and disaster recovery rehearsals G18/G19).
+3. **Next Steps**:
+   - Branch `feat/login-lockout` pushed; PR #72 open targeting `main`.
+   - Do NOT merge on this prompt alone.
+
