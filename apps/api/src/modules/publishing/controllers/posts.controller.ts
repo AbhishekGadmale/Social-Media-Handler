@@ -80,6 +80,7 @@ export class PostsController {
   }
 
   @Delete(':postId')
+  @UseGuards(WorkspaceWritableGuard)
   @RequirePermission('posts.delete')
   async deletePost(
     @Param('workspaceId') workspaceId: string,
