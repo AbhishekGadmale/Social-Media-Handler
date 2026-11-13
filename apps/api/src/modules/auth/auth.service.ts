@@ -98,6 +98,7 @@ export class AuthService {
     try {
       const tenantResult =
         await this.userRepository.createWithTenantTransaction({
+          name: dto.name,
           email: normalizedEmail,
           hashedPassword,
           organizationName: dto.organizationName,

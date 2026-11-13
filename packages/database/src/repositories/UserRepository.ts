@@ -9,6 +9,7 @@ import {
 import { generateId } from "../id";
 
 export interface CreateUserWithTenantInput {
+  name: string;
   email: string;
   hashedPassword: string;
   organizationName?: string;
@@ -87,6 +88,7 @@ export class UserRepository {
       const user = await tx.user.create({
         data: {
           id: userId,
+          name: input.name.trim(),
           email: input.email.trim().toLowerCase(),
           hashedPassword: input.hashedPassword,
           emailVerified: false,

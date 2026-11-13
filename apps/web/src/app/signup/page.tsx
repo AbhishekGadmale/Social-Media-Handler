@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { api, ApiError } from '../../lib/api/client';
 
 export default function SignupPage() {
+  const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -56,12 +57,14 @@ export default function SignupPage() {
 
     try {
       const payload: {
+        name: string;
         email: string;
         password: string;
         termsAccepted: boolean;
         organizationName?: string;
         workspaceName?: string;
       } = {
+        name: name.trim(),
         email: email.trim(),
         password,
         termsAccepted,
@@ -234,6 +237,26 @@ export default function SignupPage() {
 
         <form className="mt-8 space-y-6" onSubmit={handleSubmit} noValidate>
           <div className="space-y-4">
+            <div>
+              <label
+                htmlFor="name"
+                className="block text-sm font-medium text-gray-700"
+              >
+                Full name <span className="text-red-500">*</span>
+              </label>
+              <input
+                id="name"
+                name="name"
+                type="text"
+                autoComplete="name"
+                required
+                className="mt-1 block w-full appearance-none rounded-md border border-gray-300 px-3 py-2 text-gray-900 placeholder-gray-500 focus:border-blue-500 focus:outline-none focus:ring-blue-500 sm:text-sm"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                disabled={loading}
+              />
+            </div>
+
             <div>
               <label
                 htmlFor="email"

@@ -682,11 +682,13 @@ describe('AuthController (e2e)', () => {
     let signedUpWorkspace: any;
 
     it('Scenario 10, 11 & 13: atomically provisions User, Organization, Workspace, and OWNER member without issuing cookies', async () => {
+      const submittedName = 'Alice E2E User';
       signedUpEmail = `signup-${generateId()}@example.com`;
 
       const res = await request(app.getHttpServer())
         .post('/api/v1/auth/signup')
         .send({
+          name: submittedName,
           email: signedUpEmail,
           password: 'correctpassword',
           termsAccepted: true,
@@ -707,11 +709,30 @@ describe('AuthController (e2e)', () => {
         where: { email: signedUpEmail },
       });
       expect(signedUpUser).toBeDefined();
+      expect(signedUpUser.name).toBe(submittedName);
       expect(signedUpUser.emailVerified).toBe(false);
       expect(signedUpUser.emailVerifiedAt).toBeNull();
       expect(signedUpUser.securityEpoch).toBe(1);
       expect(signedUpUser.termsAcceptedAt).toBeDefined();
       expect(signedUpUser.termsAcceptedAt).not.toBeNull();
+
+      // Verify GET /auth/me for this user returns user.name equal to submitted name
+      const loginRes = await request(app.getHttpServer())
+        .post('/api/v1/auth/login')
+        .send({
+          email: signedUpEmail,
+          password: 'correctpassword',
+        });
+      expect(loginRes.status).toBe(200);
+      const cookies = loginRes.headers['set-cookie'] as string[];
+      const sessCookie = cookies
+        .find((c: string) => c.startsWith('session='))!
+        .split(';')[0];
+      const meRes = await request(app.getHttpServer())
+        .get('/api/v1/auth/me')
+        .set('Cookie', sessCookie);
+      expect(meRes.status).toBe(200);
+      expect(meRes.body.user.name).toBe(submittedName);
 
       // Verify email verification token was provisioned in the same database transaction
       const tokenRecord = await prisma.emailVerificationToken.findFirst({
@@ -747,6 +768,7 @@ describe('AuthController (e2e)', () => {
       const res = await request(app.getHttpServer())
         .post('/api/v1/auth/signup')
         .send({
+          name: 'Duplicate E2E User',
           email: signedUpEmail,
           password: 'DifferentPassword456!',
           termsAccepted: true,
@@ -760,10 +782,38 @@ describe('AuthController (e2e)', () => {
       expect(res.headers['set-cookie']).toBeUndefined();
     });
 
+    it('rejects signup with 400 when name is missing from body', async () => {
+      const res = await request(app.getHttpServer())
+        .post('/api/v1/auth/signup')
+        .send({
+          email: `missing-name-${generateId()}@example.com`,
+          password: 'ValidPassword123!',
+          termsAccepted: true,
+        });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBeDefined();
+    });
+
+    it('rejects signup with 400 when name is empty string', async () => {
+      const res = await request(app.getHttpServer())
+        .post('/api/v1/auth/signup')
+        .send({
+          name: '',
+          email: `empty-name-${generateId()}@example.com`,
+          password: 'ValidPassword123!',
+          termsAccepted: true,
+        });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBeDefined();
+    });
+
     it('rejects signup with 400 when termsAccepted is missing from body', async () => {
       const res = await request(app.getHttpServer())
         .post('/api/v1/auth/signup')
         .send({
+          name: 'Missing Terms User',
           email: `missing-terms-${generateId()}@example.com`,
           password: 'ValidPassword123!',
         });
@@ -776,6 +826,7 @@ describe('AuthController (e2e)', () => {
       const res = await request(app.getHttpServer())
         .post('/api/v1/auth/signup')
         .send({
+          name: 'False Terms User',
           email: `false-terms-${generateId()}@example.com`,
           password: 'ValidPassword123!',
           termsAccepted: false,
@@ -814,6 +865,7 @@ describe('AuthController (e2e)', () => {
         .set('Cookie', sessCookie);
 
       expect(meRes.status).toBe(200);
+      expect(meRes.body.user.name).toBe('Alice E2E User');
       expect(meRes.body.user.email).toBe(signedUpEmail);
       expect(meRes.body.user.emailVerified).toBe(false);
 

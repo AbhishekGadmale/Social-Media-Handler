@@ -48,6 +48,7 @@ describe('UserRepository', () => {
       });
 
       const result = await repo.createWithTenantTransaction({
+        name: '  Alice Smith  ',
         email: '  Alice@Example.COM  ',
         hashedPassword: '$argon2id$hashedpassword',
         organizationName: '  Alice Agency  ',
@@ -60,6 +61,7 @@ describe('UserRepository', () => {
       expect(txMock.user.create).toHaveBeenCalledWith({
         data: {
           id: expect.any(String),
+          name: 'Alice Smith',
           email: 'alice@example.com',
           hashedPassword: '$argon2id$hashedpassword',
           emailVerified: false,
@@ -135,6 +137,7 @@ describe('UserRepository', () => {
 
       const expiresAt = new Date(Date.now() + 86400000);
       const result = await repo.createWithTenantTransaction({
+        name: 'Carol Danvers',
         email: 'carol@example.com',
         hashedPassword: '$argon2id$hashed',
         verificationToken: {
@@ -176,6 +179,7 @@ describe('UserRepository', () => {
 
       await expect(
         repo.createWithTenantTransaction({
+          name: 'Bob Jones',
           email: 'bob@example.com',
           hashedPassword: '$argon2id$hashed',
         }),
@@ -206,6 +210,7 @@ describe('UserRepository', () => {
 
       await expect(
         repo.createWithTenantTransaction({
+          name: 'Duplicate User',
           email: 'duplicate@example.com',
           hashedPassword: '$argon2id$hashed',
         }),

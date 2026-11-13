@@ -124,8 +124,33 @@ describe('DashboardShell Verification Gate', () => {
     await waitFor(() => {
       expect(screen.getByTestId('child-content')).toBeInTheDocument();
     });
+    expect(screen.getByText('Test User')).toBeInTheDocument();
     expect(screen.getByRole('navigation')).toBeInTheDocument();
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('renders user email in name position when user.name is null', async () => {
+    mockApiGet.mockResolvedValue({
+      user: {
+        id: 'user-null-name',
+        email: 'fallback@example.com',
+        name: null,
+        emailVerified: true,
+        createdAt: '2026-01-01',
+        updatedAt: '2026-01-01',
+      },
+      memberships: mockMemberships,
+    });
+
+    renderWithShell();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('child-content')).toBeInTheDocument();
+    });
+
+    const emailOccurrences = screen.getAllByText('fallback@example.com');
+    expect(emailOccurrences.length).toBe(2);
+    expect(emailOccurrences[0]).toHaveClass('font-medium');
   });
 
   it('renders verification gate and hides children and sidebar nav for unverified user', async () => {

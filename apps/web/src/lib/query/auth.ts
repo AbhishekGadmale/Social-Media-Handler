@@ -4,7 +4,7 @@ import { api } from '../api/client';
 export interface User {
   id: string;
   email: string;
-  name: string;
+  name: string | null;
   emailVerified: boolean;
   createdAt: string;
   updatedAt: string;

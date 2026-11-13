@@ -232,7 +232,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
           <div className="border-t p-4 space-y-3">
             <div className="flex items-center px-3 py-2 text-sm text-gray-700">
               <div className="flex flex-col truncate">
-                <span className="font-medium text-gray-900 truncate">{authData.user.name}</span>
+                <span className="font-medium text-gray-900 truncate">{authData.user.name || authData.user.email}</span>
                 <span className="text-xs text-gray-500 truncate">{authData.user.email}</span>
               </div>
             </div>
