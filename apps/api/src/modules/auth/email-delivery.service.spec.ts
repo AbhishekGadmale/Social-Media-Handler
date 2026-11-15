@@ -89,6 +89,30 @@ describe('EmailDeliveryService (Safety & Environment Controls)', () => {
         rawToken: 'raw-reset-token',
       });
     });
+
+    it('records simulated duplicate signup email in memory during test/development', async () => {
+      process.env.NODE_ENV = 'test';
+      const service = new MockEmailDeliveryService();
+
+      await service.sendDuplicateSignupEmail('dup@example.com');
+
+      expect(service.sentDuplicateSignupEmails).toHaveLength(1);
+      expect(service.sentDuplicateSignupEmails[0]).toEqual({
+        toEmail: 'dup@example.com',
+      });
+    });
+
+    it('records simulated account locked email in memory during test/development', async () => {
+      process.env.NODE_ENV = 'test';
+      const service = new MockEmailDeliveryService();
+
+      await service.sendAccountLockedEmail('locked@example.com');
+
+      expect(service.sentAccountLockedEmails).toHaveLength(1);
+      expect(service.sentAccountLockedEmails[0]).toEqual({
+        toEmail: 'locked@example.com',
+      });
+    });
   });
 
   describe('NoopEmailDeliveryService', () => {
@@ -101,6 +125,12 @@ describe('EmailDeliveryService (Safety & Environment Controls)', () => {
       ).resolves.toBeUndefined();
       await expect(
         service.sendPasswordResetEmail('prod@example.com', 'raw-token'),
+      ).resolves.toBeUndefined();
+      await expect(
+        service.sendDuplicateSignupEmail('prod@example.com'),
+      ).resolves.toBeUndefined();
+      await expect(
+        service.sendAccountLockedEmail('prod@example.com'),
       ).resolves.toBeUndefined();
     });
   });
@@ -212,6 +242,82 @@ describe('EmailDeliveryService (Safety & Environment Controls)', () => {
       );
       expect(body.text).toContain(
         'https://app.example.com/reset-password?token=raw-reset-token-value',
+      );
+    });
+
+    it('successfully sends duplicate signup notification email via Resend API with exact subject and copy', async () => {
+      process.env.RESEND_API_KEY = 'mock-resend-api-key-test';
+      process.env.EMAIL_FROM = 'Test App <auth@example.com>';
+
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        json: async () => ({ id: 'email-resend-dup-id' }),
+      });
+      vi.stubGlobal('fetch', fetchMock);
+
+      const service = new ResendEmailDeliveryService();
+      await service.sendDuplicateSignupEmail('alice@example.com');
+
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      const [url, options] = fetchMock.mock.calls[0];
+      expect(url).toBe('https://api.resend.com/emails');
+      expect(options.method).toBe('POST');
+      expect(options.headers).toEqual({
+        Authorization: 'Bearer mock-resend-api-key-test',
+        'Content-Type': 'application/json',
+      });
+
+      const body = JSON.parse(options.body);
+      expect(body.from).toBe('Test App <auth@example.com>');
+      expect(body.to).toEqual(['alice@example.com']);
+      expect(body.subject).toBe(
+        'An Agency OS account already exists for this email',
+      );
+      expect(body.text).toContain(
+        'Someone attempted to create an Agency OS account with this email address. If this was you, please sign in or reset your password. If this was not you, no action is needed — your account remains secure and no new account was created.',
+      );
+      expect(body.html).toContain(
+        'Someone attempted to create an Agency OS account with this email address. If this was you, please sign in or reset your password. If this was not you, no action is needed — your account remains secure and no new account was created.',
+      );
+    });
+
+    it('successfully sends account locked notification email via Resend API with exact subject and copy', async () => {
+      process.env.RESEND_API_KEY = 'mock-resend-api-key-test';
+      process.env.EMAIL_FROM = 'Test App <auth@example.com>';
+
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        json: async () => ({ id: 'email-resend-locked-id' }),
+      });
+      vi.stubGlobal('fetch', fetchMock);
+
+      const service = new ResendEmailDeliveryService();
+      await service.sendAccountLockedEmail('alice@example.com');
+
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      const [url, options] = fetchMock.mock.calls[0];
+      expect(url).toBe('https://api.resend.com/emails');
+      expect(options.method).toBe('POST');
+      expect(options.headers).toEqual({
+        Authorization: 'Bearer mock-resend-api-key-test',
+        'Content-Type': 'application/json',
+      });
+
+      const body = JSON.parse(options.body);
+      expect(body.from).toBe('Test App <auth@example.com>');
+      expect(body.to).toEqual(['alice@example.com']);
+      expect(body.subject).toBe(
+        'Your Agency OS account was temporarily locked',
+      );
+      expect(body.text).toContain(
+        'Multiple failed login attempts detected on your account. For your security, your account has been temporarily locked for 15 minutes. If this was you, wait 15 minutes and try again, or reset your password. If this was not you, we recommend resetting your password after the lock expires.',
+      );
+      expect(body.html).toContain(
+        'Multiple failed login attempts detected on your account. For your security, your account has been temporarily locked for 15 minutes. If this was you, wait 15 minutes and try again, or reset your password. If this was not you, we recommend resetting your password after the lock expires.',
       );
     });
   });

@@ -89,6 +89,13 @@ export class AuthService {
           requestId,
         });
       }
+      this.emailDeliveryService
+        .sendDuplicateSignupEmail(normalizedEmail)
+        .catch((err) => {
+          this.logger.warn(
+            `[AuthService.signup] Failed to dispatch duplicate signup email to ${normalizedEmail}: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        });
       return { message: 'Registration request received.' };
     }
 
@@ -161,6 +168,13 @@ export class AuthService {
               requestId,
             });
           }
+          this.emailDeliveryService
+            .sendDuplicateSignupEmail(normalizedEmail)
+            .catch((err) => {
+              this.logger.warn(
+                `[AuthService.signup] Failed to dispatch duplicate signup email to ${normalizedEmail}: ${err instanceof Error ? err.message : String(err)}`,
+              );
+            });
           return { message: 'Registration request received.' };
         }
       }
@@ -426,6 +440,13 @@ export class AuthService {
           user.id,
           new Date(Date.now() + ACCOUNT_LOCKOUT_MS),
         );
+        this.emailDeliveryService
+          .sendAccountLockedEmail(user.email)
+          .catch((err) => {
+            this.logger.warn(
+              `[AuthService.login] Failed to dispatch account locked email to ${user.email}: ${err instanceof Error ? err.message : String(err)}`,
+            );
+          });
       }
       throw new InvalidCredentialsException('INVALID_PASSWORD', user.id);
     }
