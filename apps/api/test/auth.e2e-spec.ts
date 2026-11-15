@@ -17,6 +17,19 @@ import {
   EMAIL_DELIVERY_SERVICE,
   MockEmailDeliveryService,
 } from '../src/modules/auth/email-delivery.service';
+import * as http from 'node:http';
+import { createHash } from 'node:crypto';
+
+const BREACHED_TEST_PASSWORD = 'BreachedPassword123!';
+const breachedSha1 = createHash('sha1')
+  .update(BREACHED_TEST_PASSWORD)
+  .digest('hex')
+  .toUpperCase();
+const breachedPrefix = breachedSha1.slice(0, 5);
+const breachedSuffix = breachedSha1.slice(5);
+
+let hibpServer: http.Server;
+let hibpBaseUrl: string;
 
 describe('AuthController (e2e)', () => {
   let app: INestApplication;
@@ -30,6 +43,33 @@ describe('AuthController (e2e)', () => {
   let testOrg: string;
 
   beforeAll(async () => {
+    await new Promise<void>((resolve) => {
+      hibpServer = http.createServer((req, res) => {
+        const url = new URL(req.url || '', `http://${req.headers.host}`);
+        const match = url.pathname.match(/^\/range\/([A-Fa-f0-9]{5})$/);
+        if (match) {
+          const reqPrefix = match[1].toUpperCase();
+          if (reqPrefix === breachedPrefix) {
+            res.writeHead(200, { 'Content-Type': 'text/plain' });
+            res.end(`${breachedSuffix}:42\n`);
+            return;
+          }
+          res.writeHead(200, { 'Content-Type': 'text/plain' });
+          res.end(`00000000000000000000000000000000000:1\n`);
+          return;
+        }
+        res.writeHead(404);
+        res.end();
+      });
+
+      hibpServer.listen(0, '127.0.0.1', () => {
+        const addr = hibpServer.address() as any;
+        hibpBaseUrl = `http://127.0.0.1:${addr.port}`;
+        process.env.HIBP_API_BASE_URL = hibpBaseUrl;
+        resolve();
+      });
+    });
+
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [AppModule],
     }).compile();
@@ -61,7 +101,7 @@ describe('AuthController (e2e)', () => {
     }
 
     // Setup Test Data
-    const hashedPassword = await argon2.hash('correctpassword');
+    const hashedPassword = await argon2.hash('CorrectPassword123!');
     testUser = await prisma.user.create({
       data: {
         id: generateId(),
@@ -149,6 +189,10 @@ describe('AuthController (e2e)', () => {
     if (app) {
       await app.close();
     }
+
+    if (hibpServer) {
+      await new Promise<void>((resolve) => hibpServer.close(() => resolve()));
+    }
   });
 
   let sessionCookie: string;
@@ -212,7 +256,7 @@ describe('AuthController (e2e)', () => {
   it('/api/v1/auth/login (POST) - success issues valid session and csrf cookies', async () => {
     const res = await request(app.getHttpServer())
       .post('/api/v1/auth/login')
-      .send({ email: testUser.email, password: 'correctpassword' });
+      .send({ email: testUser.email, password: 'CorrectPassword123!' });
 
     expect(res.status).toBe(200);
     const cookies = res.headers['set-cookie'] as string[];
@@ -289,7 +333,7 @@ describe('AuthController (e2e)', () => {
     // 1. Log in to get a fresh session
     const loginRes = await request(app.getHttpServer())
       .post('/api/v1/auth/login')
-      .send({ email: testUser.email, password: 'correctpassword' });
+      .send({ email: testUser.email, password: 'CorrectPassword123!' });
 
     const cookies = loginRes.headers['set-cookie'] as string[];
     const sessionCookieHeader = cookies.find((c) => c.startsWith('session='));
@@ -320,7 +364,7 @@ describe('AuthController (e2e)', () => {
   });
 
   describe('/api/v1/auth/change-password (POST)', () => {
-    async function loginAsUser(password = 'correctpassword') {
+    async function loginAsUser(password = 'CorrectPassword123!') {
       const loginRes = await request(app.getHttpServer())
         .post('/api/v1/auth/login')
         .send({ email: testUser.email, password });
@@ -341,8 +385,8 @@ describe('AuthController (e2e)', () => {
       const res = await request(app.getHttpServer())
         .post('/api/v1/auth/change-password')
         .send({
-          currentPassword: 'correctpassword',
-          newPassword: 'newsecurepassword123',
+          currentPassword: 'CorrectPassword123!',
+          newPassword: 'NewSecurePassword123!',
         });
 
       expect(res.status).toBe(401);
@@ -356,8 +400,8 @@ describe('AuthController (e2e)', () => {
         .post('/api/v1/auth/change-password')
         .set('Cookie', sess)
         .send({
-          currentPassword: 'correctpassword',
-          newPassword: 'newsecurepassword123',
+          currentPassword: 'CorrectPassword123!',
+          newPassword: 'NewSecurePassword123!',
         });
 
       expect(res.status).toBe(403);
@@ -372,7 +416,7 @@ describe('AuthController (e2e)', () => {
         .set('Cookie', `${sess}; csrfToken=${csrf}`)
         .set('x-csrf-token', csrf)
         .send({
-          currentPassword: 'correctpassword',
+          currentPassword: 'CorrectPassword123!',
           newPassword: 'short',
         });
 
@@ -389,7 +433,7 @@ describe('AuthController (e2e)', () => {
         .set('x-csrf-token', csrf)
         .send({
           currentPassword: 'wrongcurrentpassword',
-          newPassword: 'newsecurepassword123',
+          newPassword: 'NewSecurePassword123!',
         });
 
       expect(res.status).toBe(401);
@@ -404,8 +448,8 @@ describe('AuthController (e2e)', () => {
         .set('Cookie', `${sess}; csrfToken=${csrf}`)
         .set('x-csrf-token', csrf)
         .send({
-          currentPassword: 'correctpassword',
-          newPassword: 'correctpassword',
+          currentPassword: 'CorrectPassword123!',
+          newPassword: 'CorrectPassword123!',
         });
 
       expect(res.status).toBe(400);
@@ -431,7 +475,7 @@ describe('AuthController (e2e)', () => {
         .set('Cookie', `${sessA}; csrfToken=${csrfA}`)
         .set('x-csrf-token', csrfA)
         .send({
-          currentPassword: 'correctpassword',
+          currentPassword: 'CorrectPassword123!',
           newPassword: 'BrandNewPassword123!',
         });
 
@@ -455,7 +499,7 @@ describe('AuthController (e2e)', () => {
       // 6. Old password no longer works for login
       const oldLoginRes = await request(app.getHttpServer())
         .post('/api/v1/auth/login')
-        .send({ email: testUser.email, password: 'correctpassword' });
+        .send({ email: testUser.email, password: 'CorrectPassword123!' });
       expect(oldLoginRes.status).toBe(401);
 
       // 7. New password works for login
@@ -464,7 +508,7 @@ describe('AuthController (e2e)', () => {
         .send({ email: testUser.email, password: 'BrandNewPassword123!' });
       expect(newLoginRes.status).toBe(200);
 
-      // Restore password back to 'correctpassword' for any subsequent test runs
+      // Restore password back to 'CorrectPassword123!' for any subsequent test runs
       const newCookies = newLoginRes.headers['set-cookie'] as string[];
       const newSess = newCookies
         .find((c) => c.startsWith('session='))!
@@ -479,7 +523,7 @@ describe('AuthController (e2e)', () => {
         .set('x-csrf-token', newCsrf)
         .send({
           currentPassword: 'BrandNewPassword123!',
-          newPassword: 'correctpassword',
+          newPassword: 'CorrectPassword123!',
         });
     });
 
@@ -509,7 +553,7 @@ describe('AuthController (e2e)', () => {
           .set('Cookie', `${sessA}; csrfToken=${csrfA}`)
           .set('x-csrf-token', csrfA)
           .send({
-            currentPassword: 'correctpassword',
+            currentPassword: 'CorrectPassword123!',
             newPassword: 'DeferredPassword123!',
           });
 
@@ -531,7 +575,7 @@ describe('AuthController (e2e)', () => {
         // 5. Old password no longer works
         const oldLogin = await request(app.getHttpServer())
           .post('/api/v1/auth/login')
-          .send({ email: testUser.email, password: 'correctpassword' });
+          .send({ email: testUser.email, password: 'CorrectPassword123!' });
         expect(oldLogin.status).toBe(401);
 
         // 6. New password works
@@ -542,7 +586,7 @@ describe('AuthController (e2e)', () => {
       } finally {
         destroyOtherSpy.mockRestore();
 
-        // Restore password back to correctpassword
+        // Restore password back to CorrectPassword123!
         const loginAgain = await request(app.getHttpServer())
           .post('/api/v1/auth/login')
           .send({ email: testUser.email, password: 'DeferredPassword123!' });
@@ -561,7 +605,7 @@ describe('AuthController (e2e)', () => {
             .set('x-csrf-token', c)
             .send({
               currentPassword: 'DeferredPassword123!',
-              newPassword: 'correctpassword',
+              newPassword: 'CorrectPassword123!',
             });
         }
       }
@@ -569,7 +613,7 @@ describe('AuthController (e2e)', () => {
   });
 
   describe('/api/v1/auth/sessions/revoke-all (POST)', () => {
-    async function loginAsUser(password = 'correctpassword') {
+    async function loginAsUser(password = 'CorrectPassword123!') {
       const loginRes = await request(app.getHttpServer())
         .post('/api/v1/auth/login')
         .send({ email: testUser.email, password });
@@ -690,7 +734,7 @@ describe('AuthController (e2e)', () => {
         .send({
           name: submittedName,
           email: signedUpEmail,
-          password: 'correctpassword',
+          password: 'CorrectPassword123!',
           termsAccepted: true,
           organizationName: 'Signup Org E2E',
           workspaceName: 'Signup Workspace E2E',
@@ -721,7 +765,7 @@ describe('AuthController (e2e)', () => {
         .post('/api/v1/auth/login')
         .send({
           email: signedUpEmail,
-          password: 'correctpassword',
+          password: 'CorrectPassword123!',
         });
       expect(loginRes.status).toBe(200);
       const cookies = loginRes.headers['set-cookie'] as string[];
@@ -845,7 +889,7 @@ describe('AuthController (e2e)', () => {
         .post('/api/v1/auth/login')
         .send({
           email: signedUpEmail,
-          password: 'correctpassword',
+          password: 'CorrectPassword123!',
         });
 
       expect(loginRes.status).toBe(200);
@@ -899,7 +943,7 @@ describe('AuthController (e2e)', () => {
         .set('Cookie', `${sessCookie}; csrfToken=${csrfVal}`)
         .set('x-csrf-token', csrfVal)
         .send({
-          currentPassword: 'correctpassword',
+          currentPassword: 'CorrectPassword123!',
           newPassword: 'UpdatedUnverifiedPass789!',
         });
 
@@ -1112,7 +1156,7 @@ describe('AuthController (e2e)', () => {
         .post('/api/v1/auth/reset-password')
         .send({
           token: rawToken,
-          newPassword: 'mock-new-password-456!',
+          newPassword: 'MockNewPassword456!',
         });
 
       expect(resetRes.status).toBe(200);
@@ -1130,7 +1174,7 @@ describe('AuthController (e2e)', () => {
         .post('/api/v1/auth/login')
         .send({
           email: resetUserEmail,
-          password: 'mock-new-password-456!',
+          password: 'MockNewPassword456!',
         });
 
       expect(newLoginRes.status).toBe(200);
@@ -1167,7 +1211,7 @@ describe('AuthController (e2e)', () => {
         .post('/api/v1/auth/reset-password')
         .send({
           token: rawToken,
-          newPassword: 'mock-new-password-456!',
+          newPassword: 'MockNewPassword456!',
         });
       expect(firstReset.status).toBe(200);
 
@@ -1176,7 +1220,7 @@ describe('AuthController (e2e)', () => {
         .post('/api/v1/auth/reset-password')
         .send({
           token: rawToken,
-          newPassword: 'mock-another-password-789!',
+          newPassword: 'MockAnotherPassword789!',
         });
 
       expect(secondReset.status).toBe(400);
@@ -1359,6 +1403,88 @@ describe('AuthController (e2e)', () => {
       });
       expect(cleanUser!.failedLoginAttempts).toBe(0);
       expect(cleanUser!.lockedUntil).toBeNull();
+    });
+  });
+
+  describe('Password Security Policy & Breach Checking (e2e)', () => {
+    it('rejects signup with non-complex password (missing special char) with 400', async () => {
+      const res = await request(app.getHttpServer())
+        .post('/api/v1/auth/signup')
+        .send({
+          name: 'NonComplex User',
+          email: `policy-noncomplex-${generateId()}@example.com`,
+          password: 'Password123',
+          termsAccepted: true,
+        });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBeDefined();
+      expect(res.body.error.code).toBe('BadRequestException');
+      expect(res.body.error.message).toBe(
+        'Password must include at least one uppercase letter, one lowercase letter, one number, and one special character.',
+      );
+    });
+
+    it('rejects signup with breached password with 400', async () => {
+      const res = await request(app.getHttpServer())
+        .post('/api/v1/auth/signup')
+        .send({
+          name: 'Breached User',
+          email: `policy-breached-${generateId()}@example.com`,
+          password: BREACHED_TEST_PASSWORD,
+          termsAccepted: true,
+        });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBeDefined();
+      expect(res.body.error.code).toBe('BadRequestException');
+      expect(res.body.error.message).toBe(
+        'This password has appeared in a known data breach. Please choose a different password.',
+      );
+    });
+
+    it('permits signup with compliant, non-breached password with 201', async () => {
+      const email = `policy-compliant-${generateId()}@example.com`;
+      const res = await request(app.getHttpServer())
+        .post('/api/v1/auth/signup')
+        .send({
+          name: 'Compliant User',
+          email,
+          password: 'CompliantPassword123!',
+          termsAccepted: true,
+        });
+
+      expect(res.status).toBe(201);
+      expect(res.body).toEqual({
+        message: 'Registration request received.',
+      });
+
+      // Cleanup user
+      const user = await prisma.user.findUnique({ where: { email } });
+      if (user) {
+        const members = await prisma.workspaceMember.findMany({
+          where: { userId: user.id },
+        });
+        const workspaceIds = members.map((m: any) => m.workspaceId);
+        const workspaces = await prisma.workspace.findMany({
+          where: { id: { in: workspaceIds } },
+        });
+        const orgIds = workspaces.map((w: any) => w.organizationId);
+
+        await prisma.emailVerificationToken.deleteMany({
+          where: { userId: user.id },
+        });
+        await prisma.workspaceMember.deleteMany({
+          where: { userId: user.id },
+        });
+        await prisma.workspace.deleteMany({
+          where: { id: { in: workspaceIds } },
+        });
+        await prisma.organization.deleteMany({
+          where: { id: { in: orgIds } },
+        });
+        await prisma.user.deleteMany({ where: { id: user.id } });
+      }
     });
   });
 });

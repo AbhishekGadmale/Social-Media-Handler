@@ -18,6 +18,7 @@ import {
   Prisma,
 } from '@agency-os/database';
 import { EMAIL_DELIVERY_SERVICE } from './email-delivery.service';
+import { PasswordPolicyService } from './password-policy.service';
 import { SessionManager } from '@agency-os/session';
 import { AuditService } from '../core/audit.service';
 import * as argon2 from '@node-rs/argon2';
@@ -65,9 +66,16 @@ describe('AuthService', () => {
   let auditServiceMock: {
     logActionBestEffort: any;
   };
+  let passwordPolicyServiceMock: {
+    assertPasswordAcceptable: any;
+  };
 
   beforeEach(async () => {
     vi.clearAllMocks();
+
+    passwordPolicyServiceMock = {
+      assertPasswordAcceptable: vi.fn().mockResolvedValue(undefined),
+    };
 
     userRepoMock = {
       findByEmail: vi.fn(),
@@ -133,6 +141,10 @@ describe('AuthService', () => {
         {
           provide: EMAIL_DELIVERY_SERVICE,
           useValue: emailDeliveryMock,
+        },
+        {
+          provide: PasswordPolicyService,
+          useValue: passwordPolicyServiceMock,
         },
         { provide: AuditService, useValue: auditServiceMock },
       ],
@@ -354,6 +366,50 @@ describe('AuthService', () => {
           termsAccepted: true,
         }),
       ).rejects.toThrow(p2002OtherError);
+    });
+
+    it('rejects when passwordPolicyService throws complexity BadRequestException and does not create tenant', async () => {
+      userRepoMock.findByEmail.mockResolvedValueOnce(null);
+      passwordPolicyServiceMock.assertPasswordAcceptable.mockRejectedValueOnce(
+        new BadRequestException(
+          'Password must include at least one uppercase letter, one lowercase letter, one number, and one special character.',
+        ),
+      );
+
+      await expect(
+        service.signup({
+          name: 'Policy User',
+          email: 'policy@example.com',
+          password: 'simplepassword',
+          termsAccepted: true,
+        }),
+      ).rejects.toThrow(BadRequestException);
+
+      expect(
+        passwordPolicyServiceMock.assertPasswordAcceptable,
+      ).toHaveBeenCalledWith('simplepassword');
+      expect(userRepoMock.createWithTenantTransaction).not.toHaveBeenCalled();
+    });
+
+    it('for duplicate email, does NOT call passwordPolicyService and returns generic response', async () => {
+      userRepoMock.findByEmail.mockResolvedValueOnce({
+        id: 'existing-u-1',
+        email: 'duplicate@example.com',
+      });
+      vi.mocked(argon2.hash).mockResolvedValueOnce('$argon2id$dummyhash');
+
+      const result = await service.signup({
+        name: 'Duplicate User',
+        email: 'duplicate@example.com',
+        password: 'any-password',
+        termsAccepted: true,
+      });
+
+      expect(result).toEqual({ message: 'Registration request received.' });
+      expect(
+        passwordPolicyServiceMock.assertPasswordAcceptable,
+      ).not.toHaveBeenCalled();
+      expect(userRepoMock.createWithTenantTransaction).not.toHaveBeenCalled();
     });
   });
 
@@ -1047,6 +1103,35 @@ describe('AuthService', () => {
         sessionManagerMock.destroyOtherUserSessions,
       ).not.toHaveBeenCalled();
     });
+
+    it('rejects on password policy failure and does NOT call updatePasswordAndIncrementEpoch', async () => {
+      userRepoMock.findById.mockResolvedValueOnce(mockUser);
+      vi.mocked(argon2.verify).mockResolvedValueOnce(true);
+      passwordPolicyServiceMock.assertPasswordAcceptable.mockRejectedValueOnce(
+        new BadRequestException(
+          'This password has appeared in a known data breach. Please choose a different password.',
+        ),
+      );
+
+      await expect(
+        service.changePassword(
+          userId,
+          'CurrentPassword123!',
+          'BreachedPassword123!',
+          currentSessionId,
+        ),
+      ).rejects.toThrow(BadRequestException);
+
+      expect(
+        passwordPolicyServiceMock.assertPasswordAcceptable,
+      ).toHaveBeenCalledWith('BreachedPassword123!');
+      expect(
+        userRepoMock.updatePasswordAndIncrementEpoch,
+      ).not.toHaveBeenCalled();
+      expect(
+        sessionManagerMock.destroyOtherUserSessions,
+      ).not.toHaveBeenCalled();
+    });
   });
 
   describe('forgotPassword', () => {
@@ -1231,6 +1316,38 @@ describe('AuthService', () => {
         requestId: 'req-rp-1',
       });
       expect(result).toEqual({ message: 'Password reset successfully.' });
+    });
+
+    it('rejects on password policy failure after token consume and does not update password', async () => {
+      const mockUser = {
+        id: 'u-123',
+        hashedPassword: '$argon2id$hashedOld',
+      };
+      passwordResetTokenRepoMock.consumeToken.mockResolvedValueOnce({
+        token: { id: 'prt-1' },
+        user: mockUser,
+      });
+      vi.mocked(argon2.verify).mockResolvedValueOnce(false);
+      passwordPolicyServiceMock.assertPasswordAcceptable.mockRejectedValueOnce(
+        new BadRequestException(
+          'Password must include at least one uppercase letter, one lowercase letter, one number, and one special character.',
+        ),
+      );
+
+      await expect(
+        service.resetPassword('valid-token', 'NonCompliantPassword'),
+      ).rejects.toThrow(BadRequestException);
+
+      expect(passwordResetTokenRepoMock.consumeToken).toHaveBeenCalledWith(
+        'valid-token',
+      );
+      expect(
+        passwordPolicyServiceMock.assertPasswordAcceptable,
+      ).toHaveBeenCalledWith('NonCompliantPassword');
+      expect(
+        userRepoMock.updatePasswordAndIncrementEpoch,
+      ).not.toHaveBeenCalled();
+      expect(sessionManagerMock.destroyAllUserSessions).not.toHaveBeenCalled();
     });
   });
 });
