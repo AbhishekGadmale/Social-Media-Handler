@@ -4207,5 +4207,114 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
    - Branch `feat/audit-log-ip-ua` pushed; PR #75 open targeting `main`.
    - Do NOT merge on this prompt alone.
 
+---
+
+## 63. Cloudflare Turnstile Bot Resistance on Signup (Phase B Item 2)
+
+### 1. Summary & Motivation
+
+- **Status**: **IN REVIEW** (Branch `feat/turnstile-signup`, PR pending independent review)
+- **Origin**: `docs/auth-production-readiness-report.md` (PR #62), Phase B item 2: "Add Cloudflare Turnstile invisible widget to apps/web/src/app/signup/page.tsx. Validate turnstile token on backend AuthController.signup."
+- **Scope & Objectives**:
+  - Implement Cloudflare Turnstile bot resistance on user signup to prevent automated credential stuffing and programmatic account creation abuse.
+  - Reject automated requests at the HTTP transport boundary in `AuthController.signup` with the exact error message: `'Bot verification failed. Please try again.'` (HTTP 400 `BadRequestException`).
+  - Introduce `TurnstileService` (`apps/api/src/modules/auth/turnstile.service.ts`) using global `fetch` with zero new npm dependencies.
+  - Extend `SignupDto` with optional `turnstileToken?: string` (`@IsOptional() @IsString() @MaxLength(2048)`).
+  - Integrate Cloudflare Turnstile explicit rendering into `apps/web/src/app/signup/page.tsx` with zero third-party component libraries.
+  - Provide complete test isolation: unit specs stub `fetch` / `window.turnstile`, while a new dedicated API E2E suite (`apps/api/test/turnstile.e2e-spec.ts`) boots its own app against a local ephemeral siteverify HTTP stub server.
+
+### 2. Architecture & Implementation Details
+
+#### A. Backend Transport-Layer Verification & DTO Declaration
+- **Transport vs. Service Layer Separation**:
+  - Verification is performed exclusively in `AuthController.signup` (`apps/api/src/modules/auth/auth.controller.ts`) after the existing HTTPS production guard and before delegating to `AuthService.signup`.
+  - `AuthService` (`apps/api/src/modules/auth/auth.service.ts`) remains strictly untouched and unaware of Turnstile transport mechanics, maintaining clean domain boundaries.
+- **DTO Whitelist & Forbid Non-Whitelisted Guard**:
+  - In `apps/api/src/main.ts`, the NestJS `ValidationPipe` is configured with `whitelist: true` and `forbidNonWhitelisted: true`. Any request body field not declared on the DTO triggers an immediate HTTP 400 Bad Request.
+  - Therefore, `SignupDto` (`apps/api/src/modules/auth/dto/signup.dto.ts`) must explicitly declare the token field:
+    ```ts
+    @IsOptional()
+    @IsString()
+    @MaxLength(2048, { message: 'Turnstile token must not exceed 2048 characters' })
+    turnstileToken?: string;
+    ```
+
+#### B. TurnstileService & Outbound HTTP Verification
+- **Implementation (`apps/api/src/modules/auth/turnstile.service.ts`)**:
+  - Registered as an injectable provider in `AuthModule` (`apps/api/src/modules/auth/auth.module.ts`).
+  - Core method: `async verify(token: string | undefined, remoteIp?: string): Promise<boolean>`.
+  - Outbound HTTP uses global `fetch` with an `AbortController` timeout of 3000ms.
+  - Request format: `POST` with `Content-Type: application/x-www-form-urlencoded` to `process.env.TURNSTILE_SITEVERIFY_URL || 'https://challenges.cloudflare.com/turnstile/v0/siteverify'`.
+  - Parameters: `secret` (the env value), `response` (the token), and `remoteip` (when `remoteIp` is provided).
+  - Security invariant: Never logs secret keys or raw token values under any circumstance.
+
+#### C. Environment Gating & Deployment Policy
+- **Disabled Mode (Local Dev, CI, Keyless Deployments)**:
+  - If `process.env.TURNSTILE_SECRET_KEY` is unset or empty, `TurnstileService.verify` immediately returns `true` without making any network call.
+  - Keeps local development, existing unit/E2E test runs, and staging environments without provisioned keys behaving identically to before.
+- **Enabled Mode (Production)**:
+  - If `TURNSTILE_SECRET_KEY` is set and the submitted token is missing or empty, `TurnstileService.verify` returns `false` immediately without network call.
+  - Production deployments MUST set `TURNSTILE_SECRET_KEY` on the API service and `NEXT_PUBLIC_TURNSTILE_SITE_KEY` on the web application (deploy checklist item). The owner's Cloudflare Turnstile keys (Managed mode) are deploy-time environment variables only and are never committed to the repository.
+
+#### D. Failure Semantics & Fail-Open Availability Tradeoff
+- **Explicit Bot Rejection**:
+  - When Cloudflare siteverify responds with HTTP 200 and JSON `success === false`, verification returns `false`. `AuthController.signup` blocks the request with HTTP 400 (`BadRequestException`: `'Bot verification failed. Please try again.'`).
+- **Fail-Open on Infrastructure Outages**:
+  - In the event of network timeout (3000ms AbortController), non-200 HTTP response, network unreachable/DNS failure, or unparseable JSON payload from Cloudflare, `TurnstileService` logs a warning via Nest `Logger` and returns `true`.
+  - The method never throws exceptions.
+  - **Deliberate Tradeoff**: A Cloudflare infrastructure outage must never cause complete unavailability for legitimate user signups. While bot resistance is degraded during a third-party outage, secondary defenses (per-IP rate limiting via `@nestjs/throttler` and per-account lockout policies) remain active.
+
+#### E. Web Frontend Integration (`apps/web/src/app/signup/page.tsx`)
+- **Conditional Script & Widget Rendering**:
+  - Reads `process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY`. When unset or empty, no widget container is rendered and the submit flow is untouched.
+  - When set, dynamically loads the explicit Turnstile script (`https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit`) and renders into a container div located after the terms checkbox and before the submit button.
+  - Stores the token from the `callback` in component state; clears it on `expired-callback` and `error-callback`.
+  - Removes the widget instance cleanly on component unmount via `turnstile.remove(widgetId)`.
+- **Payload Submission Pattern**:
+  - Appends `turnstileToken` to the API signup payload only when a token is held (`if (turnstileToken && turnstileToken.trim()) payload.turnstileToken = turnstileToken.trim();`), mirroring the conditional handling of `organizationName` and `workspaceName`.
+  - Does not disable the submit button pending token acquisition; the backend is the authoritative enforcer and surfaces 400 errors through existing error alert banners.
+  - Zero external npm packages (no `@marsidev/react-turnstile`).
+
+### 3. Verification & Test Evidence
+
+- **Turnstile Service Unit Tests (`apps/api/src/modules/auth/turnstile.service.spec.ts`)**:
+  - 7/7 PASS:
+    - (a) `no TURNSTILE_SECRET_KEY` -> returns `true`, `fetch` not called.
+    - (b) `key set + token undefined/empty` -> returns `false`, `fetch` not called.
+    - (c) `key set + siteverify returns { success: true }` -> returns `true`, verifies form-encoded POST body contains `secret`, `response`, and `remoteip`.
+    - (d) `key set + siteverify returns { success: false }` -> returns `false`.
+    - (e) `fetch rejects (network error/timeout)` -> returns `true` (fail-open) and logs warning.
+    - (f) `non-200 response (HTTP 503)` -> returns `true` (fail-open) and logs warning.
+    - (g) `unparseable JSON response` -> returns `true` (fail-open) and logs warning.
+- **Auth Controller Unit Tests (`apps/api/src/modules/auth/auth.controller.spec.ts`)**:
+  - 35/35 PASS (33 existing tests pass unchanged with mock `TurnstileService.verify` resolving `true`; 2 new tests verify `verify` resolving `false` throws `BadRequestException('Bot verification failed. Please try again.')` without calling `authService.signup`, and `verify` resolving `true` calls `authService.signup` with the submitted DTO).
+- **Web Signup Page Unit Tests (`apps/web/src/app/signup/page.spec.tsx`)**:
+  - 16/16 PASS (14 existing tests pass unchanged; 2 new tests verify: (a) with `NEXT_PUBLIC_TURNSTILE_SITE_KEY` unset, form renders without Turnstile container and submits payload without `turnstileToken`; (b) with site key set and `window.turnstile` stubbed, submitting sends payload with `turnstileToken: 'test-token-123'`).
+- **Full API Unit Test Suite (`pnpm --filter @agency-os/api test`)**:
+  - 40/40 test files PASS (previously 39), 520/520 tests PASS (previously 511; +7 in `turnstile.service.spec.ts`, +2 in `auth.controller.spec.ts`).
+- **Full Web Unit Test Suite (`pnpm --filter @agency-os/web test`)**:
+  - 21/21 test files PASS, 229/229 tests PASS (previously 227; +2 in `page.spec.tsx`).
+- **NEW Dedicated API E2E Suite (`apps/api/test/turnstile.e2e-spec.ts`)**:
+  - 1/1 test file PASS, 3/3 tests PASS:
+    - Boots its own isolated NestJS application with an ephemeral local HTTP siteverify stub server on `127.0.0.1`.
+    - (a) Omitted `turnstileToken` -> returns HTTP 400 with `error.message === 'Bot verification failed. Please try again.'`.
+    - (b) Invalid `turnstileToken` (`wrong-token`) -> returns HTTP 400 with `error.message === 'Bot verification failed. Please try again.'`.
+    - (c) Valid `turnstileToken` (`valid-test-token`) -> returns HTTP 201 with `{ message: 'Registration request received.' }` and cleans up provisioned tenant/user state.
+  - Total E2E suite files in `apps/api/test/`: 6 -> 7 suites (`accounts`, `analytics`, `auth`, `billing`, `media.storage`, `publishing`, and `turnstile`).
+- **Monorepo Code Quality**:
+  - `pnpm turbo run lint typecheck build`: All 18 tasks PASS across 9 packages (0 errors).
+
+### 4. Release Gate & Next Steps
+
+1. **CI Quality Gates**:
+   - Branch `feat/turnstile-signup` CI verification pending PR push and GitHub Actions execution.
+2. **Release Gate**:
+   - **Live Deployment**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending external infrastructure provisioning, live email delivery verification, live payment credentials, and disaster recovery rehearsals G18/G19).
+3. **Next Steps**:
+   - Push branch `feat/turnstile-signup` and open PR targeting `main`.
+   - Wait for 6/6 CI checks to complete on PR HEAD.
+   - Do NOT merge on this prompt alone.
+
+
 
 

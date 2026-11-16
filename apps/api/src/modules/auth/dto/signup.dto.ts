@@ -44,4 +44,11 @@ export class SignupDto {
   @IsString()
   @MaxLength(100, { message: 'Workspace name must not exceed 100 characters' })
   workspaceName?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(2048, {
+    message: 'Turnstile token must not exceed 2048 characters',
+  })
+  turnstileToken?: string;
 }

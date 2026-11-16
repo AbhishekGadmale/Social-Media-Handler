@@ -9,6 +9,7 @@ import {
 } from './email-delivery.service';
 import { PasswordPolicyService } from './password-policy.service';
 import { PwnedPasswordService } from './pwned-password.service';
+import { TurnstileService } from './turnstile.service';
 
 @Module({
   controllers: [AuthController, WorkspaceTestController],
@@ -16,6 +17,7 @@ import { PwnedPasswordService } from './pwned-password.service';
     AuthService,
     PwnedPasswordService,
     PasswordPolicyService,
+    TurnstileService,
     {
       provide: EMAIL_DELIVERY_SERVICE,
       useFactory: () => {

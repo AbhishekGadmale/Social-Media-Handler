@@ -1,6 +1,28 @@
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import SignupPage from './page';
-import { vi, describe, it, expect, beforeEach } from 'vitest';
+import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
+
+interface TurnstileStub {
+  render: (
+    container: HTMLElement,
+    options: {
+      sitekey: string;
+      callback: (token: string) => void;
+      'expired-callback'?: () => void;
+      'error-callback'?: () => void;
+    },
+  ) => string;
+  remove?: (widgetId: string) => void;
+}
+
+const setTurnstileOnWindow = (stub?: TurnstileStub) => {
+  const win = window as unknown as { turnstile?: TurnstileStub };
+  if (stub) {
+    win.turnstile = stub;
+  } else {
+    delete win.turnstile;
+  }
+};
 
 const mockApiPost = vi.fn();
 
@@ -443,6 +465,124 @@ describe('SignupPage', () => {
         expect(screen.getByRole('alert')).toHaveTextContent(
           'Something went wrong. Please try again.',
         );
+      });
+    });
+  });
+
+  describe('Turnstile bot verification', () => {
+    const originalSiteKey = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY;
+
+    afterEach(() => {
+      if (originalSiteKey === undefined) {
+        delete process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY;
+      } else {
+        process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY = originalSiteKey;
+      }
+      setTurnstileOnWindow(undefined);
+    });
+
+    it('(a) with NEXT_PUBLIC_TURNSTILE_SITE_KEY unset, the form renders without a Turnstile container and submits the payload exactly as before', async () => {
+      delete process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY;
+      setTurnstileOnWindow(undefined);
+      mockApiPost.mockResolvedValueOnce({
+        message: 'Registration request received.',
+      });
+
+      render(<SignupPage />);
+
+      expect(
+        screen.queryByTestId('turnstile-container'),
+      ).not.toBeInTheDocument();
+
+      fireEvent.change(screen.getByLabelText(/full name/i), {
+        target: { value: 'Alice User' },
+      });
+      fireEvent.change(screen.getByLabelText(/email address/i), {
+        target: { value: 'alice@example.com' },
+      });
+      fireEvent.change(screen.getByLabelText(/^password/i), {
+        target: { value: 'Password123!' },
+      });
+      fireEvent.change(screen.getByLabelText(/confirm password/i), {
+        target: { value: 'Password123!' },
+      });
+      fireEvent.click(
+        screen.getByRole('checkbox', {
+          name: /terms of service and privacy policy/i,
+        }),
+      );
+
+      fireEvent.click(screen.getByRole('button', { name: /create account/i }));
+
+      await waitFor(() => {
+        expect(mockApiPost).toHaveBeenCalledWith('auth/signup', {
+          name: 'Alice User',
+          email: 'alice@example.com',
+          password: 'Password123!',
+          termsAccepted: true,
+        });
+      });
+    });
+
+    it('(b) with the site key set and window.turnstile stubbed, submitting sends a payload whose turnstileToken is test-token-123', async () => {
+      process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY = 'test-site-key-123';
+      const renderMock = vi.fn(
+        (
+          _container: HTMLElement,
+          options: {
+            sitekey: string;
+            callback: (token: string) => void;
+            'expired-callback'?: () => void;
+            'error-callback'?: () => void;
+          },
+        ) => {
+          options.callback('test-token-123');
+          return 'widget-id-abc';
+        },
+      );
+      const removeMock = vi.fn();
+      setTurnstileOnWindow({
+        render: renderMock,
+        remove: removeMock,
+      });
+
+      mockApiPost.mockResolvedValueOnce({
+        message: 'Registration request received.',
+      });
+
+      render(<SignupPage />);
+
+      expect(screen.getByTestId('turnstile-container')).toBeInTheDocument();
+      expect(renderMock).toHaveBeenCalled();
+
+      fireEvent.change(screen.getByLabelText(/full name/i), {
+        target: { value: 'Bob User' },
+      });
+      fireEvent.change(screen.getByLabelText(/email address/i), {
+        target: { value: 'bob@example.com' },
+      });
+      fireEvent.change(screen.getByLabelText(/^password/i), {
+        target: { value: 'Password123!' },
+      });
+      fireEvent.change(screen.getByLabelText(/confirm password/i), {
+        target: { value: 'Password123!' },
+      });
+      fireEvent.click(
+        screen.getByRole('checkbox', {
+          name: /terms of service and privacy policy/i,
+        }),
+      );
+
+      fireEvent.click(screen.getByRole('button', { name: /create account/i }));
+
+      await waitFor(() => {
+        expect(mockApiPost).toHaveBeenCalledWith('auth/signup', {
+          name: 'Bob User',
+          email: 'bob@example.com',
+          password: 'Password123!',
+          termsAccepted: true,
+          turnstileToken: 'test-token-123',
+        });
       });
     });
   });
