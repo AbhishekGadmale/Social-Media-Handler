@@ -4320,7 +4320,7 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
 
 ### 1. Summary & Motivation
 
-- **Status**: **IN REVIEW** (Branch `feat/per-device-sessions`)
+- **Status**: **IN REVIEW** (Branch `feat/per-device-sessions`, PR #77)
 - **Origin**: `docs/auth-production-readiness-report.md` (PR #62), Phase B item 5: "Store metadata (IP address, operating system, browser name, login timestamp) in Redis session hashes. Provide GET /api/v1/auth/sessions and DELETE /api/v1/auth/sessions/:sessionId endpoints. Add 'Active Sessions' card to workspace account settings."
 - **Scope & Objectives**:
   - Deliver the final item of Phase B from the production auth readiness report: granular, per-device active session visibility and single-session revocation across the full stack.
@@ -4486,7 +4486,7 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
 ### 4. Release Gate & Next Steps
 
 1. **CI Quality Gates**:
-   - Verification pending branch push and GitHub Actions execution for PR #77.
+   - 6/6 verified green check runs on head `8d6b5a4bf06b4eb536e5988398bfa2818e1924c9` (`8d6b5a4`) (GitGuardian Security Checks 12:07:31Z, Application Builds 12:08:25Z, Code Quality (Lint & Typecheck) 12:08:34Z, API E2E Tests 12:09:12Z, Tests 12:09:14Z, Docker Build & Smoke Test 12:16:19Z, all 2026-11-16 UTC). CI must be re-verified on the new head after this docs update.
 2. **Release Gate**:
    - **Live Deployment**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending external infrastructure provisioning, live email delivery verification, live payment credentials, and disaster recovery rehearsals G18/G19).
 3. **Next Steps**:
