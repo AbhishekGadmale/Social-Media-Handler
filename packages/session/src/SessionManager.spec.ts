@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { SessionManager } from "./SessionManager";
 import type { SessionData } from "./SessionManager";
 
@@ -594,5 +594,66 @@ describe("SessionManager (Unit Tests with Atomic Script Simulation)", () => {
     expect(validatedCurrent).not.toBeNull();
     expect(validatedCurrent?.userId).toBe(userId);
     expect(validatedCurrent?.securityEpoch).toBe(2);
+  });
+
+  // PR #77 Active Sessions (Phase B item 5): createSession with metadata
+  it("createSession with metadata stores ipAddress and userAgent in the session JSON", async () => {
+    const userId = "user-meta-test";
+    const sessionId = await sessionManager.createSession(userId, undefined, {
+      ipAddress: "192.168.1.1",
+      userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+    });
+
+    const raw = await redisMock.get(`session:${sessionId}`);
+    expect(raw).not.toBeNull();
+    const parsed = JSON.parse(raw!);
+    expect(parsed.ipAddress).toBe("192.168.1.1");
+    expect(parsed.userAgent).toBe("Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
+    expect(parsed.userId).toBe(userId);
+  });
+
+  // PR #77 Active Sessions: createSession without metadata stores neither field
+  it("createSession without metadata stores neither field", async () => {
+    const userId = "user-no-meta-test";
+    const sessionId = await sessionManager.createSession(userId);
+
+    const raw = await redisMock.get(`session:${sessionId}`);
+    expect(raw).not.toBeNull();
+    const parsed = JSON.parse(raw!);
+    expect(parsed.ipAddress).toBeUndefined();
+    expect(parsed.userAgent).toBeUndefined();
+    expect(parsed.userId).toBe(userId);
+  });
+
+  // PR #77 Active Sessions: getSessionData returns parsed data for existing key, null for missing key, and performs plain GET without calling eval/validate
+  it("getSessionData returns parsed data for existing key, null for missing key, and performs plain GET without calling eval/validate", async () => {
+    const userId = "user-get-session-test";
+    const sessionId = await sessionManager.createSession(userId, 1, {
+      ipAddress: "10.0.0.1",
+      userAgent: "TestAgent/1.0",
+    });
+
+    const evalSpy = vi.spyOn(redisMock, "eval");
+
+    // 1. Existing key returns parsed SessionData
+    const data = await sessionManager.getSessionData(sessionId);
+    expect(data).not.toBeNull();
+    expect(data?.userId).toBe(userId);
+    expect(data?.ipAddress).toBe("10.0.0.1");
+    expect(data?.userAgent).toBe("TestAgent/1.0");
+    expect(data?.securityEpoch).toBe(1);
+
+    // 2. Missing key returns null
+    const missing = await sessionManager.getSessionData("non-existent-session-id");
+    expect(missing).toBeNull();
+
+    // 3. Corrupt JSON returns null
+    await redisMock.set("session:corrupt-json", "{broken", "EX", 3600);
+    const corrupt = await sessionManager.getSessionData("corrupt-json");
+    expect(corrupt).toBeNull();
+
+    // 4. Verifies no eval calls were made by getSessionData
+    expect(evalSpy).not.toHaveBeenCalled();
+    evalSpy.mockRestore();
   });
 });

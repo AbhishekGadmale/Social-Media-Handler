@@ -2,6 +2,8 @@ import {
   Controller,
   Post,
   Get,
+  Delete,
+  Param,
   Body,
   Req,
   Res,
@@ -222,7 +224,10 @@ export class AuthController {
     let user: User;
 
     try {
-      const result = await this.authService.login(email, password);
+      const result = await this.authService.login(email, password, {
+        ipAddress,
+        userAgent,
+      });
       sessionId = result.sessionId;
       user = result.user;
 
@@ -407,6 +412,51 @@ export class AuthController {
     this.clearSessionCookies(req, res);
 
     return { message: 'All sessions revoked successfully' };
+  }
+
+  @UseGuards(AuthGuard)
+  @Get('sessions')
+  async getSessions(@CurrentUser() user: User, @Req() req: Request) {
+    const currentSessionId = req.cookies?.session;
+    const sessions = await this.authService.listSessions(
+      user.id,
+      currentSessionId,
+    );
+    return { sessions };
+  }
+
+  @UseGuards(AuthGuard)
+  @Throttle({ default: RateLimitPolicies.auth })
+  @Delete('sessions/:sessionId')
+  @HttpCode(HttpStatus.OK)
+  async revokeSession(
+    @Param('sessionId') sessionId: string,
+    @CurrentUser() user: User,
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const requestId = (req as any).id;
+    const ipAddress = req.ip;
+    const userAgent = req.headers?.['user-agent'];
+
+    await this.authService.revokeSession(user.id, sessionId);
+
+    this.auditService.logActionBestEffort({
+      action: AuditAction.AUTH_SESSION_REVOKED,
+      actorId: user.id,
+      targetType: 'User',
+      targetId: user.id,
+      requestId,
+      ipAddress,
+      userAgent,
+      metadata: { revokedSessionId: sessionId },
+    });
+
+    if (sessionId === req.cookies?.session) {
+      this.clearSessionCookies(req, res);
+    }
+
+    return { message: 'Session revoked successfully' };
   }
 
   @UseGuards(AuthGuard)

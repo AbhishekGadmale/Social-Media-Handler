@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { Test, TestingModule } from '@nestjs/testing';
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
 import {
   AuthService,
   InvalidCredentialsException,
@@ -46,6 +46,8 @@ describe('AuthService', () => {
     destroySession: any;
     destroyAllUserSessions: any;
     destroyOtherUserSessions: any;
+    getUserSessionIds: any;
+    getSessionData: any;
   };
   let tokenRepoMock: {
     createToken: any;
@@ -102,6 +104,8 @@ describe('AuthService', () => {
       destroySession: vi.fn(),
       destroyAllUserSessions: vi.fn(),
       destroyOtherUserSessions: vi.fn(),
+      getUserSessionIds: vi.fn(),
+      getSessionData: vi.fn(),
     };
 
     tokenRepoMock = {
@@ -923,6 +927,35 @@ describe('AuthService', () => {
       expect(result.sessionId).toBe('sess-unlocked-1');
     });
 
+    it('login with requestContext passes ipAddress and userAgent metadata to createSession', async () => {
+      const user = {
+        id: 'user-ctx-1',
+        email: 'ctx@example.com',
+        hashedPassword: '$argon2id$validuserhash',
+        securityEpoch: 2,
+        failedLoginAttempts: 0,
+        lockedUntil: null,
+      };
+      userRepoMock.findByEmail.mockResolvedValueOnce(user);
+      vi.mocked(argon2.verify).mockResolvedValueOnce(true);
+      sessionManagerMock.createSession.mockResolvedValueOnce('sess-ctx-1');
+      userRepoMock.findById.mockResolvedValueOnce(user);
+
+      await service.login('ctx@example.com', 'password', {
+        ipAddress: '203.0.113.195',
+        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+      });
+
+      expect(sessionManagerMock.createSession).toHaveBeenCalledWith(
+        'user-ctx-1',
+        2,
+        {
+          ipAddress: '203.0.113.195',
+          userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+        },
+      );
+    });
+
     it('successful login with failedLoginAttempts > 0 calls clearFailedLoginAttempts', async () => {
       const dirtyUser = {
         id: 'user-dirty-1',
@@ -1636,6 +1669,136 @@ describe('AuthService', () => {
         userRepoMock.updatePasswordAndIncrementEpoch,
       ).not.toHaveBeenCalled();
       expect(sessionManagerMock.destroyAllUserSessions).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('listSessions', () => {
+    it('maps stored data, parses UA, marks isCurrent for matching cookie, and sorts newest first', async () => {
+      const userId = 'user-list-sessions';
+      sessionManagerMock.getUserSessionIds.mockResolvedValueOnce([
+        'sess-older',
+        'sess-newer',
+      ]);
+
+      sessionManagerMock.getSessionData.mockImplementation(
+        async (sid: string) => {
+          if (sid === 'sess-older') {
+            return {
+              userId,
+              createdAt: '2026-11-16T10:00:00.000Z',
+              expiresAt: '2026-11-23T10:00:00.000Z',
+              ipAddress: '192.168.1.10',
+              userAgent:
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            };
+          }
+          if (sid === 'sess-newer') {
+            return {
+              userId,
+              createdAt: '2026-11-16T11:00:00.000Z',
+              expiresAt: '2026-11-23T11:00:00.000Z',
+              ipAddress: '10.0.0.5',
+              userAgent:
+                'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Safari/605.1.15',
+            };
+          }
+          return null;
+        },
+      );
+
+      const sessions = await service.listSessions(userId, 'sess-newer');
+
+      expect(sessions).toHaveLength(2);
+      // Newest first
+      expect(sessions[0].sessionId).toBe('sess-newer');
+      expect(sessions[0].isCurrent).toBe(true);
+      expect(sessions[0].browser).toBe('Safari');
+      expect(sessions[0].os).toBe('macOS');
+      expect(sessions[0].ipAddress).toBe('10.0.0.5');
+
+      expect(sessions[1].sessionId).toBe('sess-older');
+      expect(sessions[1].isCurrent).toBe(false);
+      expect(sessions[1].browser).toBe('Google Chrome');
+      expect(sessions[1].os).toBe('Windows');
+      expect(sessions[1].ipAddress).toBe('192.168.1.10');
+    });
+
+    it('skips vanished sessions where getSessionData returns null', async () => {
+      const userId = 'user-raced-sessions';
+      sessionManagerMock.getUserSessionIds.mockResolvedValueOnce([
+        'sess-alive',
+        'sess-expired',
+      ]);
+
+      sessionManagerMock.getSessionData.mockImplementation(
+        async (sid: string) => {
+          if (sid === 'sess-alive') {
+            return {
+              userId,
+              createdAt: '2026-11-16T12:00:00.000Z',
+              expiresAt: '2026-11-23T12:00:00.000Z',
+              ipAddress: '127.0.0.1',
+              userAgent: 'curl/8.4.0',
+            };
+          }
+          return null;
+        },
+      );
+
+      const sessions = await service.listSessions(userId);
+
+      expect(sessions).toHaveLength(1);
+      expect(sessions[0].sessionId).toBe('sess-alive');
+      expect(sessions[0].browser).toBe('Unknown browser');
+      expect(sessions[0].os).toBe('Unknown OS');
+    });
+
+    it('returns null IP/UA and Unknown browser/OS for legacy sessions without metadata', async () => {
+      const userId = 'user-legacy-sessions';
+      sessionManagerMock.getUserSessionIds.mockResolvedValueOnce([
+        'sess-legacy',
+      ]);
+
+      sessionManagerMock.getSessionData.mockResolvedValueOnce({
+        userId,
+        createdAt: '2026-11-15T00:00:00.000Z',
+        expiresAt: '2026-11-22T00:00:00.000Z',
+      });
+
+      const sessions = await service.listSessions(userId);
+
+      expect(sessions).toHaveLength(1);
+      expect(sessions[0].sessionId).toBe('sess-legacy');
+      expect(sessions[0].ipAddress).toBeNull();
+      expect(sessions[0].userAgent).toBeNull();
+      expect(sessions[0].browser).toBe('Unknown browser');
+      expect(sessions[0].os).toBe('Unknown OS');
+    });
+  });
+
+  describe('revokeSession', () => {
+    it('destroys session when sessionId is owned by the user', async () => {
+      const userId = 'user-revoke-owned';
+      sessionManagerMock.getUserSessionIds.mockResolvedValueOnce([
+        'sess-1',
+        'sess-2',
+      ]);
+      sessionManagerMock.destroySession.mockResolvedValueOnce(undefined);
+
+      await service.revokeSession(userId, 'sess-2');
+
+      expect(sessionManagerMock.destroySession).toHaveBeenCalledWith('sess-2');
+    });
+
+    it('throws NotFoundException and does NOT call destroySession when sessionId is not in user sessions', async () => {
+      const userId = 'user-revoke-foreign';
+      sessionManagerMock.getUserSessionIds.mockResolvedValueOnce(['sess-1']);
+
+      await expect(
+        service.revokeSession(userId, 'sess-other-user'),
+      ).rejects.toThrow(NotFoundException);
+
+      expect(sessionManagerMock.destroySession).not.toHaveBeenCalled();
     });
   });
 });

@@ -2,6 +2,7 @@ import {
   Injectable,
   UnauthorizedException,
   BadRequestException,
+  NotFoundException,
   Optional,
   Inject,
   Logger,
@@ -22,6 +23,18 @@ import {
   type EmailDeliveryService,
 } from './email-delivery.service';
 import { PasswordPolicyService } from './password-policy.service';
+import { parseUserAgent } from './user-agent.util';
+
+export interface ActiveSessionDto {
+  sessionId: string;
+  ipAddress: string | null;
+  userAgent: string | null;
+  browser: string;
+  os: string;
+  createdAt: string;
+  expiresAt: string;
+  isCurrent: boolean;
+}
 
 export interface ChangePasswordResult {
   success: boolean;
@@ -445,6 +458,7 @@ export class AuthService {
   async login(
     email: string,
     passwordPlain: string,
+    requestContext?: { ipAddress?: string; userAgent?: string },
   ): Promise<{ sessionId: string; user: any }> {
     const user = await this.userRepository.findByEmail(
       email.trim().toLowerCase(),
@@ -482,10 +496,12 @@ export class AuthService {
       await this.userRepository.clearFailedLoginAttempts(user.id);
     }
 
-    const sessionId = await this.sessionManager.createSession(
-      user.id,
-      user.securityEpoch,
-    );
+    const sessionId = requestContext
+      ? await this.sessionManager.createSession(user.id, user.securityEpoch, {
+          ipAddress: requestContext.ipAddress,
+          userAgent: requestContext.userAgent,
+        })
+      : await this.sessionManager.createSession(user.id, user.securityEpoch);
 
     // In-flight login race mitigation: verify that the password hash and security epoch did not change
     // while argon2.verify was executing.
@@ -638,5 +654,63 @@ export class AuthService {
     return {
       success: true,
     };
+  }
+
+  /**
+   * Lists all active sessions for a user, sorted newest first, with parsed device metadata.
+   * Does NOT refresh or slide TTLs.
+   *
+   * @param userId The authenticated user ID.
+   * @param currentSessionId Optional session ID from the caller's request cookie.
+   */
+  async listSessions(
+    userId: string,
+    currentSessionId?: string,
+  ): Promise<ActiveSessionDto[]> {
+    const sessionIds = await this.sessionManager.getUserSessionIds(userId);
+    const sessions: ActiveSessionDto[] = [];
+
+    for (const sid of sessionIds) {
+      const data = await this.sessionManager.getSessionData(sid);
+      if (!data) {
+        continue;
+      }
+
+      const { browser, os } = parseUserAgent(data.userAgent);
+      sessions.push({
+        sessionId: sid,
+        ipAddress: data.ipAddress ?? null,
+        userAgent: data.userAgent ?? null,
+        browser,
+        os,
+        createdAt: data.createdAt,
+        expiresAt: data.expiresAt,
+        isCurrent: Boolean(currentSessionId && sid === currentSessionId),
+      });
+    }
+
+    sessions.sort(
+      (a, b) =>
+        new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+    );
+
+    return sessions;
+  }
+
+  /**
+   * Revokes a single session owned by the authenticated user.
+   * Enforces strict ownership check before destroying the session.
+   *
+   * @param userId The authenticated user ID.
+   * @param sessionId The session ID to revoke.
+   */
+  async revokeSession(userId: string, sessionId: string): Promise<void> {
+    const activeSessionIds =
+      await this.sessionManager.getUserSessionIds(userId);
+    if (!activeSessionIds.includes(sessionId)) {
+      throw new NotFoundException('Session not found');
+    }
+
+    await this.sessionManager.destroySession(sessionId);
   }
 }

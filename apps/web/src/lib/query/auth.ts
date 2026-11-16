@@ -28,11 +28,28 @@ export interface AuthMeResponse {
   memberships: WorkspaceMember[];
 }
 
+export interface SessionInfo {
+  sessionId: string;
+  ipAddress: string | null;
+  userAgent: string | null;
+  browser: string;
+  os: string;
+  createdAt: string;
+  expiresAt: string;
+  isCurrent: boolean;
+}
+
 export const authQueries = {
   me: () =>
     queryOptions({
       queryKey: ['auth', 'me'],
       queryFn: () => api.get<AuthMeResponse>('auth/me'),
       retry: false, // Don't retry on auth queries to fail fast
+    }),
+  sessions: () =>
+    queryOptions({
+      queryKey: ['auth', 'sessions'],
+      queryFn: () => api.get<{ sessions: SessionInfo[] }>('auth/sessions'),
+      retry: false,
     }),
 };

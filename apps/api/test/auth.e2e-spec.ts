@@ -1696,4 +1696,216 @@ describe('AuthController (e2e)', () => {
       }
     });
   });
+
+  describe('Per-Device Active Session Management (e2e)', () => {
+    let sessionUserEmail: string;
+    const sessionUserPassword = 'SessionPassword123!';
+    let sessionUserId: string;
+
+    const chromeUA =
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+    const safariIPhoneUA =
+      'Mozilla/5.0 (iPhone; CPU iPhone OS 17_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Mobile/15E148 Safari/604.1';
+
+    let sess1Cookie: string;
+    let csrf1Token: string;
+    let sess1Id: string;
+
+    let sess2Cookie: string;
+    let csrf2Token: string;
+    let sess2Id: string;
+
+    beforeAll(async () => {
+      sessionUserEmail = `sessions-e2e-${generateId()}@example.com`;
+      const signupRes = await request(app.getHttpServer())
+        .post('/api/v1/auth/signup')
+        .send({
+          name: 'Session Test User',
+          email: sessionUserEmail,
+          password: sessionUserPassword,
+          termsAccepted: true,
+          organizationName: 'Sessions Org',
+          workspaceName: 'Sessions Workspace',
+        });
+      expect(signupRes.status).toBe(201);
+
+      const user = await prisma.user.findUnique({
+        where: { email: sessionUserEmail },
+      });
+      sessionUserId = user!.id;
+
+      await prisma.user.update({
+        where: { id: sessionUserId },
+        data: { emailVerified: true, emailVerifiedAt: new Date() },
+      });
+    });
+
+    afterAll(async () => {
+      if (sessionUserId) {
+        await prisma.passwordResetToken.deleteMany({
+          where: { userId: sessionUserId },
+        });
+        await prisma.emailVerificationToken.deleteMany({
+          where: { userId: sessionUserId },
+        });
+        await prisma.workspaceMember.deleteMany({
+          where: { userId: sessionUserId },
+        });
+        await prisma.workspace.deleteMany({
+          where: { organization: { name: 'Sessions Org' } },
+        });
+        await prisma.organization.deleteMany({
+          where: { name: 'Sessions Org' },
+        });
+        await prisma.auditLog.deleteMany({
+          where: { actorId: sessionUserId },
+        });
+        await prisma.user.deleteMany({ where: { id: sessionUserId } });
+      }
+    });
+
+    it('fails with 401 when fetching sessions without session cookie', async () => {
+      const res = await request(app.getHttpServer()).get('/api/v1/auth/sessions');
+      expect(res.status).toBe(401);
+      expect(res.body.error.message).toBe('No session cookie provided');
+    });
+
+    it('lists single active session with parsed Chrome on Windows and isCurrent true on initial login', async () => {
+      const loginRes = await request(app.getHttpServer())
+        .post('/api/v1/auth/login')
+        .set('User-Agent', chromeUA)
+        .send({
+          email: sessionUserEmail,
+          password: sessionUserPassword,
+        });
+
+      expect(loginRes.status).toBe(200);
+      const cookies = loginRes.headers['set-cookie'] as string[];
+      expect(cookies).toBeDefined();
+
+      const sessionHeader = cookies.find((c) => c.startsWith('session='));
+      const csrfHeader = cookies.find((c) => c.startsWith('csrfToken='));
+      sess1Cookie = sessionHeader!.split(';')[0];
+      sess1Id = sess1Cookie.split('=')[1];
+      csrf1Token = csrfHeader!.split(';')[0].split('=')[1];
+
+      const res = await request(app.getHttpServer())
+        .get('/api/v1/auth/sessions')
+        .set('Cookie', sess1Cookie);
+
+      expect(res.status).toBe(200);
+      expect(res.body.sessions).toHaveLength(1);
+      const session = res.body.sessions[0];
+      expect(session.sessionId).toBe(sess1Id);
+      expect(session.isCurrent).toBe(true);
+      expect(session.browser).toBe('Google Chrome');
+      expect(session.os).toBe('Windows');
+      expect(session.userAgent).toBe(chromeUA);
+      expect(typeof session.ipAddress).toBe('string');
+      expect(session.ipAddress.length).toBeGreaterThan(0);
+    });
+
+    it('second login with Safari on iPhone creates second session and lists both with correct isCurrent flags and sorting', async () => {
+      const loginRes2 = await request(app.getHttpServer())
+        .post('/api/v1/auth/login')
+        .set('User-Agent', safariIPhoneUA)
+        .send({
+          email: sessionUserEmail,
+          password: sessionUserPassword,
+        });
+
+      expect(loginRes2.status).toBe(200);
+      const cookies2 = loginRes2.headers['set-cookie'] as string[];
+      expect(cookies2).toBeDefined();
+
+      const sessionHeader2 = cookies2.find((c) => c.startsWith('session='));
+      const csrfHeader2 = cookies2.find((c) => c.startsWith('csrfToken='));
+      sess2Cookie = sessionHeader2!.split(';')[0];
+      sess2Id = sess2Cookie.split('=')[1];
+      csrf2Token = csrfHeader2!.split(';')[0].split('=')[1];
+
+      const res = await request(app.getHttpServer())
+        .get('/api/v1/auth/sessions')
+        .set('Cookie', sess2Cookie);
+
+      expect(res.status).toBe(200);
+      expect(res.body.sessions).toHaveLength(2);
+
+      const currentFromPhone = res.body.sessions.find(
+        (s: any) => s.sessionId === sess2Id,
+      );
+      const desktopSession = res.body.sessions.find(
+        (s: any) => s.sessionId === sess1Id,
+      );
+
+      expect(currentFromPhone).toBeDefined();
+      expect(currentFromPhone.isCurrent).toBe(true);
+      expect(currentFromPhone.browser).toBe('Safari');
+      expect(currentFromPhone.os).toBe('iOS');
+
+      expect(desktopSession).toBeDefined();
+      expect(desktopSession.isCurrent).toBe(false);
+      expect(desktopSession.browser).toBe('Google Chrome');
+      expect(desktopSession.os).toBe('Windows');
+    });
+
+    it('DELETE /api/v1/auth/sessions/:sessionId revokes non-current session and emits AUTH_SESSION_REVOKED audit record', async () => {
+      const deleteRes = await request(app.getHttpServer())
+        .delete(`/api/v1/auth/sessions/${sess1Id}`)
+        .set('Cookie', `${sess2Cookie}; csrfToken=${csrf2Token}`)
+        .set('x-csrf-token', csrf2Token);
+
+      expect(deleteRes.status).toBe(200);
+      expect(deleteRes.body.message).toBe('Session revoked successfully');
+
+      // Verify sessions count is now 1
+      const listRes = await request(app.getHttpServer())
+        .get('/api/v1/auth/sessions')
+        .set('Cookie', sess2Cookie);
+
+      expect(listRes.status).toBe(200);
+      expect(listRes.body.sessions).toHaveLength(1);
+      expect(listRes.body.sessions[0].sessionId).toBe(sess2Id);
+
+      // Verify revoked session can no longer access /me
+      const meResRevoked = await request(app.getHttpServer())
+        .get('/api/v1/auth/me')
+        .set('Cookie', sess1Cookie);
+      expect(meResRevoked.status).toBe(401);
+
+      // Verify audit log
+      let auditLog = await prisma.auditLog.findFirst({
+        where: {
+          actorId: sessionUserId,
+          action: 'AUTH_SESSION_REVOKED',
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+      for (let i = 0; i < 5 && !auditLog; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        auditLog = await prisma.auditLog.findFirst({
+          where: {
+            actorId: sessionUserId,
+            action: 'AUTH_SESSION_REVOKED',
+          },
+          orderBy: { createdAt: 'desc' },
+        });
+      }
+
+      expect(auditLog).toBeDefined();
+      expect(auditLog?.targetType).toBe('User');
+      expect(auditLog?.targetId).toBe(sessionUserId);
+      expect((auditLog?.metadata as any)?.revokedSessionId).toBe(sess1Id);
+    });
+
+    it('DELETE /api/v1/auth/sessions/:sessionId with unknown or foreign ID returns 404 Session not found', async () => {
+      const deleteRes = await request(app.getHttpServer())
+        .delete('/api/v1/auth/sessions/sess-foreign-unknown-999')
+        .set('Cookie', `${sess2Cookie}; csrfToken=${csrf2Token}`)
+        .set('x-csrf-token', csrf2Token);
+
+      expect(deleteRes.status).toBe(404);
+      expect(deleteRes.body.error.message).toBe('Session not found');
+    });
+  });
 });

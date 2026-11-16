@@ -29,6 +29,8 @@ describe('AuthController', () => {
       forgotPassword: vi.fn(),
       resetPassword: vi.fn(),
       revokeAllUserSessions: vi.fn(),
+      listSessions: vi.fn(),
+      revokeSession: vi.fn(),
     };
 
     memberRepoMock = {
@@ -1071,6 +1073,135 @@ describe('AuthController', () => {
           delete process.env.ALLOW_INSECURE_HTTP_AUTH;
         }
       }
+    });
+  });
+
+  describe('getSessions', () => {
+    it('returns sessions list with currentSessionId read from cookies', async () => {
+      const mockSessions = [
+        {
+          sessionId: 'sess-abc-123',
+          ipAddress: '127.0.0.1',
+          userAgent: 'TestBrowser',
+          browser: 'Google Chrome',
+          os: 'Windows',
+          createdAt: '2026-11-16T12:00:00.000Z',
+          expiresAt: '2026-11-23T12:00:00.000Z',
+          isCurrent: true,
+        },
+      ];
+      authServiceMock.listSessions.mockResolvedValueOnce(mockSessions);
+
+      const user = { id: 'user-auth-1' } as any;
+      const res = await controller.getSessions(user, reqMock as Request);
+
+      expect(authServiceMock.listSessions).toHaveBeenCalledWith(
+        'user-auth-1',
+        'sess-abc-123',
+      );
+      expect(res).toEqual({ sessions: mockSessions });
+    });
+
+    it('passes undefined as currentSessionId when cookies are missing', async () => {
+      authServiceMock.listSessions.mockResolvedValueOnce([]);
+
+      const user = { id: 'user-auth-1' } as any;
+      const reqWithoutCookies = { ...reqMock, cookies: undefined };
+      const res = await controller.getSessions(
+        user,
+        reqWithoutCookies as Request,
+      );
+
+      expect(authServiceMock.listSessions).toHaveBeenCalledWith(
+        'user-auth-1',
+        undefined,
+      );
+      expect(res).toEqual({ sessions: [] });
+    });
+  });
+
+  describe('revokeSession', () => {
+    it('revokes non-current session, logs audit action, and does NOT clear cookies', async () => {
+      authServiceMock.revokeSession.mockResolvedValueOnce(undefined);
+
+      const user = { id: 'user-auth-1' } as any;
+      const res = await controller.revokeSession(
+        'sess-other-device',
+        user,
+        reqMock as Request,
+        resMock as Response,
+      );
+
+      expect(authServiceMock.revokeSession).toHaveBeenCalledWith(
+        'user-auth-1',
+        'sess-other-device',
+      );
+      expect(auditServiceMock.logActionBestEffort).toHaveBeenCalledWith({
+        action: AuditAction.AUTH_SESSION_REVOKED,
+        actorId: 'user-auth-1',
+        targetType: 'User',
+        targetId: 'user-auth-1',
+        requestId: 'req-auth-123',
+        ipAddress: undefined,
+        userAgent: undefined,
+        metadata: { revokedSessionId: 'sess-other-device' },
+      });
+      expect(resMock.clearCookie).not.toHaveBeenCalled();
+      expect(res).toEqual({ message: 'Session revoked successfully' });
+    });
+
+    it('revokes current session and clears cookies', async () => {
+      authServiceMock.revokeSession.mockResolvedValueOnce(undefined);
+
+      const user = { id: 'user-auth-1' } as any;
+      const res = await controller.revokeSession(
+        'sess-abc-123', // Matches reqMock.cookies.session
+        user,
+        reqMock as Request,
+        resMock as Response,
+      );
+
+      expect(authServiceMock.revokeSession).toHaveBeenCalledWith(
+        'user-auth-1',
+        'sess-abc-123',
+      );
+      expect(auditServiceMock.logActionBestEffort).toHaveBeenCalledWith({
+        action: AuditAction.AUTH_SESSION_REVOKED,
+        actorId: 'user-auth-1',
+        targetType: 'User',
+        targetId: 'user-auth-1',
+        requestId: 'req-auth-123',
+        ipAddress: undefined,
+        userAgent: undefined,
+        metadata: { revokedSessionId: 'sess-abc-123' },
+      });
+      expect(resMock.clearCookie).toHaveBeenCalledWith(
+        'session',
+        expect.any(Object),
+      );
+      expect(resMock.clearCookie).toHaveBeenCalledWith(
+        'csrfToken',
+        expect.any(Object),
+      );
+      expect(res).toEqual({ message: 'Session revoked successfully' });
+    });
+
+    it('propagates NotFoundException from authService when session does not exist or belong to user', async () => {
+      const { NotFoundException } = await import('@nestjs/common');
+      authServiceMock.revokeSession.mockRejectedValueOnce(
+        new NotFoundException('Session not found'),
+      );
+
+      const user = { id: 'user-auth-1' } as any;
+      await expect(
+        controller.revokeSession(
+          'sess-missing',
+          user,
+          reqMock as Request,
+          resMock as Response,
+        ),
+      ).rejects.toThrow(NotFoundException);
+      expect(resMock.clearCookie).not.toHaveBeenCalled();
     });
   });
 });

@@ -4314,6 +4314,186 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
    - Branch `feat/turnstile-signup` pushed; PR #76 open targeting `main`.
    - Do NOT merge on this prompt alone.
 
+---
+
+## 64. Per-Device Active Session Management (Phase B Item 5)
+
+### 1. Summary & Motivation
+
+- **Status**: **IN REVIEW** (Branch `feat/per-device-sessions`, PR #77)
+- **Origin**: `docs/auth-production-readiness-report.md` (PR #62), Phase B item 5: "Store metadata (IP address, operating system, browser name, login timestamp) in Redis session hashes. Provide GET /api/v1/auth/sessions and DELETE /api/v1/auth/sessions/:sessionId endpoints. Add 'Active Sessions' card to workspace account settings."
+- **Scope & Objectives**:
+  - Deliver the final item of Phase B from the production auth readiness report: granular, per-device active session visibility and single-session revocation across the full stack.
+  - Retain the proven atomic session string architecture with sliding TTL in Redis (`session:<sessionId>`), while adding optional metadata fields (`ipAddress`, `userAgent`) stored directly within the session JSON payload.
+  - Implement a dedicated, dependency-free User-Agent parser (`apps/api/src/modules/auth/user-agent.util.ts`) providing accurate browser and operating system categorization without introducing external dependencies.
+  - Expose authenticated, unthrottled read endpoint `GET /api/v1/auth/sessions` and throttled mutation endpoint `DELETE /api/v1/auth/sessions/:sessionId` with strict ownership verification (returning HTTP 404 on foreign session targets to prevent user enumeration).
+  - Add `AUTH_SESSION_REVOKED` to `AuditAction` for non-repudiable audit logging.
+  - Add an 'Active Sessions' card to workspace account settings in `apps/web/src/app/[workspaceId]/settings/page.tsx`, integrated into the dashboard sidebar navigation (`dashboard-shell.tsx`).
+  - Zero new npm dependencies; zero schema migrations (`AuditLog.action` is a plain `String` column in Postgres).
+
+### 2. Architecture & Implementation Details
+
+#### A. Redis Session Storage & Read-Only getSessionData Helper
+- **SessionData Model (`packages/session/src/SessionManager.ts`)**:
+  - Extended `SessionData` with optional metadata:
+    ```ts
+    export interface SessionData {
+      userId: string;
+      createdAt: string;
+      expiresAt: string;
+      securityEpoch?: number;
+      ipAddress?: string;
+      userAgent?: string;
+    }
+    ```
+- **Conditional Metadata Storage in createSession**:
+  - Updated `createSession(userId: string, securityEpoch?: number, metadata?: { ipAddress?: string; userAgent?: string })`:
+    ```ts
+    const data: SessionData = {
+      userId,
+      createdAt: now.toISOString(),
+      expiresAt: expiresAt.toISOString(),
+      ...(typeof securityEpoch === 'number' ? { securityEpoch } : {}),
+      ...(metadata?.ipAddress && metadata.ipAddress.trim() ? { ipAddress: metadata.ipAddress } : {}),
+      ...(metadata?.userAgent && metadata.userAgent.trim() ? { userAgent: metadata.userAgent } : {}),
+    };
+    ```
+- **Read-Only getSessionData Helper**:
+  - Implemented `getSessionData(sessionId: string): Promise<SessionData | null>`:
+    - Executes a plain `redis.get(sessionKey)` and `JSON.parse`.
+    - Returns `null` if the key is missing or on JSON `SyntaxError`.
+    - **CRITICAL ARCHITECTURAL DECISION**: `getSessionData` does NOT call `VALIDATE_SESSION_SCRIPT`, does NOT refresh or slide the TTL, and does NOT execute Lua scripts. Pure inspection must never artificially prolong the life of idle sessions.
+
+#### B. Dependency-Free User-Agent Parsing
+- **Implementation (`apps/api/src/modules/auth/user-agent.util.ts`)**:
+  - Zero-dependency parser with strictly ordered substring matching to avoid browser and OS ambiguity:
+    - **Browser Order**:
+      1. `Edg/` -> `Microsoft Edge` (before Chrome)
+      2. `SamsungBrowser/` -> `Samsung Internet` (before Chrome)
+      3. `OPR/` or `Opera` -> `Opera` (before Chrome)
+      4. `Chrome/` or `CriOS` -> `Google Chrome` (before Safari)
+      5. `Firefox/` or `FxiOS` -> `Firefox`
+      6. `Safari/` -> `Safari`
+      7. Fallback: `Unknown browser`
+    - **OS Order**:
+      1. `Windows NT` -> `Windows`
+      2. `iPhone`, `iPad`, `CPU OS`, or `CPU iPhone OS` -> `iOS` (before macOS)
+      3. `Android` -> `Android` (before Linux)
+      4. `Mac OS X` or `Macintosh` -> `macOS`
+      5. `Linux` -> `Linux`
+      6. Fallback: `Unknown OS`
+    - Empty, null, or whitespace-only User-Agents gracefully return `{ browser: 'Unknown browser', os: 'Unknown OS' }`.
+
+#### C. AuthService Orchestration & Ownership Gating
+- **Threaded Metadata on Login**:
+  - Updated `AuthService.login(email, password, requestContext?)` to forward `requestContext` (`{ ipAddress, userAgent }`) into `this.sessionManager.createSession`.
+- **listSessions(userId, currentSessionId?)**:
+  - Fetches the user's active session IDs via `this.sessionManager.getUserSessionIds(userId)`.
+  - For each ID, calls `getSessionData(sid)`. Missing or expired keys (raced out) are skipped.
+  - Maps to `ActiveSessionDto` with parsed browser and OS, `isCurrent: sessionId === currentSessionId`, and sorts newest first (`new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()`).
+  - Legacy sessions without stored metadata return `ipAddress: null`, `userAgent: null`, `browser: 'Unknown browser'`, `os: 'Unknown OS'`.
+- **revokeSession(userId, sessionId)**:
+  - Fetches active session IDs for the user: `const activeSessionIds = await this.sessionManager.getUserSessionIds(userId)`.
+  - **Ownership Check**: If `!activeSessionIds.includes(sessionId)`, throws `new NotFoundException('Session not found')`.
+  - Calling destroy without ownership verification would allow an attacker to probe or revoke arbitrary session IDs across tenants. The 404 response preserves anti-enumeration semantics by masking whether a session exists for another user.
+  - On ownership match, destroys the session via `this.sessionManager.destroySession(sessionId)`.
+
+#### D. AuthController & Audit Logging
+- **GET /api/v1/auth/sessions**:
+  - Protected with `@UseGuards(AuthGuard)`.
+  - Unthrottled read (matching `/auth/me` parity).
+  - Reads `req.cookies?.session`, delegating to `this.authService.listSessions(user.id, currentSessionId)`.
+  - Returns `{ sessions: ActiveSessionDto[] }`.
+- **DELETE /api/v1/auth/sessions/:sessionId**:
+  - Protected with `@UseGuards(AuthGuard)` and `@Throttle({ default: RateLimitPolicies.auth })`.
+  - Responds with HTTP 200 `@HttpCode(HttpStatus.OK)`.
+  - Calls `await this.authService.revokeSession(user.id, sessionId)`.
+  - Dispatches `AuditAction.AUTH_SESSION_REVOKED` via `this.auditService.logActionBestEffort` with `actorId: user.id`, `targetType: 'User'`, `targetId: user.id`, `metadata: { revokedSessionId: sessionId }`, `requestId`, `ipAddress`, and `userAgent`.
+  - If `sessionId === req.cookies?.session`, invokes `this.clearSessionCookies(req, res)` to ensure current-device revocation clears authentication cookies immediately.
+  - Returns `{ message: 'Session revoked successfully' }`.
+
+#### E. Web Client & UX
+- **Query Definition (`apps/web/src/lib/query/auth.ts`)**:
+  - Exported `SessionInfo` interface and added `authQueries.sessions = () => queryOptions(...)` with `retry: false`.
+- **Dashboard Sidebar Navigation (`apps/web/src/components/dashboard-shell.tsx`)**:
+  - Added `{ name: 'Settings', href: `/${currentWorkspaceId}/settings`, icon: Settings }` to `navItems`.
+- **Settings Page (`apps/web/src/app/[workspaceId]/settings/page.tsx`)**:
+  - 'use client' page rendering an "Active Sessions" card with responsive icons (`Laptop`, `Smartphone`, `Globe`).
+  - Displays device title (`${browser} on ${os}` or `'Unknown device'`), IP address (`session.ipAddress || 'Unknown IP'`), and human-readable sign-in timestamp.
+  - Displays a green `'This device'` badge when `isCurrent` is true.
+  - Renders a `'Revoke'` button only on non-current session rows (`!isCurrent`). The current session row has NO revoke button.
+  - Includes loading skeleton state and error banner with retry option.
+
+#### F. Backward Compatibility & Production Safety Note
+- **Legacy Sessions**: Pre-existing sessions in Redis created prior to this PR have no `ipAddress` or `userAgent` keys. They deserialize cleanly with `ipAddress: null`, `userAgent: null`, `browser: 'Unknown browser'`, `os: 'Unknown OS'`.
+- **Next Login Transition**: Each user's next login will automatically record their IP address and User-Agent in Redis, seamlessly upgrading their session metadata without requiring data backfills or downtime.
+
+### 3. Verification & Test Evidence
+
+- **Session Package Unit Tests (`packages/session/src/SessionManager.spec.ts`)**:
+  - 19/19 tests PASS (previously 16; +3 new unit tests):
+    1. `createSession with metadata stores ipAddress and userAgent in the session JSON`
+    2. `createSession without metadata stores neither field`
+    3. `getSessionData returns parsed data for existing key, null for missing key, and performs plain GET without calling eval/validate`
+  - Total in package: 2/2 test files PASS, 29/29 tests PASS.
+- **User-Agent Parser Unit Tests (`apps/api/src/modules/auth/user-agent.util.spec.ts`)**:
+  - 11/11 tests PASS:
+    - Undefined, null, empty string, and whitespace-only fallback to Unknown.
+    - Chrome on Windows, Edge on Windows, Safari on macOS, Chrome on macOS.
+    - Safari on iOS (priority over macOS).
+    - Chrome on Android (priority over Linux).
+    - Firefox on Linux, Samsung Internet on Android, Opera on Windows.
+    - Unrecognized custom clients (`curl/7.88.1`).
+- **AuthService Unit Tests (`apps/api/src/modules/auth/auth.service.spec.ts`)**:
+  - 61/61 tests PASS (previously 55; +6 tests):
+    - `login with requestContext passes ipAddress and userAgent metadata to createSession`.
+    - `listSessions`: maps stored data, parses UA, marks `isCurrent` for matching cookie, sorts newest first.
+    - `listSessions`: skips vanished sessions where `getSessionData` returns null.
+    - `listSessions`: returns null IP/UA and Unknown browser/OS for legacy sessions without metadata.
+    - `revokeSession`: destroys session when `sessionId` is owned by the user.
+    - `revokeSession`: throws `NotFoundException` without calling `destroySession` when `sessionId` is not in user sessions.
+- **AuthController Unit Tests (`apps/api/src/modules/auth/auth.controller.spec.ts`)**:
+  - 40/40 tests PASS (previously 35; +5 tests):
+    - `getSessions`: returns sessions list with `currentSessionId` read from cookies.
+    - `getSessions`: passes `undefined` as `currentSessionId` when cookies are missing.
+    - `revokeSession`: revokes non-current session, logs `AUTH_SESSION_REVOKED` audit action, and does NOT clear cookies.
+    - `revokeSession`: revokes current session and clears session cookies.
+    - `revokeSession`: propagates `NotFoundException` when session does not exist or belong to user.
+- **API Unit Test Suite (`pnpm --filter @agency-os/api test`)**:
+  - 41/41 test files PASS (previously 40; +1 new file `user-agent.util.spec.ts`), 542/542 tests PASS (previously 520; +22 tests).
+- **Web Client Unit Tests (`apps/web/src/app/[workspaceId]/settings/page.spec.tsx` & `dashboard-shell.spec.tsx`)**:
+  - `page.spec.tsx`: 6/6 tests PASS:
+    1. Renders loading skeleton state initially.
+    2. Renders error banner when query fails.
+    3. Renders empty message when no active sessions are returned.
+    4. Renders active sessions with device title, IP, 'This device' badge, and revoke button omitted on current device.
+    5. Clicking Revoke calls `api.delete('auth/sessions/:sessionId')`.
+    6. Displays error message when revoke mutation fails.
+  - `dashboard-shell.spec.tsx`: 5/5 tests PASS.
+  - Total in web package: 22/22 test files PASS, 235/235 tests PASS (previously 21 files, 229 tests).
+- **Database Unit Tests (`packages/database`)**:
+  - 13/13 test files PASS, 115/115 tests PASS.
+- **API E2E Tests (`apps/api/test/auth.e2e-spec.ts`)**:
+  - 1/1 test file PASS, 43/43 tests PASS (previously 38 tests; +5 tests in `Per-Device Active Session Management (e2e)`):
+    1. Fails with 401 when fetching sessions without session cookie.
+    2. Lists single active session with parsed Chrome on Windows, non-empty IP, and `isCurrent: true` on initial login.
+    3. Second login with Safari on iPhone creates second session and lists both with correct `isCurrent` flags and sorting.
+    4. `DELETE /api/v1/auth/sessions/:sessionId` revokes non-current session, invalidates access to `/me`, and emits `AUTH_SESSION_REVOKED` audit record with `metadata.revokedSessionId`.
+    5. `DELETE /api/v1/auth/sessions/:sessionId` with unknown or foreign ID returns 404 `'Session not found'`.
+- **Monorepo Code Quality (`pnpm turbo run lint typecheck build`)**:
+  - 18/18 tasks PASS across 9 packages (0 errors).
+
+### 4. Release Gate & Next Steps
+
+1. **CI Quality Gates**:
+   - 6/6 verified green check runs on head `8d6b5a4bf06b4eb536e5988398bfa2818e1924c9` (`8d6b5a4`) (GitGuardian Security Checks 12:07:31Z, Application Builds 12:08:25Z, Code Quality (Lint & Typecheck) 12:08:34Z, API E2E Tests 12:09:12Z, Tests 12:09:14Z, Docker Build & Smoke Test 12:16:19Z, all 2026-11-16 UTC). CI must be re-verified on the new head after this docs update.
+2. **Release Gate**:
+   - **Live Deployment**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending external infrastructure provisioning, live email delivery verification, live payment credentials, and disaster recovery rehearsals G18/G19).
+3. **Next Steps**:
+   - Branch `feat/per-device-sessions` pushed; PR #77 open targeting `main`.
+   - Do NOT merge on this prompt alone.
+
+
 
 
 
