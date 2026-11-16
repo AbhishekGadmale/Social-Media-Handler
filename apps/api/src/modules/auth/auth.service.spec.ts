@@ -62,6 +62,8 @@ describe('AuthService', () => {
   let emailDeliveryMock: {
     sendVerificationEmail: any;
     sendPasswordResetEmail: any;
+    sendDuplicateSignupEmail: any;
+    sendAccountLockedEmail: any;
   };
   let auditServiceMock: {
     logActionBestEffort: any;
@@ -119,6 +121,8 @@ describe('AuthService', () => {
     emailDeliveryMock = {
       sendVerificationEmail: vi.fn(),
       sendPasswordResetEmail: vi.fn(),
+      sendDuplicateSignupEmail: vi.fn().mockResolvedValue(undefined),
+      sendAccountLockedEmail: vi.fn().mockResolvedValue(undefined),
     };
 
     auditServiceMock = {
@@ -410,6 +414,77 @@ describe('AuthService', () => {
         passwordPolicyServiceMock.assertPasswordAcceptable,
       ).not.toHaveBeenCalled();
       expect(userRepoMock.createWithTenantTransaction).not.toHaveBeenCalled();
+    });
+
+    describe('security notifications (duplicate signup email)', () => {
+      it('duplicate signup dispatches sendDuplicateSignupEmail once with normalized email and does not call sendVerificationEmail or createWithTenantTransaction', async () => {
+        userRepoMock.findByEmail.mockResolvedValueOnce({
+          id: 'existing-user-1',
+          email: 'alice@example.com',
+        });
+        vi.mocked(argon2.hash).mockResolvedValueOnce('$argon2id$dummyhash');
+
+        const result = await service.signup({
+          name: 'Alice Duplicate',
+          email: '  Alice@Example.com  ',
+          password: 'Password123!',
+          termsAccepted: true,
+        });
+
+        expect(result).toEqual({ message: 'Registration request received.' });
+        expect(
+          emailDeliveryMock.sendDuplicateSignupEmail,
+        ).toHaveBeenCalledTimes(1);
+        expect(emailDeliveryMock.sendDuplicateSignupEmail).toHaveBeenCalledWith(
+          'alice@example.com',
+        );
+        expect(emailDeliveryMock.sendVerificationEmail).not.toHaveBeenCalled();
+        expect(userRepoMock.createWithTenantTransaction).not.toHaveBeenCalled();
+      });
+
+      it('successful signup does not call sendDuplicateSignupEmail', async () => {
+        userRepoMock.findByEmail.mockResolvedValueOnce(null);
+        vi.mocked(argon2.hash).mockResolvedValueOnce('$argon2id$hashed');
+        userRepoMock.createWithTenantTransaction.mockResolvedValueOnce({
+          user: { id: 'u-1', email: 'alice@example.com', securityEpoch: 1 },
+        });
+
+        await service.signup({
+          name: 'Alice Smith',
+          email: 'alice@example.com',
+          password: 'Password123!',
+          termsAccepted: true,
+          organizationName: 'Org',
+          workspaceName: 'WS',
+        });
+
+        expect(
+          emailDeliveryMock.sendDuplicateSignupEmail,
+        ).not.toHaveBeenCalled();
+      });
+
+      it('duplicate signup returns generic response even if sendDuplicateSignupEmail rejects', async () => {
+        userRepoMock.findByEmail.mockResolvedValueOnce({
+          id: 'existing-user-1',
+          email: 'alice@example.com',
+        });
+        vi.mocked(argon2.hash).mockResolvedValueOnce('$argon2id$dummyhash');
+        emailDeliveryMock.sendDuplicateSignupEmail.mockRejectedValueOnce(
+          new Error('Email service failure'),
+        );
+
+        const result = await service.signup({
+          name: 'Alice Duplicate',
+          email: 'alice@example.com',
+          password: 'Password123!',
+          termsAccepted: true,
+        });
+
+        expect(result).toEqual({ message: 'Registration request received.' });
+        expect(emailDeliveryMock.sendDuplicateSignupEmail).toHaveBeenCalledWith(
+          'alice@example.com',
+        );
+      });
     });
   });
 
@@ -882,6 +957,112 @@ describe('AuthService', () => {
       expect(sessionManagerMock.destroySession).toHaveBeenCalledWith(
         'sess-to-be-destroyed',
       );
+    });
+
+    describe('security notifications (account locked email)', () => {
+      it('login failure reaching threshold (5) calls sendAccountLockedEmail once with user email', async () => {
+        const mockUser = {
+          id: 'user-threshold-notify',
+          email: 'threshold-notify@example.com',
+          hashedPassword: '$argon2id$validuserhash',
+          securityEpoch: 1,
+          failedLoginAttempts: 4,
+          lockedUntil: null,
+        };
+        userRepoMock.findByEmail.mockResolvedValueOnce(mockUser);
+        vi.mocked(argon2.verify).mockResolvedValueOnce(false);
+        userRepoMock.incrementFailedLoginAttempts.mockResolvedValueOnce({
+          ...mockUser,
+          failedLoginAttempts: 5,
+        });
+
+        await expect(
+          service.login('threshold-notify@example.com', 'wrongpassword'),
+        ).rejects.toThrow(InvalidCredentialsException);
+
+        expect(emailDeliveryMock.sendAccountLockedEmail).toHaveBeenCalledTimes(
+          1,
+        );
+        expect(emailDeliveryMock.sendAccountLockedEmail).toHaveBeenCalledWith(
+          'threshold-notify@example.com',
+        );
+      });
+
+      it('login failure below threshold does not call sendAccountLockedEmail', async () => {
+        const mockUser = {
+          id: 'user-below-notify',
+          email: 'below-notify@example.com',
+          hashedPassword: '$argon2id$validuserhash',
+          securityEpoch: 1,
+          failedLoginAttempts: 2,
+          lockedUntil: null,
+        };
+        userRepoMock.findByEmail.mockResolvedValueOnce(mockUser);
+        vi.mocked(argon2.verify).mockResolvedValueOnce(false);
+        userRepoMock.incrementFailedLoginAttempts.mockResolvedValueOnce({
+          ...mockUser,
+          failedLoginAttempts: 3,
+        });
+
+        await expect(
+          service.login('below-notify@example.com', 'wrongpassword'),
+        ).rejects.toThrow(InvalidCredentialsException);
+
+        expect(emailDeliveryMock.sendAccountLockedEmail).not.toHaveBeenCalled();
+      });
+
+      it('subsequent attempt against already locked account (ACCOUNT_LOCKED path) does not call sendAccountLockedEmail again', async () => {
+        const lockedUntil = new Date(Date.now() + 10 * 60 * 1000);
+        const mockUser = {
+          id: 'user-already-locked',
+          email: 'already-locked@example.com',
+          hashedPassword: '$argon2id$validuserhash',
+          securityEpoch: 1,
+          failedLoginAttempts: 0,
+          lockedUntil,
+        };
+        userRepoMock.findByEmail.mockResolvedValueOnce(mockUser);
+
+        await expect(
+          service.login('already-locked@example.com', 'anypassword'),
+        ).rejects.toThrow(InvalidCredentialsException);
+
+        expect(emailDeliveryMock.sendAccountLockedEmail).not.toHaveBeenCalled();
+      });
+
+      it('threshold login attempt still throws InvalidCredentialsException with reason INVALID_PASSWORD even if sendAccountLockedEmail rejects', async () => {
+        const mockUser = {
+          id: 'user-threshold-err',
+          email: 'threshold-err@example.com',
+          hashedPassword: '$argon2id$validuserhash',
+          securityEpoch: 1,
+          failedLoginAttempts: 4,
+          lockedUntil: null,
+        };
+        userRepoMock.findByEmail.mockResolvedValueOnce(mockUser);
+        vi.mocked(argon2.verify).mockResolvedValueOnce(false);
+        userRepoMock.incrementFailedLoginAttempts.mockResolvedValueOnce({
+          ...mockUser,
+          failedLoginAttempts: 5,
+        });
+        emailDeliveryMock.sendAccountLockedEmail.mockRejectedValueOnce(
+          new Error('Email service failure'),
+        );
+
+        let caughtError: any;
+        try {
+          await service.login('threshold-err@example.com', 'wrongpassword');
+        } catch (err) {
+          caughtError = err;
+        }
+
+        expect(caughtError).toBeInstanceOf(InvalidCredentialsException);
+        expect(caughtError.reason).toBe('INVALID_PASSWORD');
+        expect(caughtError.resolvedUserId).toBe('user-threshold-err');
+        expect(emailDeliveryMock.sendAccountLockedEmail).toHaveBeenCalledWith(
+          'threshold-err@example.com',
+        );
+      });
     });
   });
 

@@ -3979,3 +3979,98 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
    - Branch `feat/password-policy-hibp` pushed; PR #73 open targeting `main`.
    - Do NOT merge on this prompt alone.
 
+---
+
+## 61. Auth Security Notification Emails (Branch `feat/signup-lockout-notifications` — IN REVIEW)
+
+### 1. Summary & Motivation
+
+- **Status**: **IN REVIEW** (Branch `feat/signup-lockout-notifications`, PR [#74](https://github.com/AbhishekGadmale/Social-Media-Handler/pull/74) pending independent review)
+- **Pull Request**: [#74](https://github.com/AbhishekGadmale/Social-Media-Handler/pull/74)
+- **Branch**: `feat/signup-lockout-notifications`
+- **Reviewed Head SHA**: [`352d5ee33757315f9074b70282b3bfaa95d950af`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/352d5ee33757315f9074b70282b3bfaa95d950af) (`352d5ee`)
+- **Origin**: `docs/auth-production-readiness-report.md` (PR #62)
+  - **Phase B Item 4 (Duplicate Signup Notification)**: When an account creation request targets an existing email, asynchronously dispatch a security notification to the address on record rather than disclosing account existence.
+  - **Phase B Item 1 (Account Lockout Notification Email Sub-Point)**: When per-account lockout triggers upon reaching the threshold (5 failed attempts), asynchronously dispatch a security notification informing the account holder of the temporary 15-minute lock. (Deferred from PR #72 §59, which delivered the lockout mechanism itself).
+- **Exact Notification Copy**:
+  - **Duplicate Signup Email**:
+    - Subject: `'An Agency OS account already exists for this email'`
+    - Body / Text: `"Someone attempted to create an Agency OS account with this email address. If this was you, please sign in or reset your password. If this was not you, no action is needed — your account remains secure and no new account was created."`
+  - **Account Lockout Email**:
+    - Subject: `'Your Agency OS account was temporarily locked'`
+    - Body / Text: `"Multiple failed login attempts detected on your account. For your security, your account has been temporarily locked for 15 minutes. If this was you, wait 15 minutes and try again, or reset your password. If this was not you, we recommend resetting your password after the lock expires."`
+
+### 2. Architecture & Design Decisions
+
+#### A. Provider Interface & Implementations
+- **`EmailDeliveryService` Interface (`apps/api/src/modules/auth/email-delivery.service.ts`)**:
+  - Extended with two contract methods:
+    - `sendDuplicateSignupEmail(toEmail: string): Promise<void>`
+    - `sendAccountLockedEmail(toEmail: string): Promise<void>`
+  - Implemented across all three providers:
+    - **`MockEmailDeliveryService`**: In-memory inspection arrays `sentDuplicateSignupEmails: Array<{ toEmail: string }>` and `sentAccountLockedEmails: Array<{ toEmail: string }>`. Throws if executed in production (`NODE_ENV === 'production'`).
+    - **`NoopEmailDeliveryService`**: Safely logs a warning (`[NoopEmailDeliveryService] ... email delivery skipped for <email>: no email provider configured`) and resolves `undefined`.
+    - **`ResendEmailDeliveryService`**: Sends transactional emails via native `fetch` to `https://api.resend.com/emails` with exact pinned subjects, plain-text copy, and HTML wrapper. Throws if `RESEND_API_KEY` is missing or Resend API returns non-200.
+
+#### B. Non-Blocking Fire-and-Forget Dispatch
+- **Async Safety**:
+  - Neither dispatch is awaited in the HTTP request lifecycle.
+  - Both dispatches chain `.catch((err) => { this.logger.warn(...) })`.
+  - Notification delivery latency or third-party outages (such as Resend rate limits or downtime) cannot alter HTTP response status codes, delay client response times, or fail user transactions.
+
+#### C. Placement & Trigger Rules
+1. **`AuthService.signup(dto)`**:
+   - Dispatched in duplicate account branches:
+     - Initial lookup branch (`if (existingUser)`).
+     - Database collision catch branch (Prisma P2002 unique-constraint error on the email target: `error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002'` where `error.meta.target` contains `'email'`).
+   - Triggered immediately after `AUTH_SIGNUP_DUPLICATE_EMAIL` audit logging and before returning `{ message: 'Registration request received.' }`.
+2. **`AuthService.login(email, passwordPlain)`**:
+   - Dispatched strictly when `updated.failedLoginAttempts >= MAX_FAILED_LOGIN_ATTEMPTS` (5).
+   - Triggered immediately after `this.userRepository.lockUserAccount(user.id, ...)` and before throwing `InvalidCredentialsException('INVALID_PASSWORD', user.id)`.
+   - Attempts against already-locked accounts fail fast at the top of `login` before password verification and do not re-dispatch lockout notifications.
+
+#### D. Anti-Enumeration & Security Characteristics
+- **Client Invariance**:
+  - Duplicate signup: Caller receives identical HTTP 201 `{ message: 'Registration request received.' }`. The notification is delivered strictly to the mailbox of the registered user, never revealing account existence to the unauthenticated caller.
+  - Account lockout: Caller receives identical HTTP 401 `{ error: { code: 'UnauthorizedException', message: 'Invalid credentials' } }`. No indication is given to the attacker that the account entered a locked state.
+- **Tradeoffs & Bounds**:
+  - Duplicate signup notification dispatch frequency is bounded by the global per-IP auth rate limit (`@Throttle RateLimitPolicies.auth`: 5 requests per 15 minutes per IP). Per-email notification cooldown is intentionally deferred to future hardening.
+
+### 3. Verification & Test Evidence
+
+- **Unit Tests**:
+  - `apps/api/src/modules/auth/email-delivery.service.spec.ts`: 13/13 PASS (9 existing + 4 new)
+    - Verifies `MockEmailDeliveryService` records duplicate signup and account locked emails in memory.
+    - Verifies `NoopEmailDeliveryService` safely resolves duplicate signup and account locked methods.
+    - Verifies `ResendEmailDeliveryService` sends duplicate signup email with exact subject and body.
+    - Verifies `ResendEmailDeliveryService` sends account locked email with exact subject and body.
+  - `apps/api/src/modules/auth/auth.service.spec.ts`: 52/52 PASS (45 existing + 7 new)
+    - Duplicate signup calls `sendDuplicateSignupEmail` once with normalized email and does not call verification email or tenant creation.
+    - Successful signup does not call `sendDuplicateSignupEmail`.
+    - Duplicate signup returns generic response even if email delivery rejects.
+    - Login failure reaching threshold (5) calls `sendAccountLockedEmail` once with user email.
+    - Login failure below threshold does not call `sendAccountLockedEmail`.
+    - Subsequent login attempts while account is already locked do not call `sendAccountLockedEmail`.
+    - Login failure reaching threshold throws standard invalid credentials error even if email delivery rejects.
+  - Full `@agency-os/api` unit test suite: 39/39 test files PASS, 505/505 tests PASS.
+- **E2E Integration Tests**:
+  - `apps/api/test/auth.e2e-spec.ts`: 35/35 PASS (34 existing + 1 new journey test + 1 extended lockout assertion):
+    - `duplicate signup journey`: Signs up a fresh email (201), signs up duplicate email (201), asserts `sentDuplicateSignupEmails` records exactly 1 notification for that email.
+    - `enforces lockout journey`: Asserts `sentAccountLockedEmails` contains 0 entries before lock, exactly 1 entry for the user upon 5th failed attempt, and still exactly 1 entry after subsequent attempts while locked.
+- **Database Tests**:
+  - Full `@agency-os/database` test suite: 13/13 test files PASS, 113/113 tests PASS.
+- **Monorepo Code Quality**:
+  - `pnpm --filter @agency-os/api lint`: 0 errors (132 warnings).
+  - `pnpm --filter @agency-os/api typecheck`: 0 errors.
+
+### 4. Release Gate & Next Steps
+
+1. **CI Quality Gates**:
+   - 6/6 verified green check runs on reviewed head `352d5ee` (GitGuardian Security Checks 14:48:48Z, Application Builds 14:49:43Z, Code Quality (Lint & Typecheck) 14:50:11Z, API E2E Tests 14:50:23Z, Tests 14:50:38Z, Docker Build & Smoke Test 14:57:13Z, all 2026-11-15 UTC).
+2. **Release Gate**:
+   - **Live Deployment**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending external infrastructure provisioning, live email delivery verification, live payment credentials, and disaster recovery rehearsals G18/G19).
+3. **Next Steps**:
+   - Branch `feat/signup-lockout-notifications` pushed; PR #74 open targeting `main`.
+   - Do NOT merge on this prompt alone.
+
+

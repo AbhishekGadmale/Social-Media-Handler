@@ -9,6 +9,8 @@ export interface EmailDeliveryService {
     toEmail: string,
     details: { amountPaise?: number; reason?: string },
   ): Promise<void>;
+  sendDuplicateSignupEmail(toEmail: string): Promise<void>;
+  sendAccountLockedEmail(toEmail: string): Promise<void>;
 }
 
 @Injectable()
@@ -23,6 +25,8 @@ export class MockEmailDeliveryService implements EmailDeliveryService {
     toEmail: string;
     details: { amountPaise?: number; reason?: string };
   }> = [];
+  public sentDuplicateSignupEmails: Array<{ toEmail: string }> = [];
+  public sentAccountLockedEmails: Array<{ toEmail: string }> = [];
 
   async sendVerificationEmail(
     toEmail: string,
@@ -71,6 +75,32 @@ export class MockEmailDeliveryService implements EmailDeliveryService {
       `[MockEmailDeliveryService] Dunning email simulated for ${toEmail}`,
     );
   }
+
+  async sendDuplicateSignupEmail(toEmail: string): Promise<void> {
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error(
+        'MockEmailDeliveryService must NEVER be used in production.',
+      );
+    }
+
+    this.sentDuplicateSignupEmails.push({ toEmail });
+    this.logger.debug(
+      `[MockEmailDeliveryService] Duplicate signup notification simulated for ${toEmail}`,
+    );
+  }
+
+  async sendAccountLockedEmail(toEmail: string): Promise<void> {
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error(
+        'MockEmailDeliveryService must NEVER be used in production.',
+      );
+    }
+
+    this.sentAccountLockedEmails.push({ toEmail });
+    this.logger.debug(
+      `[MockEmailDeliveryService] Account locked notification simulated for ${toEmail}`,
+    );
+  }
 }
 
 @Injectable()
@@ -101,6 +131,18 @@ export class NoopEmailDeliveryService implements EmailDeliveryService {
   ): Promise<void> {
     this.logger.warn(
       `[NoopEmailDeliveryService] Dunning email skipped for ${toEmail}: no email provider configured.`,
+    );
+  }
+
+  async sendDuplicateSignupEmail(toEmail: string): Promise<void> {
+    this.logger.warn(
+      `[NoopEmailDeliveryService] Duplicate signup email delivery skipped for ${toEmail}: no email provider configured.`,
+    );
+  }
+
+  async sendAccountLockedEmail(toEmail: string): Promise<void> {
+    this.logger.warn(
+      `[NoopEmailDeliveryService] Account locked email delivery skipped for ${toEmail}: no email provider configured.`,
     );
   }
 }
@@ -242,6 +284,86 @@ export class ResendEmailDeliveryService implements EmailDeliveryService {
 
     this.logger.log(
       `[ResendEmailDeliveryService] Dunning email successfully sent to ${toEmail}`,
+    );
+  }
+
+  async sendDuplicateSignupEmail(toEmail: string): Promise<void> {
+    if (!this.apiKey) {
+      throw new Error(
+        'Resend API key is not configured (RESEND_API_KEY environment variable missing)',
+      );
+    }
+
+    const text =
+      'Someone attempted to create an Agency OS account with this email address. If this was you, please sign in or reset your password. If this was not you, no action is needed — your account remains secure and no new account was created.';
+
+    const response = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${this.apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        from: this.fromEmail,
+        to: [toEmail],
+        subject: 'An Agency OS account already exists for this email',
+        html: `<p>${text}</p>`,
+        text,
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => '');
+      this.logger.error(
+        `[ResendEmailDeliveryService] Failed to send duplicate signup email to ${toEmail}: ${response.status} ${response.statusText} - ${errorText}`,
+      );
+      throw new Error(
+        `Failed to send duplicate signup email via Resend (${response.status})`,
+      );
+    }
+
+    this.logger.log(
+      `[ResendEmailDeliveryService] Duplicate signup email successfully sent to ${toEmail}`,
+    );
+  }
+
+  async sendAccountLockedEmail(toEmail: string): Promise<void> {
+    if (!this.apiKey) {
+      throw new Error(
+        'Resend API key is not configured (RESEND_API_KEY environment variable missing)',
+      );
+    }
+
+    const text =
+      'Multiple failed login attempts detected on your account. For your security, your account has been temporarily locked for 15 minutes. If this was you, wait 15 minutes and try again, or reset your password. If this was not you, we recommend resetting your password after the lock expires.';
+
+    const response = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${this.apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        from: this.fromEmail,
+        to: [toEmail],
+        subject: 'Your Agency OS account was temporarily locked',
+        html: `<p>${text}</p>`,
+        text,
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => '');
+      this.logger.error(
+        `[ResendEmailDeliveryService] Failed to send account locked email to ${toEmail}: ${response.status} ${response.statusText} - ${errorText}`,
+      );
+      throw new Error(
+        `Failed to send account locked email via Resend (${response.status})`,
+      );
+    }
+
+    this.logger.log(
+      `[ResendEmailDeliveryService] Account locked email successfully sent to ${toEmail}`,
     );
   }
 }

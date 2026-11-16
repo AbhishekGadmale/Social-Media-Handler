@@ -826,6 +826,75 @@ describe('AuthController (e2e)', () => {
       expect(res.headers['set-cookie']).toBeUndefined();
     });
 
+    it('duplicate signup journey: dispatches duplicate signup notification email on duplicate email signup', async () => {
+      const emailService = app.get(
+        EMAIL_DELIVERY_SERVICE,
+      ) as MockEmailDeliveryService;
+      const initialCount = emailService.sentDuplicateSignupEmails.length;
+      const freshEmail = `dup-journey-${generateId()}@example.com`;
+
+      // 1. Initial signup
+      const firstRes = await request(app.getHttpServer())
+        .post('/api/v1/auth/signup')
+        .send({
+          name: 'First User',
+          email: freshEmail,
+          password: 'Password123!',
+          termsAccepted: true,
+          organizationName: 'First Org',
+          workspaceName: 'First Workspace',
+        });
+
+      expect(firstRes.status).toBe(201);
+      expect(firstRes.body).toEqual({
+        message: 'Registration request received.',
+      });
+      expect(emailService.sentDuplicateSignupEmails.length).toBe(initialCount);
+
+      // 2. Duplicate signup with the SAME email
+      const dupRes = await request(app.getHttpServer())
+        .post('/api/v1/auth/signup')
+        .send({
+          name: 'Duplicate User',
+          email: freshEmail,
+          password: 'DifferentPassword456!',
+          termsAccepted: true,
+        });
+
+      expect(dupRes.status).toBe(201);
+      expect(dupRes.body).toEqual({
+        message: 'Registration request received.',
+      });
+      expect(emailService.sentDuplicateSignupEmails.length).toBe(
+        initialCount + 1,
+      );
+      expect(
+        emailService.sentDuplicateSignupEmails.some(
+          (e) => e.toEmail === freshEmail,
+        ),
+      ).toBe(true);
+
+      // Cleanup
+      const user = await prisma.user.findUnique({
+        where: { email: freshEmail },
+      });
+      if (user) {
+        await prisma.emailVerificationToken.deleteMany({
+          where: { userId: user.id },
+        });
+        await prisma.workspaceMember.deleteMany({
+          where: { userId: user.id },
+        });
+        await prisma.workspace.deleteMany({
+          where: { organization: { name: 'First Org' } },
+        });
+        await prisma.organization.deleteMany({
+          where: { name: 'First Org' },
+        });
+        await prisma.user.delete({ where: { id: user.id } });
+      }
+    });
+
     it('rejects signup with 400 when name is missing from body', async () => {
       const res = await request(app.getHttpServer())
         .post('/api/v1/auth/signup')
@@ -1308,6 +1377,11 @@ describe('AuthController (e2e)', () => {
     });
 
     it('enforces lockout journey: 5 wrong attempts lock the account, correct password rejected while locked without disclosure, past lock allows login and clears state', async () => {
+      const emailService = app.get(
+        EMAIL_DELIVERY_SERVICE,
+      ) as MockEmailDeliveryService;
+      emailService.sentAccountLockedEmails = [];
+
       // 1. Attempts 1-4: wrong password -> 401 with standard invalid-credentials body
       for (let attempt = 1; attempt <= 4; attempt++) {
         const res = await request(app.getHttpServer())
@@ -1350,6 +1424,12 @@ describe('AuthController (e2e)', () => {
       expect(lockedUser!.lockedUntil).not.toBeNull();
       expect(lockedUser!.lockedUntil!.getTime()).toBeGreaterThan(Date.now());
 
+      // Assert security notification email dispatched exactly once upon lockout
+      expect(emailService.sentAccountLockedEmails).toHaveLength(1);
+      expect(emailService.sentAccountLockedEmails[0]).toEqual({
+        toEmail: lockoutUserEmail,
+      });
+
       // 3. CORRECT-password login immediately after returns 401 (locked) with identical body (no disclosure)
       const correctWhileLockedRes = await request(app.getHttpServer())
         .post('/api/v1/auth/login')
@@ -1368,12 +1448,13 @@ describe('AuthController (e2e)', () => {
       );
       expect(correctWhileLockedRes.headers['set-cookie']).toBeUndefined();
 
-      // Ensure locked state did not extend or change
+      // Ensure locked state did not extend or change, and no duplicate notification email sent
       const stillLockedUser = await prisma.user.findUnique({
         where: { email: lockoutUserEmail },
       });
       expect(stillLockedUser!.failedLoginAttempts).toBe(0);
       expect(stillLockedUser!.lockedUntil).toEqual(lockedUser!.lockedUntil);
+      expect(emailService.sentAccountLockedEmails).toHaveLength(1);
 
       // 4. Via Prisma, set lockedUntil to the past
       await prisma.user.update({
