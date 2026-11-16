@@ -368,6 +368,8 @@ model AuditLog {
   targetType  String
   targetId    String?
   requestId   String?
+  ipAddress   String?
+  userAgent   String?
   metadata    Json?
   createdAt   DateTime @default(now())
 

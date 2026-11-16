@@ -81,7 +81,14 @@ describe('AuthController', () => {
 
       const result = await controller.signup(body, reqMock as Request);
 
-      expect(authServiceMock.signup).toHaveBeenCalledWith(body, 'req-auth-123');
+      expect(authServiceMock.signup).toHaveBeenCalledWith(
+        body,
+        'req-auth-123',
+        {
+          ipAddress: undefined,
+          userAgent: undefined,
+        },
+      );
       expect(result).toEqual({ message: 'Registration request received.' });
       // Assert ZERO cookies are issued
       expect(resMock.cookie).not.toHaveBeenCalled();
@@ -101,7 +108,14 @@ describe('AuthController', () => {
 
       const result = await controller.signup(body, reqMock as Request);
 
-      expect(authServiceMock.signup).toHaveBeenCalledWith(body, 'req-auth-123');
+      expect(authServiceMock.signup).toHaveBeenCalledWith(
+        body,
+        'req-auth-123',
+        {
+          ipAddress: undefined,
+          userAgent: undefined,
+        },
+      );
       expect(result).toEqual({ message: 'Registration request received.' });
       expect(resMock.cookie).not.toHaveBeenCalled();
     });
@@ -171,6 +185,35 @@ describe('AuthController', () => {
         expect.any(String),
         expect.any(Object),
       );
+    });
+
+    it('emits AUTH_LOGIN_SUCCEEDED with ipAddress and userAgent from request', async () => {
+      authServiceMock.login.mockResolvedValueOnce({
+        sessionId: 'sess-ip-ua',
+        user: { id: 'user-auth-2', email: 'ipua@example.com' },
+      });
+
+      const customReq = {
+        ...reqMock,
+        ip: '203.0.113.50',
+        headers: { 'user-agent': 'CustomBrowser/1.0' },
+      };
+
+      await controller.login(
+        { email: 'ipua@example.com', password: 'secretpassword123' },
+        customReq,
+        resMock as Response,
+      );
+
+      expect(auditServiceMock.logActionBestEffort).toHaveBeenCalledWith({
+        action: AuditAction.AUTH_LOGIN_SUCCEEDED,
+        actorId: 'user-auth-2',
+        targetType: 'User',
+        targetId: 'user-auth-2',
+        requestId: 'req-auth-123',
+        ipAddress: '203.0.113.50',
+        userAgent: 'CustomBrowser/1.0',
+      });
     });
 
     it('emits AUTH_LOGIN_FAILED with reason USER_NOT_FOUND and no targetId when account does not exist', async () => {
@@ -657,6 +700,7 @@ describe('AuthController', () => {
       expect(authServiceMock.verifyEmail).toHaveBeenCalledWith(
         validDto.token,
         'req-auth-123',
+        { ipAddress: undefined, userAgent: undefined },
       );
       expect(result).toEqual({ message: 'Email verified successfully.' });
     });
@@ -698,6 +742,7 @@ describe('AuthController', () => {
       expect(authServiceMock.resendVerification).toHaveBeenCalledWith(
         'user@example.com',
         'req-auth-123',
+        { ipAddress: undefined, userAgent: undefined },
       );
       expect(result).toEqual({
         message:
@@ -841,6 +886,7 @@ describe('AuthController', () => {
       expect(authServiceMock.forgotPassword).toHaveBeenCalledWith(
         'user@example.com',
         'req-auth-123',
+        { ipAddress: undefined, userAgent: undefined },
       );
       expect(result).toEqual({
         message:
@@ -916,6 +962,7 @@ describe('AuthController', () => {
         validDto.token,
         validDto.newPassword,
         'req-auth-123',
+        { ipAddress: undefined, userAgent: undefined },
       );
       expect(result).toEqual({ message: 'Password reset successfully.' });
     });

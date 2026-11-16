@@ -4073,4 +4073,139 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
    - Branch `feat/signup-lockout-notifications` pushed; PR #74 open targeting `main`.
    - Do NOT merge on this prompt alone.
 
+---
+
+## 62. Audit Log IP Address & User-Agent Capture (Branch feat/audit-log-ip-ua — IN REVIEW)
+
+### 1. Summary & Motivation
+
+- **Status**: **IN REVIEW** (Branch `feat/audit-log-ip-ua`, PR [#75](https://github.com/AbhishekGadmale/Social-Media-Handler/pull/75) pending independent review)
+- **Pull Request**: [#75](https://github.com/AbhishekGadmale/Social-Media-Handler/pull/75)
+- **Branch**: `feat/audit-log-ip-ua`
+- **Reviewed Head SHA**: [`c7e336ddb40a7fa41068bf54a61b85ec4b5ff0e3`](https://github.com/AbhishekGadmale/Social-Media-Handler/commit/c7e336ddb40a7fa41068bf54a61b85ec4b5ff0e3) (`c7e336d`)
+- **Origin**: `docs/auth-production-readiness-report.md` (PR #62), Phase B item 6: "Add ipAddress String? and userAgent String? columns to AuditLog table. Pass req.ip and req.headers['user-agent'] into AuditService.logAction."
+- **Scope & Objectives**:
+  - Add nullable `ipAddress` and `userAgent` columns to the `AuditLog` table in PostgreSQL.
+  - Extend database and service DTOs (`CreateAuditLogDto`) to accept optional `ipAddress?: string` and `userAgent?: string`.
+  - Capture client IP and User-Agent headers across all authentication endpoints in `AuthController` and thread them through `AuthService` methods.
+  - Wire controller-direct audit logging call sites in other controllers (`AccountsController`, `OAuthController`) where `req` is in scope.
+  - Keep internal domain services (`MediaService`, `PublishingApplicationService`) and background workers unwired (`null`), per scope discipline.
+  - Verify migration, database repository persistence, audit service delegation, auth flows, and end-to-end integration with fresh tests.
+
+### 2. Architecture & Design Decisions
+
+#### A. Database Schema & Migration
+- **Schema Columns (`packages/database/prisma/schema.prisma`)**:
+  - Added `ipAddress String?` and `userAgent String?` directly after `requestId` on the `AuditLog` model.
+  - Preserves relational integrity and table name `"AuditLog"`.
+- **Migration**:
+  - Migration directory: `packages/database/prisma/migrations/20261116000000_add_audit_log_ip_and_user_agent/migration.sql`
+  - Exact SQL:
+    ```sql
+    -- AlterTable
+    ALTER TABLE "AuditLog" ADD COLUMN "ipAddress" TEXT, ADD COLUMN "userAgent" TEXT;
+    ```
+  - Both columns are nullable with zero backfill required; existing historical audit rows remain valid with `NULL` values.
+
+#### B. Repository & DTO Interface
+- **DTO Extension (`packages/database/src/repositories/AuditLogRepository.ts`)**:
+  - Extended `CreateAuditLogDto` with `ipAddress?: string;` and `userAgent?: string;`.
+  - In `AuditLogRepository.create()`, explicitly mapped both fields into the Prisma insert payload:
+    ```ts
+    ipAddress: data.ipAddress,
+    userAgent: data.userAgent,
+    ```
+    When undefined or omitted, Prisma stores the fields as NULL in PostgreSQL.
+- **AuditService Signature (`apps/api/src/modules/core/audit.service.ts`)**:
+  - `AuditService.logAction(data: CreateAuditLogDto, tx?)` and `AuditService.logActionBestEffort(data: CreateAuditLogDto)` take `CreateAuditLogDto` directly. Zero signature changes were required on `AuditService`.
+
+#### C. Request Context Threading & Trust-Proxy Semantics
+- **Controller Context Extraction (`apps/api/src/modules/auth/auth.controller.ts`)**:
+  - Client IP is extracted via Express `req.ip`.
+  - User-Agent is safely extracted via optional chaining `req.headers?.['user-agent']`.
+  - **Trust-Proxy Architecture**: Express `req.ip` honors the application's trust proxy configuration in `apps/api/src/main.ts` (`TRUST_PROXY` environment variable / loopback defaults). In containerized, reverse-proxy (e.g. Cloudflare / Nginx), or local development topologies, `req.ip` correctly resolves the client address.
+  - Extracted in `signup`, `verifyEmail`, `resendVerification`, `forgotPassword`, `resetPassword`, `login`, `logout`, `changePassword`, and `revokeAllSessions`.
+- **Service Delegation Threading (`apps/api/src/modules/auth/auth.service.ts`)**:
+  - Added optional trailing argument `requestContext?: { ipAddress?: string; userAgent?: string }` to audit-emitting public methods:
+    - `signup(dto: SignupDto, requestId?: string, requestContext?)`
+    - `verifyEmail(rawToken: string, requestId?: string, requestContext?)`
+    - `resendVerification(email: string, requestId?: string, requestContext?)`
+    - `forgotPassword(email: string, requestId?: string, requestContext?)`
+    - `resetPassword(token: string, newPasswordPlain: string, requestId?: string, requestContext?)`
+    (where `requestContext` is `requestContext?: { ipAddress?: string; userAgent?: string }` in each case).
+  - All 11 internal audit call sites in `AuthService` spread `ipAddress: requestContext?.ipAddress` and `userAgent: requestContext?.userAgent`.
+
+#### D. Complete Call-Site Inventory in `apps/api`
+1. **Populated in this PR**:
+   - `AuthController` (7 controller-direct call sites):
+     - `AUTH_LOGIN_SUCCEEDED` (`login`)
+     - `AUTH_LOGIN_FAILED` (`login` — `InvalidCredentialsException`, bad credentials and account lockout distinguished by `metadata.reason`)
+     - `AUTH_LOGIN_FAILED` (`login` — internal-error fallback, `metadata.reason 'INTERNAL_ERROR'`)
+     - `AUTH_LOGOUT` (`logout`)
+     - `AUTH_PASSWORD_CHANGED` (`changePassword`)
+     - `AUTH_PASSWORD_CHANGE_FAILED` (`changePassword`)
+     - `AUTH_REVOKE_ALL_SESSIONS` (`revokeAllSessions`)
+   - `AuthService` (11 service-internal call sites):
+     - `AUTH_SIGNUP_SUCCEEDED` (`signup`)
+     - `AUTH_SIGNUP_DUPLICATE_EMAIL` (`signup` — lookup branch)
+     - `AUTH_SIGNUP_DUPLICATE_EMAIL` (`signup` — P2002 conflict catch branch)
+     - `AUTH_EMAIL_VERIFIED` (`verifyEmail`)
+     - `AUTH_EMAIL_VERIFICATION_FAILED` (`verifyEmail`)
+     - `AUTH_EMAIL_VERIFICATION_RESENT` (`resendVerification` — success)
+     - `AUTH_EMAIL_VERIFICATION_RESENT` (`resendVerification` — user not found)
+     - `AUTH_EMAIL_VERIFICATION_RESENT` (`resendVerification` — already verified)
+     - `AUTH_PASSWORD_RESET_REQUESTED` (`forgotPassword` — success)
+     - `AUTH_PASSWORD_RESET_REQUESTED` (`forgotPassword` — user not found)
+     - `AUTH_PASSWORD_RESET_SUCCEEDED` (`resetPassword`)
+   - `AccountsController` (1 controller-direct call site):
+     - `ACCOUNT_SYNC_TRIGGERED` (`triggerSync`)
+   - `OAuthController` (6 controller-direct call sites):
+     - `OAUTH_CONNECTION_STARTED` (`connectProvider`)
+     - `OAUTH_CONNECTION_FAILED` (`callbackProvider` — missing code/state)
+     - `OAUTH_CONNECTION_FAILED` (`callbackProvider` — state mismatch)
+     - `OAUTH_CONNECTION_FAILED` (`callbackProvider` — exchange exception)
+     - `OAUTH_CONNECTION_SUCCEEDED` (`callbackProvider` — success)
+     - `OAUTH_RECONNECTED` (`selectDiscoveryProfiles`)
+2. **Remaining NULL with Architectural Rationale**:
+   - `MediaService` (2 call sites: `initiateUpload`, `finalizeUpload`): Pure domain service without HTTP request in scope; Item 5 mandate deliberately avoids service layer refactoring outside auth.
+   - `PublishingApplicationService` (13 call sites): Domain orchestration service invoked across multiple entrypoints including background BullMQ workers and reconciliation loops where HTTP requests are absent; threading HTTP context into publishing domain models is out of scope.
+   - Background worker processors (`publishing.processor.ts`, `sync.processor.ts`) and webhook handlers: Emit no audit rows directly (publishing audits originate in `PublishingApplicationService`, already listed above) and run outside interactive user HTTP sessions.
+
+### 3. Verification & Test Evidence
+
+- **Database Repository Tests (`packages/database/src/repositories/AuditLogRepository.spec.ts`)**:
+  - 6/6 PASS (2 new tests verifying persistence of `ipAddress` and `userAgent` when provided, and behavior when omitted).
+- **Core Audit Service Tests (`apps/api/src/modules/core/audit.service.spec.ts`)**:
+  - 7/7 PASS (2 new tests asserting `logAction` and `logActionBestEffort` forward `ipAddress` and `userAgent` unchanged to the repository).
+- **Auth Service Unit Tests (`apps/api/src/modules/auth/auth.service.spec.ts`)**:
+  - 55/55 PASS (3 new unit tests asserting `requestContext` values reach audit logs for signup success, duplicate email signup, and resetPassword success).
+- **Auth Controller Unit Tests (`apps/api/src/modules/auth/auth.controller.spec.ts`)**:
+  - 33/33 PASS (1 new unit test asserting `AUTH_LOGIN_SUCCEEDED` captures `ipAddress` and `userAgent` from request; 6 updated tests verifying delegation with request context).
+- **Accounts Controller Unit Tests (`apps/api/src/modules/accounts/accounts.controller.spec.ts`)**:
+  - 4/4 PASS (existing suite passes unchanged; does not assert the new IP/UA fields, which are verified via code review).
+- **OAuth Controller Unit Tests (`apps/api/src/modules/oauth/oauth.controller.spec.ts`)**:
+  - 18/18 PASS (existing suite passes unchanged; does not assert the new IP/UA fields, which are verified via code review).
+- **Full API Unit Test Suite (`pnpm --filter @agency-os/api test`)**:
+  - 39/39 test files PASS, 511/511 tests PASS.
+- **Full Database Test Suite (`packages/database`)**:
+  - 13/13 test files PASS, 115/115 tests PASS (in CI / with PostgreSQL).
+- **API E2E Tests (`apps/api/test/auth.e2e-spec.ts`)**:
+  - 38/38 PASS (35 existing + 3 new tests in `Audit Log IP and User-Agent Capture (e2e)` block):
+    - Asserts successful login persists real `AuditLog` row with non-empty `ipAddress` string and `userAgent` matching the sent header (`AgencyOS-E2E-Test/1.0`); observed loopback literal `::ffff:127.0.0.1` in local test environment is not asserted as a strict literal.
+    - Asserts failed login persists real `AuditLog` row with non-empty `ipAddress` string and sent `userAgent`.
+    - Asserts signup flow persists real `AuditLog` row with non-empty `ipAddress` string and sent `userAgent`.
+- **Monorepo Code Quality**:
+  - `pnpm turbo run lint typecheck build`: All 18 tasks PASS across 9 packages (0 errors).
+
+### 4. Release Gate & Next Steps
+
+1. **CI Quality Gates**:
+   - 6/6 verified green check runs on reviewed head `c7e336d` (GitGuardian Security Checks 08:15:38Z, Application Builds 08:16:33Z, Code Quality (Lint & Typecheck) 08:16:58Z, Tests 08:17:08Z, API E2E Tests 08:17:28Z, Docker Build & Smoke Test 08:24:03Z, all 2026-11-16 UTC). CI must be re-verified on the new head after this docs update.
+2. **Release Gate**:
+   - **Live Deployment**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending external infrastructure provisioning, live email delivery verification, live payment credentials, and disaster recovery rehearsals G18/G19).
+3. **Next Steps**:
+   - Branch `feat/audit-log-ip-ua` pushed; PR #75 open targeting `main`.
+   - Do NOT merge on this prompt alone.
+
+
 

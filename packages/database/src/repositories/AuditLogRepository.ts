@@ -53,6 +53,8 @@ export interface CreateAuditLogDto {
   targetType: string;
   targetId?: string;
   requestId?: string;
+  ipAddress?: string;
+  userAgent?: string;
   metadata?: Record<string, any>;
 }
 
@@ -72,6 +74,8 @@ export class AuditLogRepository {
         targetType: data.targetType,
         targetId: data.targetId,
         requestId: data.requestId,
+        ipAddress: data.ipAddress,
+        userAgent: data.userAgent,
         metadata: data.metadata || {},
       },
     });
