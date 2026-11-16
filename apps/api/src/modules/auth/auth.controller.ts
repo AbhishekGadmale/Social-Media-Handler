@@ -60,7 +60,9 @@ export class AuthController {
     }
 
     const requestId = (req as any).id;
-    return this.authService.signup(body, requestId);
+    const ipAddress = req.ip;
+    const userAgent = req.headers?.['user-agent'];
+    return this.authService.signup(body, requestId, { ipAddress, userAgent });
   }
 
   @Throttle({ default: RateLimitPolicies.auth })
@@ -79,7 +81,12 @@ export class AuthController {
     }
 
     const requestId = (req as any).id;
-    return this.authService.verifyEmail(body.token, requestId);
+    const ipAddress = req.ip;
+    const userAgent = req.headers?.['user-agent'];
+    return this.authService.verifyEmail(body.token, requestId, {
+      ipAddress,
+      userAgent,
+    });
   }
 
   @Throttle({ default: RateLimitPolicies.auth })
@@ -101,7 +108,12 @@ export class AuthController {
     }
 
     const requestId = (req as any).id;
-    return this.authService.resendVerification(body.email, requestId);
+    const ipAddress = req.ip;
+    const userAgent = req.headers?.['user-agent'];
+    return this.authService.resendVerification(body.email, requestId, {
+      ipAddress,
+      userAgent,
+    });
   }
 
   @Throttle({ default: RateLimitPolicies.auth })
@@ -120,7 +132,12 @@ export class AuthController {
     }
 
     const requestId = (req as any).id;
-    return this.authService.forgotPassword(body.email, requestId);
+    const ipAddress = req.ip;
+    const userAgent = req.headers?.['user-agent'];
+    return this.authService.forgotPassword(body.email, requestId, {
+      ipAddress,
+      userAgent,
+    });
   }
 
   @Throttle({ default: RateLimitPolicies.auth })
@@ -139,10 +156,13 @@ export class AuthController {
     }
 
     const requestId = (req as any).id;
+    const ipAddress = req.ip;
+    const userAgent = req.headers?.['user-agent'];
     return this.authService.resetPassword(
       body.token,
       body.newPassword,
       requestId,
+      { ipAddress, userAgent },
     );
   }
 
@@ -184,6 +204,8 @@ export class AuthController {
 
     const { email, password } = body;
     const requestId = (req as any).id;
+    const ipAddress = req.ip;
+    const userAgent = req.headers?.['user-agent'];
     let sessionId: string;
     let user: User;
 
@@ -198,6 +220,8 @@ export class AuthController {
         targetType: 'User',
         targetId: user.id,
         requestId,
+        ipAddress,
+        userAgent,
       });
     } catch (e) {
       if (e instanceof InvalidCredentialsException) {
@@ -206,6 +230,8 @@ export class AuthController {
           targetType: 'User',
           ...(e.resolvedUserId ? { targetId: e.resolvedUserId } : {}),
           requestId,
+          ipAddress,
+          userAgent,
           metadata: { reason: e.reason },
         });
       } else {
@@ -213,6 +239,8 @@ export class AuthController {
           action: AuditAction.AUTH_LOGIN_FAILED,
           targetType: 'User',
           requestId,
+          ipAddress,
+          userAgent,
           metadata: { reason: 'INTERNAL_ERROR' },
         });
       }
@@ -247,6 +275,8 @@ export class AuthController {
     const sessionId = req.cookies?.session as string | undefined;
     const requestId = (req as any).id;
     const user = (req as any).user as User | undefined;
+    const ipAddress = req.ip;
+    const userAgent = req.headers?.['user-agent'];
 
     if (sessionId) {
       await this.authService.logout(sessionId);
@@ -259,6 +289,8 @@ export class AuthController {
         targetType: 'User',
         targetId: user.id,
         requestId,
+        ipAddress,
+        userAgent,
       });
     }
 
@@ -279,6 +311,8 @@ export class AuthController {
     const { currentPassword, newPassword } = body;
     const sessionId = req.cookies?.session as string;
     const requestId = (req as any).id;
+    const ipAddress = req.ip;
+    const userAgent = req.headers?.['user-agent'];
 
     try {
       const result = await this.authService.changePassword(
@@ -294,6 +328,8 @@ export class AuthController {
         targetType: 'User',
         targetId: user.id,
         requestId,
+        ipAddress,
+        userAgent,
         metadata: result?.sessionCleanupDeferred
           ? { sessionCleanupDeferred: true }
           : undefined,
@@ -316,6 +352,8 @@ export class AuthController {
         targetType: 'User',
         targetId: user.id,
         requestId,
+        ipAddress,
+        userAgent,
         metadata: {
           reason:
             e instanceof InvalidCredentialsException
@@ -339,6 +377,8 @@ export class AuthController {
     @Res({ passthrough: true }) res: Response,
   ) {
     const requestId = (req as any).id;
+    const ipAddress = req.ip;
+    const userAgent = req.headers?.['user-agent'];
 
     await this.authService.revokeAllUserSessions(user.id);
 
@@ -348,6 +388,8 @@ export class AuthController {
       targetType: 'User',
       targetId: user.id,
       requestId,
+      ipAddress,
+      userAgent,
     });
 
     this.clearSessionCookies(req, res);

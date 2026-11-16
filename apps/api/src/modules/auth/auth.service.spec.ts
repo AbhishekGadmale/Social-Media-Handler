@@ -486,6 +486,74 @@ describe('AuthService', () => {
         );
       });
     });
+
+    it('signup success carries requestContext ipAddress and userAgent in audit record', async () => {
+      userRepoMock.findByEmail.mockResolvedValueOnce(null);
+      vi.mocked(argon2.hash).mockResolvedValueOnce('$argon2id$hashed');
+      userRepoMock.createWithTenantTransaction.mockResolvedValueOnce({
+        user: { id: 'u-ctx-1', email: 'ctx@example.com' },
+        organization: { id: 'org-ctx-1' },
+        workspace: { id: 'ws-ctx-1' },
+      });
+
+      const requestContext = {
+        ipAddress: '198.51.100.42',
+        userAgent: 'AgencyOS-TestClient/1.0',
+      };
+
+      await service.signup(
+        {
+          name: 'Context User',
+          email: 'ctx@example.com',
+          password: 'Password123!',
+          termsAccepted: true,
+        },
+        'req-ctx-signup',
+        requestContext,
+      );
+
+      expect(auditServiceMock.logActionBestEffort).toHaveBeenCalledWith({
+        action: AuditAction.AUTH_SIGNUP_SUCCEEDED,
+        actorId: 'u-ctx-1',
+        targetType: 'User',
+        targetId: 'u-ctx-1',
+        requestId: 'req-ctx-signup',
+        ipAddress: '198.51.100.42',
+        userAgent: 'AgencyOS-TestClient/1.0',
+      });
+    });
+
+    it('duplicate email signup carries requestContext ipAddress and userAgent in audit record', async () => {
+      userRepoMock.findByEmail.mockResolvedValueOnce({
+        id: 'existing-u-1',
+        email: 'existing@example.com',
+      });
+      vi.mocked(argon2.hash).mockResolvedValueOnce('$argon2id$dummyhash');
+
+      const requestContext = {
+        ipAddress: '198.51.100.43',
+        userAgent: 'AgencyOS-DuplicateClient/2.0',
+      };
+
+      await service.signup(
+        {
+          name: 'Duplicate User',
+          email: 'existing@example.com',
+          password: 'Password123!',
+          termsAccepted: true,
+        },
+        'req-ctx-dup',
+        requestContext,
+      );
+
+      expect(auditServiceMock.logActionBestEffort).toHaveBeenCalledWith({
+        action: AuditAction.AUTH_SIGNUP_DUPLICATE_EMAIL,
+        targetType: 'User',
+        requestId: 'req-ctx-dup',
+        ipAddress: '198.51.100.43',
+        userAgent: 'AgencyOS-DuplicateClient/2.0',
+      });
+    });
   });
 
   describe('verifyEmail', () => {
@@ -1497,6 +1565,45 @@ describe('AuthService', () => {
         requestId: 'req-rp-1',
       });
       expect(result).toEqual({ message: 'Password reset successfully.' });
+    });
+
+    it('resetPassword success carries requestContext ipAddress and userAgent in audit record', async () => {
+      const mockUser = {
+        id: 'u-rp-ctx',
+        hashedPassword: '$argon2id$hashedOld',
+      };
+      passwordResetTokenRepoMock.consumeToken.mockResolvedValueOnce({
+        token: { id: 'prt-ctx' },
+        user: mockUser,
+      });
+      vi.mocked(argon2.verify).mockResolvedValueOnce(false);
+      vi.mocked(argon2.hash).mockResolvedValueOnce('$argon2id$hashedNew');
+      userRepoMock.updatePasswordAndIncrementEpoch.mockResolvedValueOnce({
+        id: 'u-rp-ctx',
+        securityEpoch: 2,
+      });
+
+      const requestContext = {
+        ipAddress: '198.51.100.44',
+        userAgent: 'AgencyOS-ResetClient/3.0',
+      };
+
+      await service.resetPassword(
+        'valid-token-ctx',
+        'ValidNewPassword123!',
+        'req-rp-ctx',
+        requestContext,
+      );
+
+      expect(auditServiceMock.logActionBestEffort).toHaveBeenCalledWith({
+        action: AuditAction.AUTH_PASSWORD_RESET_SUCCEEDED,
+        actorId: 'u-rp-ctx',
+        targetType: 'User',
+        targetId: 'u-rp-ctx',
+        requestId: 'req-rp-ctx',
+        ipAddress: '198.51.100.44',
+        userAgent: 'AgencyOS-ResetClient/3.0',
+      });
     });
 
     it('rejects on password policy failure after token consume and does not update password', async () => {

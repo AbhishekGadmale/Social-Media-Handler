@@ -1568,4 +1568,132 @@ describe('AuthController (e2e)', () => {
       }
     });
   });
+
+  describe('Audit Log IP and User-Agent Capture (e2e)', () => {
+    const testUserAgent = 'AgencyOS-E2E-Test/1.0';
+
+    it('successful login produces an AUTH_LOGIN_SUCCEEDED row with matching userAgent and non-empty ipAddress', async () => {
+      const res = await request(app.getHttpServer())
+        .post('/api/v1/auth/login')
+        .set('User-Agent', testUserAgent)
+        .send({ email: testUser.email, password: 'CorrectPassword123!' });
+
+      expect(res.status).toBe(200);
+
+      let auditLog = await prisma.auditLog.findFirst({
+        where: { actorId: testUser.id, action: 'AUTH_LOGIN_SUCCEEDED' },
+        orderBy: { createdAt: 'desc' },
+      });
+      for (let i = 0; i < 10 && !auditLog; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        auditLog = await prisma.auditLog.findFirst({
+          where: { actorId: testUser.id, action: 'AUTH_LOGIN_SUCCEEDED' },
+          orderBy: { createdAt: 'desc' },
+        });
+      }
+
+      expect(auditLog).toBeDefined();
+      expect(auditLog?.userAgent).toBe(testUserAgent);
+      expect(typeof auditLog?.ipAddress).toBe('string');
+      expect(auditLog?.ipAddress!.length).toBeGreaterThan(0);
+    });
+
+    it('failed login produces an AUTH_LOGIN_FAILED row with matching userAgent and non-empty ipAddress', async () => {
+      const res = await request(app.getHttpServer())
+        .post('/api/v1/auth/login')
+        .set('User-Agent', testUserAgent)
+        .send({
+          email: testUser.email,
+          password: 'WrongPassword123!-audit',
+        });
+
+      expect(res.status).toBe(401);
+      const requestId = res.body?.error?.requestId;
+
+      let auditLog = await prisma.auditLog.findFirst({
+        where: requestId
+          ? { requestId, action: 'AUTH_LOGIN_FAILED' }
+          : { targetId: testUser.id, action: 'AUTH_LOGIN_FAILED' },
+        orderBy: { createdAt: 'desc' },
+      });
+      for (let i = 0; i < 10 && !auditLog; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        auditLog = await prisma.auditLog.findFirst({
+          where: requestId
+            ? { requestId, action: 'AUTH_LOGIN_FAILED' }
+            : { targetId: testUser.id, action: 'AUTH_LOGIN_FAILED' },
+          orderBy: { createdAt: 'desc' },
+        });
+      }
+
+      expect(auditLog).toBeDefined();
+      expect(auditLog?.userAgent).toBe(testUserAgent);
+      expect(typeof auditLog?.ipAddress).toBe('string');
+      expect(auditLog?.ipAddress!.length).toBeGreaterThan(0);
+    });
+
+    it('signup produces an AUTH_SIGNUP_SUCCEEDED row with matching userAgent and non-empty ipAddress', async () => {
+      const email = `audit-ip-ua-${generateId()}@example.com`;
+      const res = await request(app.getHttpServer())
+        .post('/api/v1/auth/signup')
+        .set('User-Agent', testUserAgent)
+        .send({
+          name: 'Audit Signup User',
+          email,
+          password: 'CompliantPassword123!',
+          termsAccepted: true,
+        });
+
+      expect(res.status).toBe(201);
+
+      const createdUser = await prisma.user.findUnique({ where: { email } });
+      expect(createdUser).toBeDefined();
+
+      let auditLog = await prisma.auditLog.findFirst({
+        where: { actorId: createdUser!.id, action: 'AUTH_SIGNUP_SUCCEEDED' },
+        orderBy: { createdAt: 'desc' },
+      });
+      for (let i = 0; i < 10 && !auditLog; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        auditLog = await prisma.auditLog.findFirst({
+          where: { actorId: createdUser!.id, action: 'AUTH_SIGNUP_SUCCEEDED' },
+          orderBy: { createdAt: 'desc' },
+        });
+      }
+
+      expect(auditLog).toBeDefined();
+      expect(auditLog?.userAgent).toBe(testUserAgent);
+      expect(typeof auditLog?.ipAddress).toBe('string');
+      expect(auditLog?.ipAddress!.length).toBeGreaterThan(0);
+
+      // Cleanup user
+      if (createdUser) {
+        const members = await prisma.workspaceMember.findMany({
+          where: { userId: createdUser.id },
+        });
+        const workspaceIds = members.map((m: any) => m.workspaceId);
+        const workspaces = await prisma.workspace.findMany({
+          where: { id: { in: workspaceIds } },
+        });
+        const orgIds = workspaces.map((w: any) => w.organizationId);
+
+        await prisma.emailVerificationToken.deleteMany({
+          where: { userId: createdUser.id },
+        });
+        await prisma.workspaceMember.deleteMany({
+          where: { userId: createdUser.id },
+        });
+        await prisma.workspace.deleteMany({
+          where: { id: { in: workspaceIds } },
+        });
+        await prisma.organization.deleteMany({
+          where: { id: { in: orgIds } },
+        });
+        await prisma.auditLog.deleteMany({
+          where: { actorId: createdUser.id },
+        });
+        await prisma.user.deleteMany({ where: { id: createdUser.id } });
+      }
+    });
+  });
 });

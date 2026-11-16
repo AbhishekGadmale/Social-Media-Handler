@@ -80,6 +80,64 @@ describe('AuditLogRepository', () => {
     expect(result).toEqual({ id: 'audit-log-tx' });
   });
 
+  it('persists ipAddress and userAgent when provided', async () => {
+    const data = {
+      workspaceId: 'ws-ip-ua',
+      actorId: 'user-ip-ua',
+      action: AuditAction.AUTH_LOGIN_SUCCEEDED,
+      targetType: 'User',
+      targetId: 'user-ip-ua',
+      requestId: 'req-ip-ua',
+      ipAddress: '192.168.1.100',
+      userAgent: 'TestBrowser/1.0',
+      metadata: { source: 'test' },
+    };
+
+    await repo.create(data);
+
+    expect(prismaMock.auditLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        id: expect.any(String),
+        workspaceId: 'ws-ip-ua',
+        actorId: 'user-ip-ua',
+        action: AuditAction.AUTH_LOGIN_SUCCEEDED,
+        targetType: 'User',
+        targetId: 'user-ip-ua',
+        requestId: 'req-ip-ua',
+        ipAddress: '192.168.1.100',
+        userAgent: 'TestBrowser/1.0',
+        metadata: { source: 'test' },
+      }),
+    });
+  });
+
+  it('persists undefined ipAddress and userAgent when omitted, preserving existing behavior', async () => {
+    const data = {
+      workspaceId: 'ws-no-ip-ua',
+      actorId: 'user-no-ip-ua',
+      action: AuditAction.AUTH_LOGIN_FAILED,
+      targetType: 'User',
+      targetId: 'user-no-ip-ua',
+      requestId: 'req-no-ip-ua',
+    };
+
+    await repo.create(data);
+
+    expect(prismaMock.auditLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        id: expect.any(String),
+        workspaceId: 'ws-no-ip-ua',
+        actorId: 'user-no-ip-ua',
+        action: AuditAction.AUTH_LOGIN_FAILED,
+        targetType: 'User',
+        targetId: 'user-no-ip-ua',
+        requestId: 'req-no-ip-ua',
+        ipAddress: undefined,
+        userAgent: undefined,
+      }),
+    });
+  });
+
   it('queries audit logs by workspace with default pagination', async () => {
     await repo.findByWorkspace('ws-1');
 

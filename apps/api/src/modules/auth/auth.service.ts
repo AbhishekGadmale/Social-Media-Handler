@@ -75,6 +75,7 @@ export class AuthService {
   async signup(
     dto: SignupDto,
     requestId?: string,
+    requestContext?: { ipAddress?: string; userAgent?: string },
   ): Promise<{ message: string }> {
     const normalizedEmail = dto.email.trim().toLowerCase();
 
@@ -87,6 +88,8 @@ export class AuthService {
           action: AuditAction.AUTH_SIGNUP_DUPLICATE_EMAIL,
           targetType: 'User',
           requestId,
+          ipAddress: requestContext?.ipAddress,
+          userAgent: requestContext?.userAgent,
         });
       }
       this.emailDeliveryService
@@ -144,6 +147,8 @@ export class AuthService {
           targetType: 'User',
           targetId: tenantResult.user.id,
           requestId,
+          ipAddress: requestContext?.ipAddress,
+          userAgent: requestContext?.userAgent,
         });
       }
 
@@ -166,6 +171,8 @@ export class AuthService {
               action: AuditAction.AUTH_SIGNUP_DUPLICATE_EMAIL,
               targetType: 'User',
               requestId,
+              ipAddress: requestContext?.ipAddress,
+              userAgent: requestContext?.userAgent,
             });
           }
           this.emailDeliveryService
@@ -189,6 +196,7 @@ export class AuthService {
   async verifyEmail(
     rawToken: string,
     requestId?: string,
+    requestContext?: { ipAddress?: string; userAgent?: string },
   ): Promise<{ message: string }> {
     if (!rawToken || typeof rawToken !== 'string') {
       throw new BadRequestException('Invalid or expired verification token');
@@ -206,6 +214,8 @@ export class AuthService {
           action: AuditAction.AUTH_EMAIL_VERIFICATION_FAILED,
           targetType: 'User',
           requestId,
+          ipAddress: requestContext?.ipAddress,
+          userAgent: requestContext?.userAgent,
         });
       }
       throw new BadRequestException('Invalid or expired verification token');
@@ -218,6 +228,8 @@ export class AuthService {
         targetType: 'User',
         targetId: result.user.id,
         requestId,
+        ipAddress: requestContext?.ipAddress,
+        userAgent: requestContext?.userAgent,
       });
     }
 
@@ -232,6 +244,7 @@ export class AuthService {
   async resendVerification(
     email: string,
     requestId?: string,
+    requestContext?: { ipAddress?: string; userAgent?: string },
   ): Promise<{ message: string }> {
     const genericResponse = {
       message:
@@ -252,6 +265,8 @@ export class AuthService {
           action: AuditAction.AUTH_EMAIL_VERIFICATION_RESENT,
           targetType: 'User',
           requestId,
+          ipAddress: requestContext?.ipAddress,
+          userAgent: requestContext?.userAgent,
         });
       }
       return genericResponse;
@@ -266,6 +281,8 @@ export class AuthService {
           targetType: 'User',
           targetId: user.id,
           requestId,
+          ipAddress: requestContext?.ipAddress,
+          userAgent: requestContext?.userAgent,
         });
       }
       return genericResponse;
@@ -296,6 +313,8 @@ export class AuthService {
         targetType: 'User',
         targetId: user.id,
         requestId,
+        ipAddress: requestContext?.ipAddress,
+        userAgent: requestContext?.userAgent,
       });
     }
 
@@ -310,6 +329,7 @@ export class AuthService {
   async forgotPassword(
     email: string,
     requestId?: string,
+    requestContext?: { ipAddress?: string; userAgent?: string },
   ): Promise<{ message: string }> {
     const genericResponse = {
       message:
@@ -330,6 +350,8 @@ export class AuthService {
           action: AuditAction.AUTH_PASSWORD_RESET_REQUESTED,
           targetType: 'User',
           requestId,
+          ipAddress: requestContext?.ipAddress,
+          userAgent: requestContext?.userAgent,
         });
       }
       return genericResponse;
@@ -360,6 +382,8 @@ export class AuthService {
         action: AuditAction.AUTH_PASSWORD_RESET_REQUESTED,
         targetType: 'User',
         requestId,
+        ipAddress: requestContext?.ipAddress,
+        userAgent: requestContext?.userAgent,
       });
     }
 
@@ -375,6 +399,7 @@ export class AuthService {
     token: string,
     newPasswordPlain: string,
     requestId?: string,
+    requestContext?: { ipAddress?: string; userAgent?: string },
   ): Promise<{ message: string }> {
     const result = await this.passwordResetTokenRepo.consumeToken(token);
     if (!result) {
@@ -409,6 +434,8 @@ export class AuthService {
         targetType: 'User',
         targetId: result.user.id,
         requestId,
+        ipAddress: requestContext?.ipAddress,
+        userAgent: requestContext?.userAgent,
       });
     }
 

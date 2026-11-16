@@ -107,4 +107,38 @@ describe('AuditService', () => {
       targetType: 'User',
     });
   });
+
+  it('awaited logAction: forwards ipAddress and userAgent to repository unchanged', async () => {
+    mockAuditRepo.create.mockResolvedValueOnce({ id: 'audit-ip-ua-1' });
+
+    const dto = {
+      action: AuditAction.AUTH_SIGNUP_SUCCEEDED,
+      actorId: 'user-ip-1',
+      targetType: 'User',
+      targetId: 'user-ip-1',
+      requestId: 'req-ip-1',
+      ipAddress: '203.0.113.195',
+      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+    };
+
+    await service.logAction(dto);
+
+    expect(mockAuditRepo.create).toHaveBeenCalledWith(dto);
+  });
+
+  it('best-effort logActionBestEffort: forwards ipAddress and userAgent to repository unchanged', async () => {
+    mockAuditRepo.create.mockResolvedValueOnce({ id: 'audit-ip-ua-2' });
+
+    const dto = {
+      action: AuditAction.AUTH_LOGIN_FAILED,
+      targetType: 'User',
+      requestId: 'req-ip-2',
+      ipAddress: '198.51.100.22',
+      userAgent: 'CustomAgent/2.0',
+    };
+
+    service.logActionBestEffort(dto);
+
+    expect(mockAuditRepo.create).toHaveBeenCalledWith(dto);
+  });
 });

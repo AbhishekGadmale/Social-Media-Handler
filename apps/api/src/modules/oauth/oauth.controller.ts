@@ -78,6 +78,8 @@ export class OAuthController {
       targetType: 'SocialProvider',
       targetId: provider,
       requestId: getOrCreateCorrelationId(req),
+      ipAddress: req.ip,
+      userAgent: req.headers?.['user-agent'],
       metadata: { provider },
     });
 
@@ -111,6 +113,8 @@ export class OAuthController {
         targetType: 'SocialProvider',
         targetId: provider,
         requestId,
+        ipAddress: req.ip,
+        userAgent: req.headers?.['user-agent'],
         metadata: { provider, reason: 'OAUTH_PROVIDER_DENIED' },
       });
       const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
@@ -131,6 +135,8 @@ export class OAuthController {
         targetType: 'SocialProvider',
         targetId: provider,
         requestId,
+        ipAddress: req.ip,
+        userAgent: req.headers?.['user-agent'],
         metadata: {
           provider,
           reason,
@@ -171,6 +177,8 @@ export class OAuthController {
         targetType: 'SocialAccount',
         targetId: socialAccountId,
         requestId,
+        ipAddress: req.ip,
+        userAgent: req.headers?.['user-agent'],
         metadata: { provider },
       });
 
@@ -194,6 +202,8 @@ export class OAuthController {
         targetType: 'SocialProvider',
         targetId: provider,
         requestId,
+        ipAddress: req.ip,
+        userAgent: req.headers?.['user-agent'],
         metadata: {
           provider,
           reason: 'OAUTH_CALLBACK_FAILED',
@@ -266,6 +276,8 @@ export class OAuthController {
         targetType: 'SocialAccount',
         targetId: res.accountId,
         requestId,
+        ipAddress: req.ip,
+        userAgent: req.headers?.['user-agent'],
         metadata: {
           provider: res.provider,
           discoveryId,

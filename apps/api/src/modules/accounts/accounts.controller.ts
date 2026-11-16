@@ -73,6 +73,8 @@ export class AccountsController {
       targetType: 'SocialAccount',
       targetId: accountId,
       requestId: (req as any).id,
+      ipAddress: req.ip,
+      userAgent: req.headers?.['user-agent'],
       metadata: { jobId: job.id },
     });
 
