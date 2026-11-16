@@ -6,6 +6,8 @@ export interface SessionData {
   createdAt: string;
   expiresAt: string;
   securityEpoch?: number;
+  ipAddress?: string;
+  userAgent?: string;
 }
 
 /**
@@ -192,9 +194,15 @@ export class SessionManager {
    * Atomically creates a new session in Redis and registers it in the user's session index.
    * Linearization point: atomic execution of CREATE_SESSION_SCRIPT in Redis.
    * @param userId The ID of the authenticated user.
+   * @param securityEpoch Optional security epoch for invalidating stale in-flight tokens.
+   * @param metadata Optional device metadata (ipAddress, userAgent) stored with session.
    * @returns The newly generated session ID.
    */
-  async createSession(userId: string, securityEpoch?: number): Promise<string> {
+  async createSession(
+    userId: string,
+    securityEpoch?: number,
+    metadata?: { ipAddress?: string; userAgent?: string },
+  ): Promise<string> {
     const sessionId = generateId();
     const now = new Date();
     const expiresAt = new Date(now.getTime() + this.SESSION_TTL_SECONDS * 1000);
@@ -204,6 +212,8 @@ export class SessionManager {
       createdAt: now.toISOString(),
       expiresAt: expiresAt.toISOString(),
       ...(typeof securityEpoch === 'number' ? { securityEpoch } : {}),
+      ...(metadata?.ipAddress && metadata.ipAddress.trim() ? { ipAddress: metadata.ipAddress } : {}),
+      ...(metadata?.userAgent && metadata.userAgent.trim() ? { userAgent: metadata.userAgent } : {}),
     };
 
     const sessionKey = `${this.SESSION_PREFIX}${sessionId}`;
@@ -260,6 +270,29 @@ export class SessionManager {
         return null;
       }
       throw new Error(`Failed to validate session in Redis: ${err.message}`);
+    }
+  }
+
+  /**
+   * Pure read-only helper to fetch session data without modifying TTL or running Lua scripts.
+   * Does NOT refresh or slide the TTL, and does NOT execute Lua scripts.
+   * @param sessionId The session ID.
+   * @returns SessionData if found and valid JSON, or null otherwise.
+   */
+  async getSessionData(sessionId: string): Promise<SessionData | null> {
+    const sessionKey = `${this.SESSION_PREFIX}${sessionId}`;
+
+    try {
+      const rawData = await this.redis.get(sessionKey);
+      if (!rawData) {
+        return null;
+      }
+      return JSON.parse(rawData) as SessionData;
+    } catch (err: any) {
+      if (err instanceof SyntaxError) {
+        return null;
+      }
+      throw new Error(`Failed to get session data from Redis: ${err.message}`);
     }
   }
 
