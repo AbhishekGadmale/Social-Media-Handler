@@ -4213,7 +4213,7 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
 
 ### 1. Summary & Motivation
 
-- **Status**: **IN REVIEW** (Branch `feat/turnstile-signup`, PR pending independent review)
+- **Status**: **IN REVIEW** (Branch `feat/turnstile-signup`, PR #76)
 - **Origin**: `docs/auth-production-readiness-report.md` (PR #62), Phase B item 2: "Add Cloudflare Turnstile invisible widget to apps/web/src/app/signup/page.tsx. Validate turnstile token on backend AuthController.signup."
 - **Scope & Objectives**:
   - Implement Cloudflare Turnstile bot resistance on user signup to prevent automated credential stuffing and programmatic account creation abuse.
@@ -4307,12 +4307,11 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
 ### 4. Release Gate & Next Steps
 
 1. **CI Quality Gates**:
-   - Branch `feat/turnstile-signup` CI verification pending PR push and GitHub Actions execution.
+   - 6/6 verified green check runs on head `9380a814a1cd441ab47d12de95c7d5e384c93ca3` (`9380a81`) (GitGuardian Security Checks 10:54:50Z, Application Builds 10:54:59Z, Code Quality (Lint & Typecheck) 10:55:11Z, Tests 10:55:42Z, API E2E Tests 10:55:43Z, Docker Build & Smoke Test 11:02:19Z, all 2026-11-16 UTC). CI must be re-verified on the new head after this docs update.
 2. **Release Gate**:
    - **Live Deployment**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending external infrastructure provisioning, live email delivery verification, live payment credentials, and disaster recovery rehearsals G18/G19).
 3. **Next Steps**:
-   - Push branch `feat/turnstile-signup` and open PR targeting `main`.
-   - Wait for 6/6 CI checks to complete on PR HEAD.
+   - Branch `feat/turnstile-signup` pushed; PR #76 open targeting `main`.
    - Do NOT merge on this prompt alone.
 
 
