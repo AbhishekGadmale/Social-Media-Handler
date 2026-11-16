@@ -4022,7 +4022,7 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
 1. **`AuthService.signup(dto)`**:
    - Dispatched in duplicate account branches:
      - Initial lookup branch (`if (existingUser)`).
-     - Database collision catch branch (`if (isUniqueConstraintViolation(err))`).
+     - Database collision catch branch (Prisma P2002 unique-constraint error on the email target: `error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002'` where `error.meta.target` contains `'email'`).
    - Triggered immediately after `AUTH_SIGNUP_DUPLICATE_EMAIL` audit logging and before returning `{ message: 'Registration request received.' }`.
 2. **`AuthService.login(email, passwordPlain)`**:
    - Dispatched strictly when `updated.failedLoginAttempts >= MAX_FAILED_LOGIN_ATTEMPTS` (5).
