@@ -35,6 +35,7 @@ import { RateLimitPolicies } from '../core/rate-limit.policies';
 
 import { AuditAction } from '@agency-os/database';
 import { AuditService } from '../core/audit.service';
+import { TurnstileService } from './turnstile.service';
 
 @Controller('v1/auth')
 export class AuthController {
@@ -42,6 +43,7 @@ export class AuthController {
     private readonly authService: AuthService,
     private readonly memberRepo: WorkspaceMemberRepository,
     private readonly auditService: AuditService,
+    private readonly turnstileService: TurnstileService,
   ) {}
 
   @Throttle({ default: RateLimitPolicies.auth })
@@ -56,6 +58,16 @@ export class AuthController {
     if (isProduction && !isSecureRequest && !allowInsecureHttp) {
       throw new BadRequestException(
         'HTTPS is required for registration in production environments. Please configure TLS on your reverse proxy or custom domain.',
+      );
+    }
+
+    const turnstileOk = await this.turnstileService.verify(
+      body.turnstileToken,
+      req.ip,
+    );
+    if (!turnstileOk) {
+      throw new BadRequestException(
+        'Bot verification failed. Please try again.',
       );
     }
 

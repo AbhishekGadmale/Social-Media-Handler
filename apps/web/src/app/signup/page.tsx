@@ -1,8 +1,26 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { api, ApiError } from '../../lib/api/client';
+
+interface TurnstileInstance {
+  render: (
+    container: HTMLElement,
+    options: {
+      sitekey: string;
+      callback: (token: string) => void;
+      'expired-callback'?: () => void;
+      'error-callback'?: () => void;
+    },
+  ) => string;
+  remove?: (widgetId: string) => void;
+}
+
+const getTurnstile = (): TurnstileInstance | undefined => {
+  if (typeof window === 'undefined') return undefined;
+  return (window as unknown as { turnstile?: TurnstileInstance }).turnstile;
+};
 
 export default function SignupPage() {
   const [name, setName] = useState('');
@@ -12,6 +30,10 @@ export default function SignupPage() {
   const [organizationName, setOrganizationName] = useState('');
   const [workspaceName, setWorkspaceName] = useState('');
   const [termsAccepted, setTermsAccepted] = useState(false);
+  const [turnstileToken, setTurnstileToken] = useState('');
+
+  const turnstileContainerRef = useRef<HTMLDivElement>(null);
+  const turnstileSiteKey = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY;
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -22,6 +44,73 @@ export default function SignupPage() {
   const [resendLoading, setResendLoading] = useState(false);
   const [resendNotice, setResendNotice] = useState<string | null>(null);
   const [resendError, setResendError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!turnstileSiteKey || !turnstileContainerRef.current) {
+      return;
+    }
+
+    let widgetId: string | null = null;
+    let isCancelled = false;
+
+    const renderWidget = () => {
+      const turnstile = getTurnstile();
+      if (isCancelled || !turnstileContainerRef.current || !turnstile) {
+        return;
+      }
+      try {
+        if (widgetId) return;
+        widgetId = turnstile.render(turnstileContainerRef.current, {
+          sitekey: turnstileSiteKey,
+          callback: (token: string) => {
+            if (!isCancelled) setTurnstileToken(token);
+          },
+          'expired-callback': () => {
+            if (!isCancelled) setTurnstileToken('');
+          },
+          'error-callback': () => {
+            if (!isCancelled) setTurnstileToken('');
+          },
+        });
+      } catch {
+        // Safe catch for render errors
+      }
+    };
+
+    if (getTurnstile()) {
+      renderWidget();
+    } else {
+      const existingScript = document.getElementById(
+        'cf-turnstile-script',
+      ) as HTMLScriptElement | null;
+      if (!existingScript) {
+        const script = document.createElement('script');
+        script.id = 'cf-turnstile-script';
+        script.src =
+          'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
+        script.async = true;
+        script.defer = true;
+        script.onload = () => renderWidget();
+        document.head.appendChild(script);
+      } else {
+        existingScript.addEventListener('load', renderWidget);
+      }
+    }
+
+    return () => {
+      isCancelled = true;
+      if (widgetId) {
+        const turnstile = getTurnstile();
+        if (turnstile?.remove) {
+          try {
+            turnstile.remove(widgetId);
+          } catch {
+            // ignore
+          }
+        }
+      }
+    };
+  }, [turnstileSiteKey]);
 
   const validate = (): string | null => {
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -63,6 +152,7 @@ export default function SignupPage() {
         termsAccepted: boolean;
         organizationName?: string;
         workspaceName?: string;
+        turnstileToken?: string;
       } = {
         name: name.trim(),
         email: email.trim(),
@@ -75,6 +165,9 @@ export default function SignupPage() {
       }
       if (workspaceName.trim()) {
         payload.workspaceName = workspaceName.trim();
+      }
+      if (turnstileToken && turnstileToken.trim()) {
+        payload.turnstileToken = turnstileToken.trim();
       }
 
       await api.post('auth/signup', payload);
@@ -394,6 +487,14 @@ export default function SignupPage() {
               </label>
             </div>
           </div>
+
+          {Boolean(turnstileSiteKey) && (
+            <div
+              ref={turnstileContainerRef}
+              data-testid="turnstile-container"
+              className="flex justify-center"
+            />
+          )}
 
           {error && (
             <div

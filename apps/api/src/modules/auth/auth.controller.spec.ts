@@ -3,6 +3,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { BadRequestException } from '@nestjs/common';
 import { AuthController } from './auth.controller';
 import { AuthService, InvalidCredentialsException } from './auth.service';
+import { TurnstileService } from './turnstile.service';
 import { WorkspaceMemberRepository, AuditAction } from '@agency-os/database';
 import { AuditService } from '../core/audit.service';
 import { AuthGuard } from './guards/auth.guard';
@@ -13,6 +14,7 @@ describe('AuthController', () => {
   let authServiceMock: any;
   let memberRepoMock: any;
   let auditServiceMock: any;
+  let turnstileServiceMock: any;
   let reqMock: any;
   let resMock: any;
 
@@ -38,6 +40,10 @@ describe('AuthController', () => {
       logActionBestEffort: vi.fn(),
     };
 
+    turnstileServiceMock = {
+      verify: vi.fn().mockResolvedValue(true),
+    };
+
     resMock = {
       cookie: vi.fn(),
       clearCookie: vi.fn(),
@@ -55,6 +61,7 @@ describe('AuthController', () => {
         { provide: AuthService, useValue: authServiceMock },
         { provide: WorkspaceMemberRepository, useValue: memberRepoMock },
         { provide: AuditService, useValue: auditServiceMock },
+        { provide: TurnstileService, useValue: turnstileServiceMock },
       ],
     })
       .overrideGuard(AuthGuard)
@@ -145,6 +152,59 @@ describe('AuthController', () => {
 
       process.env.NODE_ENV = origEnv;
       if (origInsecure) process.env.ALLOW_INSECURE_HTTP_AUTH = origInsecure;
+    });
+
+    it('throws BadRequestException when Turnstile verification fails and does not call authService.signup', async () => {
+      turnstileServiceMock.verify.mockResolvedValueOnce(false);
+
+      const body = {
+        name: 'Bot User',
+        email: 'bot@example.com',
+        password: 'Password123!',
+        termsAccepted: true,
+        turnstileToken: 'invalid-bot-token',
+      };
+
+      await expect(controller.signup(body, reqMock as Request)).rejects.toThrow(
+        new BadRequestException('Bot verification failed. Please try again.'),
+      );
+
+      expect(turnstileServiceMock.verify).toHaveBeenCalledWith(
+        'invalid-bot-token',
+        reqMock.ip,
+      );
+      expect(authServiceMock.signup).not.toHaveBeenCalled();
+    });
+
+    it('delegates to authService.signup when Turnstile verification succeeds', async () => {
+      turnstileServiceMock.verify.mockResolvedValueOnce(true);
+      authServiceMock.signup.mockResolvedValueOnce({
+        message: 'Registration request received.',
+      });
+
+      const body = {
+        name: 'Valid User',
+        email: 'valid@example.com',
+        password: 'Password123!',
+        termsAccepted: true,
+        turnstileToken: 'valid-token',
+      };
+
+      const result = await controller.signup(body, reqMock as Request);
+
+      expect(turnstileServiceMock.verify).toHaveBeenCalledWith(
+        'valid-token',
+        reqMock.ip,
+      );
+      expect(authServiceMock.signup).toHaveBeenCalledWith(
+        body,
+        'req-auth-123',
+        {
+          ipAddress: undefined,
+          userAgent: undefined,
+        },
+      );
+      expect(result).toEqual({ message: 'Registration request received.' });
     });
   });
 
