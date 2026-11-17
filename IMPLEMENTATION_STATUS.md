@@ -4614,7 +4614,7 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
 
 ### 1. Summary & Motivation
 
-- **Status**: **IN PROGRESS** (Branch `feat/landing-page`)
+- **Status**: **IN PROGRESS** (PR #79, branch `feat/landing-page`, reviewed head `fd291ad78adb60b117a6f3eff90ecd6ba38b3987`)
 - **Origin**: GTM decision 2026-10-09 (risk-reversal leads; Razorpay activation and platform-review needs). Previously, `apps/web/src/app/page.tsx` was a bare `redirect('/dashboard')` with no public face to the product. A public, production-grade landing page is essential for three critical requirements:
   1. **Razorpay Activation**: Payment gateway compliance requires a live, operational website clearly describing the product, operating entity, pricing, and policy links.
   2. **Platform App Reviews**: Meta (Facebook/Instagram) and Google/YouTube reviewer compliance require a public-facing domain outlining app functionality and data practices.
@@ -4635,9 +4635,9 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
     '/',
     '/login',
     '/signup',
+    '/verify-email',
     '/forgot-password',
     '/reset-password',
-    '/verify-email',
     '/terms',
     '/privacy',
     '/refund-cancellation',
@@ -4673,7 +4673,7 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
 #### C. Section Ordering & Page Structure
 1. **Header / Navigation**: Brand wordmark `Agency OS`, secondary link `Sign in` (`/login`), and primary CTA `Start free trial` (`/signup`).
 2. **Hero Section**:
-   - Headline: `Social media management for agencies and small teams — plan, publish, and measure client accounts from one workspace.`
+   - Headline: `Social media management for agencies and small teams — plan, publish, and measure client accounts from one workspace`
    - Supporting copy emphasizing workflow efficiency and account isolation.
    - Primary CTA `Start 14-day free trial` (`/signup`), secondary CTA `Sign in` (`/login`).
    - Reassurance microcopy: `No credit card required.`.
@@ -4719,12 +4719,11 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
 ### 4. Release Gate & Next Steps
 
 1. **CI Quality Gates**:
-   - Verification pending branch push and GitHub Actions execution for PR #79.
+   - CI 6/6 green on reviewed head `fd291ad78adb60b117a6f3eff90ecd6ba38b3987`: GitGuardian Security Checks 15:48:20Z, Application Builds 15:49:15Z, Code Quality (Lint & Typecheck) 15:49:28Z, Tests 15:50:05Z, Docker Build & Smoke Test 15:56:05Z, API E2E Tests 16:04:41Z (all 2026-11-17 UTC). Note: CI must be re-verified on the new head after this docs-only fix.
 2. **Release Gate**:
    - **Live Deployment**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending external infrastructure provisioning, live email delivery verification, live payment credentials, and disaster recovery rehearsals G18/G19).
 3. **Next Steps**:
-   - Push branch `feat/landing-page` and open PR #79 targeting `main`.
-   - Monitor CI until all 6 workflows complete green.
+   - PR #79 is open against `main` at the reviewed head with CI 6/6 green. Next step is the docs-fix re-review, then merge by the owner.
    - Do NOT merge on this prompt alone.
 
 

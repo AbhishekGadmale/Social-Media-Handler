@@ -127,7 +127,7 @@ export default function LandingPage() {
                 <div className="w-10 h-10 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center font-bold text-lg">3</div>
                 <h3 className="text-lg font-semibold text-gray-900">Publish and measure</h3>
                 <p className="text-sm text-gray-600">
-                  Publishing calendar/status and per-account analytics to track delivery and monitor real-time reach, impressions, and engagement.
+                  Publishing calendar/status and per-account analytics to track delivery and monitor reach, impressions, and engagement.
                 </p>
               </div>
             </div>
