@@ -3,14 +3,34 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import SettingsPage from './page';
 import { vi, describe, it, expect, beforeEach } from 'vitest';
 
-const mockApiGet = vi.fn();
-const mockApiDelete = vi.fn();
+const { mockApiGet, mockApiDelete, mockApiPost, MockApiError } = vi.hoisted(() => {
+  class MockApiError extends Error {
+    public status: number;
+    public data: unknown;
+    public headers: Record<string, string> = {};
+    constructor(status: number, data: unknown, message?: string) {
+      super(message || 'API Error');
+      this.status = status;
+      this.data = data;
+      this.name = 'ApiError';
+    }
+  }
+
+  return {
+    mockApiGet: vi.fn(),
+    mockApiDelete: vi.fn(),
+    mockApiPost: vi.fn(),
+    MockApiError,
+  };
+});
 
 vi.mock('../../../lib/api/client', () => ({
   api: {
     get: (...args: unknown[]) => mockApiGet(...args),
     delete: (...args: unknown[]) => mockApiDelete(...args),
+    post: (...args: unknown[]) => mockApiPost(...args),
   },
+  ApiError: MockApiError,
 }));
 
 function renderWithClient(ui: React.ReactElement) {
@@ -178,5 +198,155 @@ describe('SettingsPage - Active Sessions', () => {
     await waitFor(() => {
       expect(screen.getByRole('alert')).toHaveTextContent('Session not found');
     });
+  });
+});
+
+describe('SettingsPage - Change Password', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockApiGet.mockResolvedValue({ sessions: [] });
+  });
+
+  // 1. Renders the Change Password card with the three labelled fields and the policy helper text.
+  it('renders the Change Password card with the three labelled fields and the policy helper text', () => {
+    renderWithClient(<SettingsPage />);
+
+    expect(screen.getByRole('heading', { name: 'Change Password' })).toBeInTheDocument();
+    expect(screen.getByLabelText('Current password')).toBeInTheDocument();
+    expect(screen.getByLabelText('New password')).toBeInTheDocument();
+    expect(screen.getByLabelText('Confirm new password')).toBeInTheDocument();
+    expect(
+      screen.getByText('At least 8 characters, with uppercase, lowercase, a number, and a special character.')
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Change Password' })).toBeInTheDocument();
+  });
+
+  // 2. Submitting with a mismatched confirmation shows 'New password and confirmation do not match.' and api.post is NOT called.
+  it('submitting with a mismatched confirmation shows "New password and confirmation do not match." and api.post is NOT called', () => {
+    renderWithClient(<SettingsPage />);
+
+    fireEvent.change(screen.getByLabelText('Current password'), {
+      target: { value: 'CurrentPass123!' },
+    });
+    fireEvent.change(screen.getByLabelText('New password'), {
+      target: { value: 'NewPassword123!' },
+    });
+    fireEvent.change(screen.getByLabelText('Confirm new password'), {
+      target: { value: 'MismatchPassword123!' },
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Change Password' }));
+
+    expect(screen.getByText('New password and confirmation do not match.')).toBeInTheDocument();
+    expect(mockApiPost).not.toHaveBeenCalled();
+  });
+
+  // 3. Submitting with a new password shorter than 8 characters shows 'New password must be at least 8 characters long' and api.post is NOT called.
+  it('submitting with a new password shorter than 8 characters shows "New password must be at least 8 characters long" and api.post is NOT called', () => {
+    renderWithClient(<SettingsPage />);
+
+    fireEvent.change(screen.getByLabelText('Current password'), {
+      target: { value: 'CurrentPass123!' },
+    });
+    fireEvent.change(screen.getByLabelText('New password'), {
+      target: { value: 'Short1!' },
+    });
+    fireEvent.change(screen.getByLabelText('Confirm new password'), {
+      target: { value: 'Short1!' },
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Change Password' }));
+
+    expect(screen.getByText('New password must be at least 8 characters long')).toBeInTheDocument();
+    expect(mockApiPost).not.toHaveBeenCalled();
+  });
+
+  // 4. A valid submit calls api.post with exactly ('auth/change-password', { currentPassword: '<current>', newPassword: '<new>' }) — no confirmation field in the payload — then shows 'Password changed successfully' and clears all three fields.
+  it('a valid submit calls api.post with exactly ("auth/change-password", { currentPassword, newPassword }), shows success banner and clears all three fields', async () => {
+    mockApiPost.mockResolvedValue({ message: 'Password changed successfully' });
+    renderWithClient(<SettingsPage />);
+
+    fireEvent.change(screen.getByLabelText('Current password'), {
+      target: { value: 'CurrentPass123!' },
+    });
+    fireEvent.change(screen.getByLabelText('New password'), {
+      target: { value: 'NewSecurePass123!' },
+    });
+    fireEvent.change(screen.getByLabelText('Confirm new password'), {
+      target: { value: 'NewSecurePass123!' },
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Change Password' }));
+
+    await waitFor(() => {
+      expect(mockApiPost).toHaveBeenCalledWith('auth/change-password', {
+        currentPassword: 'CurrentPass123!',
+        newPassword: 'NewSecurePass123!',
+      });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('Password changed successfully')).toBeInTheDocument();
+    });
+
+    expect(screen.getByLabelText('Current password')).toHaveValue('');
+    expect(screen.getByLabelText('New password')).toHaveValue('');
+    expect(screen.getByLabelText('Confirm new password')).toHaveValue('');
+  });
+
+  // 5. A server rejection (mocked ApiError with message 'Invalid credentials') shows that message in the error banner.
+  it('a server rejection (mocked ApiError with message "Invalid credentials") shows that message in the error banner', async () => {
+    mockApiPost.mockRejectedValue(
+      new MockApiError(401, { message: 'Invalid credentials' }, 'Invalid credentials')
+    );
+    renderWithClient(<SettingsPage />);
+
+    fireEvent.change(screen.getByLabelText('Current password'), {
+      target: { value: 'WrongPass123!' },
+    });
+    fireEvent.change(screen.getByLabelText('New password'), {
+      target: { value: 'NewSecurePass123!' },
+    });
+    fireEvent.change(screen.getByLabelText('Confirm new password'), {
+      target: { value: 'NewSecurePass123!' },
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Change Password' }));
+
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toHaveTextContent('Invalid credentials');
+    });
+  });
+
+  // 6. A deferred-cleanup success response shows the deferred message (the long 'terminating other active sessions failed' text) as the banner content.
+  it('a deferred-cleanup success response shows the deferred message as the banner content', async () => {
+    const deferredMessage =
+      'Password changed successfully, but terminating other active sessions failed. Stale sessions will be invalidated on their next request via security epoch enforcement.';
+
+    mockApiPost.mockResolvedValue({
+      message: deferredMessage,
+      sessionCleanupDeferred: true,
+    });
+    renderWithClient(<SettingsPage />);
+
+    fireEvent.change(screen.getByLabelText('Current password'), {
+      target: { value: 'CurrentPass123!' },
+    });
+    fireEvent.change(screen.getByLabelText('New password'), {
+      target: { value: 'NewSecurePass123!' },
+    });
+    fireEvent.change(screen.getByLabelText('Confirm new password'), {
+      target: { value: 'NewSecurePass123!' },
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Change Password' }));
+
+    await waitFor(() => {
+      expect(screen.getByText(deferredMessage)).toBeInTheDocument();
+    });
+
+    expect(screen.getByLabelText('Current password')).toHaveValue('');
+    expect(screen.getByLabelText('New password')).toHaveValue('');
+    expect(screen.getByLabelText('Confirm new password')).toHaveValue('');
   });
 });

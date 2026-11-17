@@ -4,7 +4,16 @@ import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { authQueries, SessionInfo } from '../../../lib/query/auth';
 import { api } from '../../../lib/api/client';
-import { Laptop, Smartphone, Globe, Shield, AlertCircle } from 'lucide-react';
+import {
+  Laptop,
+  Smartphone,
+  Globe,
+  Shield,
+  AlertCircle,
+  Lock,
+  CheckCircle2,
+  AlertTriangle,
+} from 'lucide-react';
 
 function getDeviceTitle(browser: string, os: string): string {
   if (browser === 'Unknown browser' && os === 'Unknown OS') {
@@ -27,6 +36,14 @@ export default function SettingsPage() {
   const queryClient = useQueryClient();
   const [revokingId, setRevokingId] = useState<string | null>(null);
   const [revokeError, setRevokeError] = useState<string | null>(null);
+
+  // Change Password state
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmNewPassword, setConfirmNewPassword] = useState('');
+  const [passwordError, setPasswordError] = useState<string | null>(null);
+  const [passwordSuccess, setPasswordSuccess] = useState<string | null>(null);
+  const [passwordWarning, setPasswordWarning] = useState<string | null>(null);
 
   const {
     data,
@@ -53,6 +70,57 @@ export default function SettingsPage() {
       setRevokingId(null);
     },
   });
+
+  const changePasswordMutation = useMutation({
+    mutationFn: async (payload: { currentPassword: string; newPassword: string }) => {
+      return await api.post<{ message: string; sessionCleanupDeferred?: boolean }>(
+        'auth/change-password',
+        payload
+      );
+    },
+    onSuccess: (res) => {
+      setCurrentPassword('');
+      setNewPassword('');
+      setConfirmNewPassword('');
+      if (res?.sessionCleanupDeferred) {
+        setPasswordWarning(res.message);
+      } else {
+        setPasswordSuccess(res?.message || 'Password changed successfully');
+      }
+      queryClient.invalidateQueries({ queryKey: ['auth', 'sessions'] });
+    },
+    onError: (err: unknown) => {
+      const message =
+        err instanceof Error ? err.message : 'Failed to change password.';
+      setPasswordError(message);
+    },
+  });
+
+  const handleChangePassword = (e: React.FormEvent) => {
+    e.preventDefault();
+    setPasswordError(null);
+    setPasswordSuccess(null);
+    setPasswordWarning(null);
+
+    if (!currentPassword || !newPassword || !confirmNewPassword) {
+      setPasswordError('All fields are required.');
+      return;
+    }
+    if (newPassword.length < 8) {
+      setPasswordError('New password must be at least 8 characters long');
+      return;
+    }
+    if (newPassword.length > 128) {
+      setPasswordError('New password must not exceed 128 characters');
+      return;
+    }
+    if (newPassword !== confirmNewPassword) {
+      setPasswordError('New password and confirmation do not match.');
+      return;
+    }
+
+    changePasswordMutation.mutate({ currentPassword, newPassword });
+  };
 
   const sessions: SessionInfo[] = data?.sessions || [];
 
@@ -181,6 +249,125 @@ export default function SettingsPage() {
               })}
             </ul>
           )}
+        </div>
+      </div>
+
+      {/* Change Password Card */}
+      <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
+        <div className="p-5 border-b border-gray-200 flex items-center justify-between">
+          <div className="flex items-center space-x-3">
+            <Lock className="w-5 h-5 text-blue-600" aria-hidden="true" />
+            <div>
+              <h2 className="text-lg font-semibold text-gray-900">Change Password</h2>
+              <p className="text-sm text-gray-500">
+                Change your password to keep your account secure. You will stay signed in on this device; all other devices will be signed out.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div className="p-5 space-y-4">
+          {passwordError && (
+            <div
+              className="p-3 bg-red-50 border border-red-200 rounded-md flex items-center space-x-2 text-sm text-red-700"
+              role="alert"
+            >
+              <AlertCircle className="w-4 h-4 text-red-500 flex-shrink-0" />
+              <span>{passwordError}</span>
+            </div>
+          )}
+
+          {passwordSuccess && (
+            <div
+              className="p-3 bg-green-50 border border-green-200 rounded-md flex items-center space-x-2 text-sm text-green-700"
+              role="status"
+            >
+              <CheckCircle2 className="w-4 h-4 text-green-500 flex-shrink-0" />
+              <span>{passwordSuccess}</span>
+            </div>
+          )}
+
+          {passwordWarning && (
+            <div
+              className="p-3 bg-amber-50 border border-amber-200 rounded-md flex items-center space-x-2 text-sm text-amber-800"
+              role="alert"
+            >
+              <AlertTriangle className="w-4 h-4 text-amber-600 flex-shrink-0" />
+              <span>{passwordWarning}</span>
+            </div>
+          )}
+
+          <form onSubmit={handleChangePassword} noValidate className="space-y-4">
+            <div>
+              <label
+                htmlFor="currentPassword"
+                className="block text-sm font-medium text-gray-700"
+              >
+                Current password
+              </label>
+              <input
+                id="currentPassword"
+                name="currentPassword"
+                type="password"
+                autoComplete="current-password"
+                value={currentPassword}
+                onChange={(e) => setCurrentPassword(e.target.value)}
+                disabled={changePasswordMutation.isPending}
+                className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-gray-900 placeholder-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 sm:text-sm disabled:opacity-50 disabled:bg-gray-50"
+              />
+            </div>
+
+            <div>
+              <label
+                htmlFor="newPassword"
+                className="block text-sm font-medium text-gray-700"
+              >
+                New password
+              </label>
+              <input
+                id="newPassword"
+                name="newPassword"
+                type="password"
+                autoComplete="new-password"
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                disabled={changePasswordMutation.isPending}
+                className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-gray-900 placeholder-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 sm:text-sm disabled:opacity-50 disabled:bg-gray-50"
+              />
+              <p className="text-xs text-gray-500 mt-1">
+                At least 8 characters, with uppercase, lowercase, a number, and a special character.
+              </p>
+            </div>
+
+            <div>
+              <label
+                htmlFor="confirmNewPassword"
+                className="block text-sm font-medium text-gray-700"
+              >
+                Confirm new password
+              </label>
+              <input
+                id="confirmNewPassword"
+                name="confirmNewPassword"
+                type="password"
+                autoComplete="new-password"
+                value={confirmNewPassword}
+                onChange={(e) => setConfirmNewPassword(e.target.value)}
+                disabled={changePasswordMutation.isPending}
+                className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-gray-900 placeholder-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 sm:text-sm disabled:opacity-50 disabled:bg-gray-50"
+              />
+            </div>
+
+            <div className="pt-2">
+              <button
+                type="submit"
+                disabled={changePasswordMutation.isPending}
+                className="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                {changePasswordMutation.isPending ? 'Changing...' : 'Change Password'}
+              </button>
+            </div>
+          </form>
         </div>
       </div>
     </div>

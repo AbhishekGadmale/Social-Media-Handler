@@ -4493,6 +4493,121 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
    - Branch `feat/per-device-sessions` pushed; PR #77 open targeting `main`.
    - Do NOT merge on this prompt alone.
 
+---
+
+## 65. Change Password UI in Account Settings
+
+### 1. Summary & Motivation
+
+- **Status**: **IN REVIEW** (Branch `feat/change-password-ui`, PR #78)
+- **Origin**: The backend endpoint `POST /api/v1/auth/change-password` has been live since PR #48 (session invalidation + security epoch), hardened in PR #54 (revoke-all endpoint + change-password follow-ups) and PR #73 (password policy + HIBP check on change), but lacked user-facing UI in the web client. The workspace account settings page (`apps/web/src/app/[workspaceId]/settings/page.tsx`) was introduced in PR #77 for Active Sessions management.
+- **Scope & Objectives**:
+  - Add a dedicated "Change Password" card directly below the Active Sessions card on the account settings page.
+  - Follow the visual chrome, banners, and layout conventions of the Active Sessions card directly above and the form conventions of existing authentication pages.
+  - Display policy helper text up front under the new password input so users discover complexity requirements before attempting submission.
+  - Enforce client-side validation on submit before dispatching network requests (rejecting empty fields, passwords < 8 or > 128 characters, or confirmation mismatches).
+  - Call `api.post('auth/change-password', { currentPassword, newPassword })` using a `useMutation` without sending confirmation fields over the wire.
+  - Surface server responses faithfully: green success banner for normal password changes, amber warning banner when session cleanup is deferred (`sessionCleanupDeferred: true`), and red error banner with `err.message` from `ApiError`.
+  - Invalidate the `['auth', 'sessions']` query on success to automatically refresh the Active Sessions card above (since other devices are signed out).
+  - Scope strictly confined to `apps/web/src/app/[workspaceId]/settings/page.tsx`, `page.spec.tsx`, and `IMPLEMENTATION_STATUS.md`. Zero new npm dependencies; no changes to API, query definitions, dashboard navigation, or dependencies.
+
+### 2. Architecture & Implementation Details
+
+#### A. Backend API Contract
+- **Route & Security**:
+  - Endpoint: `POST /api/v1/auth/change-password`
+  - Transport Guard: `@UseGuards(AuthGuard)` with session cookie authentication and `@Throttle({ default: RateLimitPolicies.auth })`.
+  - Request DTO (`ChangePasswordDto`):
+    ```ts
+    export class ChangePasswordDto {
+      @IsString()
+      @IsNotEmpty({ message: 'Current password is required' })
+      currentPassword!: string;
+
+      @IsString()
+      @IsNotEmpty({ message: 'New password is required' })
+      @MinLength(8, { message: 'New password must be at least 8 characters long' })
+      @MaxLength(128, { message: 'New password must not exceed 128 characters' })
+      newPassword!: string;
+    }
+    ```
+- **Response Shapes**:
+  - Standard Success: `{ message: 'Password changed successfully' }`
+  - Deferred Cleanup Success:
+    ```json
+    {
+      "message": "Password changed successfully, but terminating other active sessions failed. Stale sessions will be invalidated on their next request via security epoch enforcement.",
+      "sessionCleanupDeferred": true
+    }
+    ```
+  - Rejection / Error: HTTP 400/401/403/429 with `{ error: { code, message, requestId } }` (produced by `AllExceptionsFilter`). Captured as an `ApiError` instance where `err.message` contains the server copy.
+
+#### B. Component Architecture & UI Conventions
+- **Component File**: `apps/web/src/app/[workspaceId]/settings/page.tsx`
+- **Visual Chrome**:
+  - Rendered in a matching card container (`bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden`) directly beneath the Active Sessions card.
+  - Card Header: `<Lock className="w-5 h-5 text-blue-600" aria-hidden="true" />`, title `"Change Password"`, and subtitle `"Change your password to keep your account secure. You will stay signed in on this device; all other devices will be signed out."`.
+- **Form Controls & Labels**:
+  - Three password inputs (`type="password"`):
+    1. `"Current password"` (`id="currentPassword"`, `autoComplete="current-password"`)
+    2. `"New password"` (`id="newPassword"`, `autoComplete="new-password"`) with persistent helper text: `"At least 8 characters, with uppercase, lowercase, a number, and a special character."`
+    3. `"Confirm new password"` (`id="confirmNewPassword"`, `autoComplete="new-password"`)
+  - No password visibility toggles (consistent with existing auth pages).
+- **Client-Side Validation on Submit**:
+  - Evaluated on submit before any network request:
+    1. Any empty field -> `'All fields are required.'`
+    2. `newPassword.length < 8` -> `'New password must be at least 8 characters long'`
+    3. `newPassword.length > 128` -> `'New password must not exceed 128 characters'`
+    4. `newPassword !== confirmNewPassword` -> `'New password and confirmation do not match.'`
+  - When validation fails, the first error is rendered in the red error banner and `api.post` is NOT called.
+- **Banners & Feedback**:
+  - Red Error Banner (`bg-red-50 text-red-700 border-red-200` with `<AlertCircle>`): Displays client validation error or `err.message` from `ApiError`.
+  - Green Success Banner (`bg-green-50 text-green-700 border-green-200` with `<CheckCircle2>`): Displays `response.message` verbatim.
+  - Amber Warning Banner (`bg-amber-50 text-amber-800 border-amber-200` with `<AlertTriangle>`): Displays `response.message` when `response.sessionCleanupDeferred` is true.
+  - On success: Clears all three inputs and executes `queryClient.invalidateQueries({ queryKey: ['auth', 'sessions'] })`.
+- **Button State**:
+  - Label: `'Change Password'`.
+  - Disabled during pending mutation; label becomes `'Changing...'`.
+
+#### C. Design Decisions
+1. **Helper Text Up Front**: Password complexity policy is displayed persistently below the new password input so users discover formatting constraints prior to submission rather than after receiving an API rejection.
+2. **Session Query Invalidation**: Password changes in the backend terminate all other active sessions for the user; invalidating `['auth', 'sessions']` ensures the Active Sessions card directly above synchronizes its device list immediately.
+3. **No Confirmation Over Wire**: Redundant confirmation fields are strictly validated in the browser and omitted from the HTTP payload.
+
+### 3. Verification & Test Evidence
+
+- **Settings Page Unit Tests (`apps/web/src/app/[workspaceId]/settings/page.spec.tsx`)**:
+  - Adapted test harness via `vi.hoisted` to export `MockApiError` as `ApiError` and mock `api.post`.
+  - 12/12 tests PASS (previously 6; +6 new tests):
+    1. `renders loading state initially` (Active Sessions)
+    2. `renders error banner when query fails` (Active Sessions)
+    3. `renders empty message when no active sessions are returned` (Active Sessions)
+    4. `renders active sessions with device title, IP, This device badge, and revoke button logic` (Active Sessions)
+    5. `clicking Revoke calls api.delete with session id` (Active Sessions)
+    6. `displays error message when revoke mutation fails` (Active Sessions)
+    7. `renders the Change Password card with the three labelled fields and the policy helper text` (Change Password #1)
+    8. `submitting with a mismatched confirmation shows "New password and confirmation do not match." and api.post is NOT called` (Change Password #2)
+    9. `submitting with a new password shorter than 8 characters shows "New password must be at least 8 characters long" and api.post is NOT called` (Change Password #3)
+    10. `a valid submit calls api.post with exactly ("auth/change-password", { currentPassword, newPassword }), shows success banner and clears all three fields` (Change Password #4)
+    11. `a server rejection (mocked ApiError with message "Invalid credentials") shows that message in the error banner` (Change Password #5)
+    12. `a deferred-cleanup success response shows the deferred message as the banner content` (Change Password #6)
+- **Web Package Test Suite (`pnpm --filter @agency-os/web test`)**:
+  - 22/22 test files PASS, 241/241 tests PASS (previously 235; +6 tests).
+- **API, Database, and Session Suites**:
+  - Untouched by this PR (API 41 files 542 tests, DB 13 files 115 tests, Session 2 files 29 tests).
+- **Monorepo Code Quality (`pnpm turbo run lint typecheck build`)**:
+  - All 18 tasks across 9 packages PASS (0 errors).
+
+### 4. Release Gate & Next Steps
+
+1. **CI Quality Gates**:
+   - 6/6 verified green check runs on head `48c0121ec35f727869d1c44dfb5176ae2b92d793` (`48c0121`) (GitGuardian Security Checks 19:06:06Z, Application Builds 19:07:02Z, Code Quality (Lint & Typecheck) 19:07:31Z, API E2E Tests 19:07:49Z, Tests 19:07:52Z, Docker Build & Smoke Test 19:15:43Z, all 2026-11-16 UTC). CI must be re-verified on the new head after this docs update.
+2. **Release Gate**:
+   - **Live Deployment**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending external infrastructure provisioning, live email delivery verification, live payment credentials, and disaster recovery rehearsals G18/G19).
+3. **Next Steps**:
+   - Branch `feat/change-password-ui` pushed; PR #78 open targeting `main`.
+   - Do NOT merge on this prompt alone.
+
 
 
 
