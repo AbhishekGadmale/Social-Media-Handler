@@ -4499,8 +4499,8 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
 
 ### 1. Summary & Motivation
 
-- **Status**: **IN REVIEW** (Branch `feat/change-password-ui`)
-- **Origin**: The backend endpoint `POST /api/v1/auth/change-password` has been live since PR #48 (hardened with session invalidation, security epoch increments, failed attempt resets, and HIBP breach defense in PRs #72 & #73), but lacked user-facing UI in the web client. The workspace account settings page (`apps/web/src/app/[workspaceId]/settings/page.tsx`) was introduced in PR #77 for Active Sessions management.
+- **Status**: **IN REVIEW** (Branch `feat/change-password-ui`, PR #78)
+- **Origin**: The backend endpoint `POST /api/v1/auth/change-password` has been live since PR #48 (session invalidation + security epoch), hardened in PR #54 (revoke-all endpoint + change-password follow-ups) and PR #73 (password policy + HIBP check on change), but lacked user-facing UI in the web client. The workspace account settings page (`apps/web/src/app/[workspaceId]/settings/page.tsx`) was introduced in PR #77 for Active Sessions management.
 - **Scope & Objectives**:
   - Add a dedicated "Change Password" card directly below the Active Sessions card on the account settings page.
   - Follow the visual chrome, banners, and layout conventions of the Active Sessions card directly above and the form conventions of existing authentication pages.
@@ -4521,13 +4521,14 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
     ```ts
     export class ChangePasswordDto {
       @IsString()
-      @IsNotEmpty()
-      currentPassword: string;
+      @IsNotEmpty({ message: 'Current password is required' })
+      currentPassword!: string;
 
       @IsString()
-      @MinLength(8)
-      @MaxLength(128)
-      newPassword: string;
+      @IsNotEmpty({ message: 'New password is required' })
+      @MinLength(8, { message: 'New password must be at least 8 characters long' })
+      @MaxLength(128, { message: 'New password must not exceed 128 characters' })
+      newPassword!: string;
     }
     ```
 - **Response Shapes**:
@@ -4539,7 +4540,7 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
       "sessionCleanupDeferred": true
     }
     ```
-  - Rejection / Error: HTTP 400/401/403/429 with `{ statusCode, message, error }`. Captured as an `ApiError` instance where `err.message` contains the server copy.
+  - Rejection / Error: HTTP 400/401/403/429 with `{ error: { code, message, requestId } }` (produced by `AllExceptionsFilter`). Captured as an `ApiError` instance where `err.message` contains the server copy.
 
 #### B. Component Architecture & UI Conventions
 - **Component File**: `apps/web/src/app/[workspaceId]/settings/page.tsx`
@@ -4600,11 +4601,11 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
 ### 4. Release Gate & Next Steps
 
 1. **CI Quality Gates**:
-   - Verification pending branch push and GitHub Actions execution for PR.
+   - 6/6 verified green check runs on head `48c0121ec35f727869d1c44dfb5176ae2b92d793` (`48c0121`) (GitGuardian Security Checks 19:06:06Z, Application Builds 19:07:02Z, Code Quality (Lint & Typecheck) 19:07:31Z, API E2E Tests 19:07:49Z, Tests 19:07:52Z, Docker Build & Smoke Test 19:15:43Z, all 2026-11-16 UTC). CI must be re-verified on the new head after this docs update.
 2. **Release Gate**:
    - **Live Deployment**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending external infrastructure provisioning, live email delivery verification, live payment credentials, and disaster recovery rehearsals G18/G19).
 3. **Next Steps**:
-   - Branch `feat/change-password-ui` pushed; PR open targeting `main`.
+   - Branch `feat/change-password-ui` pushed; PR #78 open targeting `main`.
    - Do NOT merge on this prompt alone.
 
 
