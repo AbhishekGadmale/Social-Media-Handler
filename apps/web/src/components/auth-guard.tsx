@@ -6,6 +6,7 @@ import { useEffect } from 'react';
 import { authQueries } from '../lib/query/auth';
 
 export const PUBLIC_ROUTES = [
+  '/',
   '/login',
   '/signup',
   '/verify-email',

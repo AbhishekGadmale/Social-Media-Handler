@@ -49,8 +49,9 @@ describe('AuthGuard Route Logic & Protection', () => {
   });
 
   describe('PUBLIC_ROUTES list', () => {
-    it('defines exactly the 8 public routes', () => {
+    it('defines exactly the 9 public routes', () => {
       expect(PUBLIC_ROUTES).toEqual([
+        '/',
         '/login',
         '/signup',
         '/verify-email',
@@ -66,6 +67,16 @@ describe('AuthGuard Route Logic & Protection', () => {
   describe('Logged-out visitors (unauthenticated / 401)', () => {
     beforeEach(() => {
       mockApiGet.mockRejectedValue(new Error('Unauthorized'));
+    });
+
+    it('renders landing page on / without redirecting to login', async () => {
+      currentPathname = '/';
+      renderWithGuard(<div data-testid="landing-page">Landing Page</div>);
+
+      await waitFor(() => {
+        expect(screen.getByTestId('landing-page')).toBeInTheDocument();
+      });
+      expect(mockReplace).not.toHaveBeenCalled();
     });
 
     it('renders signup form on /signup without redirecting to login', async () => {
