@@ -203,7 +203,7 @@ test('Category/Tags change updates the correct YouTube target only, cleans white
       postId: 'post-1',
       socialAccountId: 'acc-yt',
       status: 'DRAFT',
-      providerOptions: { privacyStatus: 'PRIVATE' },
+      providerOptions: { privacyStatus: 'private' },
       socialAccount: { name: 'My YouTube', provider: 'YOUTUBE' }
     }
   ]);
@@ -221,7 +221,7 @@ test('Category/Tags change updates the correct YouTube target only, cleans white
       expect.objectContaining({
         providerOptions: expect.objectContaining({
           categoryId: '27',
-          privacyStatus: 'PRIVATE'
+          privacyStatus: 'private'
         })
       })
     );
@@ -646,5 +646,78 @@ test('handleConnectUpgrade initiates OAuth with encoded youtube.upload scope', a
   const calledUrl = (api.post as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
   const urlObj = new URL(calledUrl, 'http://localhost');
   expect(decodeURIComponent(urlObj.searchParams.get('scopes')!)).toBe('https://www.googleapis.com/auth/youtube.upload');
+});
+
+test('add-target call sends providerOptions.privacyStatus "private" for YouTube target', async () => {
+  queryClient.setQueryData(['workspaces', 'ws-1', 'posts', 'post-1'], {
+    id: 'post-1',
+    workspaceId: 'ws-1',
+    content: 'My test video post content',
+    status: 'DRAFT',
+    media: [{ id: 'm1', media: { id: 'm1', mimeType: 'video/mp4', status: 'READY' } }],
+    variants: [],
+  });
+
+  queryClient.setQueryData(['workspaces', 'ws-1', 'accounts'], {
+    accounts: [
+      { id: 'acc-yt', name: 'My YouTube Channel', provider: 'YOUTUBE', capabilities: ['POST_PUBLISH'] }
+    ]
+  });
+
+  (api.post as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ id: 'var-new' });
+
+  render(
+    <QueryClientProvider client={queryClient}>
+      <PostDetailPage />
+    </QueryClientProvider>
+  );
+
+  const select = await screen.findByRole('combobox');
+  fireEvent.change(select, { target: { value: 'acc-yt' } });
+
+  const addBtn = select.nextElementSibling as HTMLButtonElement;
+  fireEvent.click(addBtn);
+
+  await waitFor(() => {
+    expect(api.post).toHaveBeenCalledWith(
+      'workspaces/ws-1/posts/post-1/publications',
+      expect.objectContaining({
+        socialAccountId: 'acc-yt',
+        providerOptions: expect.objectContaining({
+          privacyStatus: 'private',
+          title: 'My test video post content',
+        }),
+      })
+    );
+  });
+});
+
+test('changing privacy select option stores lowercase value', async () => {
+  renderWithMultipleVariants([
+    {
+      id: 'var-yt',
+      postId: 'post-1',
+      socialAccountId: 'acc-yt',
+      status: 'DRAFT',
+      providerOptions: { privacyStatus: 'private' },
+      socialAccount: { name: 'My YouTube', provider: 'YOUTUBE' }
+    }
+  ]);
+
+  (api.patch as ReturnType<typeof vi.fn>).mockResolvedValueOnce({});
+
+  const privacySelect = await screen.findByDisplayValue('Private');
+  fireEvent.change(privacySelect, { target: { value: 'unlisted' } });
+
+  await waitFor(() => {
+    expect(api.patch).toHaveBeenCalledWith(
+      'workspaces/ws-1/publications/var-yt',
+      expect.objectContaining({
+        providerOptions: expect.objectContaining({
+          privacyStatus: 'unlisted'
+        })
+      })
+    );
+  });
 });
 

@@ -77,11 +77,12 @@ export default function PostDetailPage() {
     try {
       setIsAddingTarget(true);
       setTargetError(null);
+      const isYouTube = account.provider === 'YOUTUBE';
       await api.post(`workspaces/${workspaceId}/posts/${postId}/publications`, {
         socialAccountId: selectedAccountId,
         providerOptions: {
-          privacyStatus: 'PRIVATE',
           title: content.substring(0, 100),
+          ...(isYouTube ? { privacyStatus: 'private' } : {}),
         }
       });
       setSelectedAccountId('');
@@ -236,7 +237,7 @@ function TargetCard({ variant, workspaceId, post }: { variant: PostPlatformVaria
   const [isActioning, setIsActioning] = useState(false);
 
   const [title, setTitle] = useState(variant.providerOptions?.title as string || '');
-  const [privacyStatus, setPrivacyStatus] = useState(variant.providerOptions?.privacyStatus as string || 'PRIVATE');
+  const [privacyStatus, setPrivacyStatus] = useState(variant.providerOptions?.privacyStatus as string || 'private');
   const [categoryId, setCategoryId] = useState((variant.providerOptions?.categoryId as string) || '');
   const [tags, setTags] = useState<string>(Array.isArray(variant.providerOptions?.tags) ? variant.providerOptions.tags.join(', ') : '');
 
@@ -244,7 +245,7 @@ function TargetCard({ variant, workspaceId, post }: { variant: PostPlatformVaria
   if (variant.providerOptions !== prevOptions) {
     setPrevOptions(variant.providerOptions);
     setTitle(variant.providerOptions?.title as string || '');
-    setPrivacyStatus(variant.providerOptions?.privacyStatus as string || 'PRIVATE');
+    setPrivacyStatus(variant.providerOptions?.privacyStatus as string || 'private');
     setCategoryId((variant.providerOptions?.categoryId as string) || '');
     setTags(Array.isArray(variant.providerOptions?.tags) ? variant.providerOptions.tags.join(', ') : '');
   }
@@ -292,14 +293,15 @@ function TargetCard({ variant, workspaceId, post }: { variant: PostPlatformVaria
   const handleUpdate = async (overrides?: Record<string, unknown>) => {
     try {
       setIsActioning(true);
+      const isYouTube = variant.socialAccount?.provider === 'YOUTUBE';
       const updatedOptions: Record<string, unknown> = {
         ...(variant.providerOptions || {}),
         title,
-        privacyStatus,
+        ...(isYouTube ? { privacyStatus } : {}),
         ...overrides
       };
 
-      if (variant.socialAccount?.provider === 'YOUTUBE') {
+      if (isYouTube) {
         const cat = overrides && 'categoryId' in overrides ? overrides.categoryId as string : categoryId;
         if (cat) {
           updatedOptions.categoryId = cat;
@@ -393,8 +395,9 @@ function TargetCard({ variant, workspaceId, post }: { variant: PostPlatformVaria
               onBlur={() => handleUpdate()}
             />
           </div>
-          <div>
-            <label className="block text-xs font-medium text-gray-700">Privacy Status</label>
+          {variant.socialAccount?.provider === 'YOUTUBE' && (
+            <div>
+              <label className="block text-xs font-medium text-gray-700">Privacy Status</label>
               <select
                 className="mt-1 block w-full border-gray-300 rounded-md shadow-sm sm:text-sm border p-1"
                 value={privacyStatus as string}
@@ -403,11 +406,12 @@ function TargetCard({ variant, workspaceId, post }: { variant: PostPlatformVaria
                   handleUpdate({ privacyStatus: e.target.value });
                 }}
               >
-              <option value="PRIVATE">Private</option>
-              <option value="UNLISTED">Unlisted</option>
-              <option value="PUBLIC">Public</option>
-            </select>
-          </div>
+                <option value="private">Private</option>
+                <option value="unlisted">Unlisted</option>
+                <option value="public">Public</option>
+              </select>
+            </div>
+          )}
 
           {variant.socialAccount?.provider === 'YOUTUBE' && (
             <>
