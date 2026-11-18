@@ -898,16 +898,12 @@ export class PublishingProcessor extends WorkerHost {
     } else {
       const isPublishRequested =
         (currentSourcePhase as string) === 'PUBLISH_REQUESTED';
-      const isUnknownPublish =
-        isPublishRequested &&
-        (result.failureCategory === 'UNKNOWN_RESULT' ||
-          result.failureCategory === 'TRANSIENT');
       const isAmbiguousContainer =
         result.failureCode === 'AMBIGUOUS_PUBLISHED_CONTAINER';
 
       if (
         result.failureCategory === 'UNKNOWN_RESULT' ||
-        isUnknownPublish ||
+        isPublishRequested ||
         isAmbiguousContainer
       ) {
         if (!isPublishRequested && !isAmbiguousContainer) {

@@ -50,8 +50,21 @@ class TestPublishingProvider implements IPublishingProvider {
   async publish(
     credentials: ProviderExecutionCredentials,
     input: ProviderPublicationInput,
+    mediaSource?: any,
+    context?: any,
   ): Promise<ProviderPublishResult> {
     await Promise.resolve();
+    if (input.content.includes('trigger-post-checkpoint-auth-fail')) {
+      if (context?.beforeFinalMutation) {
+        await context.beforeFinalMutation();
+      }
+      return {
+        success: false,
+        failureCategory: 'AUTH_REQUIRED',
+        failureCode: 'PROVIDER_SCOPE_REQUIRED',
+        message: 'Insufficient scopes',
+      };
+    }
     if (input.content.includes('trigger-validation-fail')) {
       return {
         success: false,
@@ -593,6 +606,69 @@ describe('Publishing Worker (e2e)', () => {
       });
       expect(attempt.failureCategory).toBe('AUTH_REQUIRED');
       expect(attempt.failureCode).toBe('CREDENTIALS_UNAVAILABLE');
+    });
+
+    it('routes post-checkpoint failure result (phase PUBLISH_REQUESTED) with AUTH_REQUIRED to handleUnknown and preserves failureCode', async () => {
+      const { variantId, wsId } = await createFixture(
+        PostStatus.QUEUED,
+        'trigger-post-checkpoint-auth-fail',
+      );
+
+      await processor.process({
+        id: 'job-post-checkpoint-fail',
+        data: {
+          workspaceId: wsId,
+          publicationId: variantId,
+          dispatchVersion: 1,
+        },
+      } as any);
+
+      const variant = await prisma.postPlatformVariant.findUniqueOrThrow({
+        where: { id: variantId },
+        include: { socialAccount: true },
+      });
+      expect(variant.status).toBe(PostStatus.UNKNOWN);
+
+      const attempt = await prisma.publicationAttempt.findFirstOrThrow({
+        where: { variantId },
+      });
+      expect(attempt.status).toBe('FAILED');
+      expect(attempt.failureCategory).toBe('UNKNOWN_RESULT');
+      expect(attempt.failureCode).toBe('PROVIDER_SCOPE_REQUIRED');
+
+      const metadata = variant.executionMetadata as any;
+      expect(metadata.phase).toBe('AMBIGUOUS');
+    });
+
+    it('routes pre-checkpoint failure result (phase INITIATED) to handleFailure and ends in FAILED', async () => {
+      const { variantId, wsId } = await createFixture(
+        PostStatus.QUEUED,
+        'trigger-auth-fail',
+      );
+
+      await processor.process({
+        id: 'job-pre-checkpoint-fail',
+        data: {
+          workspaceId: wsId,
+          publicationId: variantId,
+          dispatchVersion: 1,
+        },
+      } as any);
+
+      const variant = await prisma.postPlatformVariant.findUniqueOrThrow({
+        where: { id: variantId },
+      });
+      expect(variant.status).toBe(PostStatus.FAILED);
+
+      const attempt = await prisma.publicationAttempt.findFirstOrThrow({
+        where: { variantId },
+      });
+      expect(attempt.status).toBe('FAILED');
+      expect(attempt.failureCategory).toBe('AUTH_REQUIRED');
+      expect(attempt.failureCode).toBe('TOKEN_EXPIRED');
+
+      const metadata = variant.executionMetadata as any;
+      expect(metadata.phase).toBe('FAILED');
     });
   });
 
