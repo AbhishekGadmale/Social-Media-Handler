@@ -4803,3 +4803,75 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
 
 
 
+
+
+---
+
+## 69. YouTube OAuth Publishing Scope Fix
+
+*(Note: Section 68 is reserved for the OAuthCallbackQueryDto error_description fix, per task specification)*
+
+### 1. Summary & Motivation
+
+- **Status**: implemented on branch `fix/youtube-publishing-scope`; PR #81 open against main at reviewed head `5f57336ace73cc2f04f82c50429d97768d7c3419`
+- **Origin**: During the first live YouTube connect test (2026-11-18), a production bug was confirmed: the YouTube channel connected successfully, but the Accounts page permanently displayed `Publishing Unavailable`, and clicking "Grant Publishing Access" never cleared the error state.
+- **Root Cause**:
+  - The YouTube provider (`packages/providers/youtube/youtube.provider.ts`) defaults to requesting only `'https://www.googleapis.com/auth/youtube.readonly'`.
+  - Its `ALLOWED_SCOPES` already includes `'https://www.googleapis.com/auth/youtube.upload'`, and `getCapabilities` already returns `POST_PUBLISH` when that scope is among the granted scopes.
+  - The connect endpoint (`POST /workspaces/:workspaceId/oauth/youtube/connect`) already accepts an optional `?scopes=` query parameter (comma-separated) and passes requested scopes through to Google OAuth.
+  - No backend change was needed or permitted.
+  - The bug was frontend-only:
+    1. In `apps/web/src/app/[workspaceId]/accounts/page.tsx`: `handleConnectYoutube` initiated the connect flow via `api.post('workspaces/${workspaceId}/oauth/youtube/connect')` without specifying any `scopes` parameter, causing Google to grant only the default `readonly` scope.
+    2. In `apps/web/src/components/account-card.tsx`: `handleReconnect` only appended `?scopes=w_member_social` for LinkedIn when `forceScopes` was set (i.e. on clicking "Grant Publishing Access"), and never passed scopes for YouTube.
+- **Operator Note (No Migration Needed)**:
+  - After deploying this fix, existing connected YouTube accounts require no database migration or reconnect from scratch. Clicking "Grant Publishing Access" on a connected YouTube account re-consents with the upload scope and re-stores scopes and capabilities via the existing upsert.
+- **Deliberate Exclusions**:
+  - Strictly no backend or provider changes (`packages/providers/` and `apps/api/` remain untouched).
+  - Zero new npm dependencies.
+
+### 2. Architecture & Implementation Details
+
+#### A. Web Connect Action (`apps/web/src/app/[workspaceId]/accounts/page.tsx`)
+- In `handleConnectYoutube`, updated the connect URL to include the upload scope:
+  ```ts
+  const res = await api.post<{ url: string }>(
+    `workspaces/${workspaceId}/oauth/youtube/connect?scopes=${encodeURIComponent('https://www.googleapis.com/auth/youtube.upload')}`
+  );
+  ```
+
+#### B. Web Reconnect Action (`apps/web/src/components/account-card.tsx`)
+- In `handleReconnect`, made the `forceScopes` branch provider-aware so YouTube requests the upload scope:
+  ```ts
+  if (forceScopes) {
+    if (account.provider === 'LINKEDIN') {
+      url += '?scopes=w_member_social';
+    } else if (account.provider === 'YOUTUBE') {
+      url += `?scopes=${encodeURIComponent('https://www.googleapis.com/auth/youtube.upload')}`;
+    }
+  }
+  ```
+
+#### C. Test Suite Updates
+- `apps/web/src/app/[workspaceId]/accounts/page.spec.tsx`:
+  - Updated test (g) to assert `mockApiPost` is called with the URL containing `scopes=` and verified the decoded parameter equals `'https://www.googleapis.com/auth/youtube.upload'`.
+- `apps/web/src/components/account-card.spec.tsx`:
+  - Updated YouTube Grant Publishing Access test to assert `api.post` is called with the URL containing `scopes=` and verified the decoded parameter equals `'https://www.googleapis.com/auth/youtube.upload'`.
+
+### 3. Verification & Test Evidence
+
+- **Web Unit Tests (`pnpm --filter @agency-os/web test`)**:
+  - 23/23 test files PASS, 247/247 tests PASS.
+  - `accounts/page.spec.tsx`: 11/11 tests PASS.
+  - `account-card.spec.tsx`: 16/16 tests PASS.
+- **Monorepo Quality Gates (`pnpm turbo run lint typecheck build`)**:
+  - All 18 tasks across 9 packages PASS (0 errors).
+
+### 4. Release Gate & Next Steps
+
+1. **CI Quality Gates**:
+   - CI on the reviewed head `5f57336a` is 6/6 green (all 2026-11-18): GitGuardian Security Checks 11:00:28Z, Application Builds 11:01:32Z, Code Quality (Lint & Typecheck) 11:01:51Z, API E2E Tests 11:02:06Z, Docker Build & Smoke Test 11:09:47Z, Tests 11:23:56Z. The Tests job's first attempt failed at 11:01:56Z in the apps/worker package (untouched by this PR) and passed on re-run at 11:23:56Z with no code change; the Tests job was also green on base main `84e08f20` the same morning. Note: CI re-runs on the docs-fix head and must be re-verified 6/6 green there before merge.
+2. **Release Gate**:
+   - **Live Deployment**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending external infrastructure provisioning, live email delivery verification, live payment credentials, and disaster recovery rehearsals G18/G19).
+3. **Next Steps**:
+   - PR #81 is open against main; CI was 6/6 green on the reviewed head `5f57336a` (Tests green on re-run after a first-attempt worker flake); next step is the docs-fix re-review, then merge by the owner.
+   - Do NOT merge on this prompt alone.

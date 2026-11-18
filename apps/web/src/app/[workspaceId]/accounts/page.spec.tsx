@@ -194,7 +194,7 @@ describe('AccountsPage - Meta (Facebook & Instagram) Connect Buttons', () => {
     expect(screen.getByRole('button', { name: 'Connect Instagram' })).toBeInTheDocument();
   });
 
-  it('(g) regression: Connect YouTube still posts to workspaces/<workspaceId>/oauth/youtube/connect', async () => {
+  it('(g) Connect YouTube posts to workspaces/<workspaceId>/oauth/youtube/connect with youtube.upload scope', async () => {
     mockApiGet.mockResolvedValueOnce({ accounts: [] });
     mockApiPost.mockResolvedValueOnce({ url: 'https://accounts.google.com/o/oauth2/v2/auth' });
     const user = userEvent.setup();
@@ -204,7 +204,11 @@ describe('AccountsPage - Meta (Facebook & Instagram) Connect Buttons', () => {
     const ytBtn = await screen.findByRole('button', { name: 'Connect YouTube' });
     await user.click(ytBtn);
 
-    expect(mockApiPost).toHaveBeenCalledWith('workspaces/ws-test-123/oauth/youtube/connect');
+    const expectedUrl = `workspaces/ws-test-123/oauth/youtube/connect?scopes=${encodeURIComponent('https://www.googleapis.com/auth/youtube.upload')}`;
+    expect(mockApiPost).toHaveBeenCalledWith(expectedUrl);
+    const calledUrl = mockApiPost.mock.calls[0][0] as string;
+    const urlObj = new URL(calledUrl, 'http://localhost');
+    expect(decodeURIComponent(urlObj.searchParams.get('scopes')!)).toBe('https://www.googleapis.com/auth/youtube.upload');
     expect(window.location.href).toBe('https://accounts.google.com/o/oauth2/v2/auth');
   });
 
