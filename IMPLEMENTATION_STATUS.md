@@ -5011,7 +5011,7 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
 
 ### 1. Summary & Motivation
 
-- **Status**: implemented on branch `fix/publish-failure-phase-routing`; PR pending open against main
+- **Status**: implemented on branch `fix/publish-failure-phase-routing`; PR #84 open against main at reviewed head `1b41dbbf73fa83736105d2b228cf31850a780885`
 - **Origin**: During the first real YouTube publish attempt (2026-11-18), the worker log recorded:
   - `publication.claimed` (dispatchVersion 1), then `publication.provider_publish_start` (YOUTUBE)
   - ~77s later: `publication.transition_failed_failed` — `"Failed to transition to FAILED: Cannot transition from PUBLISH_REQUESTED to FAILED"`
@@ -5078,9 +5078,9 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
 ### 4. Release Gate & Next Steps
 
 1. **CI Quality Gates**:
-   - Verification pending branch push and GitHub Actions execution for PR.
+   - CI on the reviewed head `1b41dbbf` is 6/6 green (all 2026-11-18): GitGuardian Security Checks 15:05:08Z, Application Builds 15:05:59Z, Code Quality (Lint & Typecheck) 15:06:22Z, Tests 15:06:51Z, API E2E Tests 15:06:52Z, Docker Build & Smoke Test 15:13:48Z. Note: CI re-runs on the docs-fix head and must be re-verified 6/6 green there before merge.
 2. **Release Gate**:
    - **Live Deployment**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending external infrastructure provisioning, live email delivery verification, live payment credentials, and disaster recovery rehearsals G18/G19).
 3. **Next Steps**:
-   - Push branch `fix/publish-failure-phase-routing` and open PR against `main`.
+   - PR #84 is open against main; CI was 6/6 green on the reviewed head `1b41dbbf`; next step is the docs-fix re-review, then merge by the owner.
    - Do NOT merge on this prompt alone.
