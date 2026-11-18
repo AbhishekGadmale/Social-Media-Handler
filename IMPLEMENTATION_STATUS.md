@@ -4732,7 +4732,7 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
 
 ### 1. Summary & Motivation
 
-- **Status**: **IN PROGRESS** (Branch `fix/linkedin-scope-parsing`)
+- **Status**: implemented on branch `fix/linkedin-scope-parsing`; PR #80 open against main at reviewed head `ac5e1e69705db38a197559a2a454ee3f665170a9`
 - **Origin**: During the first live LinkedIn connect test (2026-11-18), a production bug was confirmed: the LinkedIn account connected successfully, but the Accounts page permanently displayed `Publishing Unavailable`, and clicking "Grant Publishing Access" never cleared the error state.
 - **Database Evidence**: Inspection of the live database revealed that `SocialConnection.grantedScopes` was stored as `{"email,openid,profile,w_member_social"}` — a ONE-element array containing the entire comma-delimited scope string.
 - **Root Cause**:
@@ -4790,12 +4790,11 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
 ### 4. Release Gate & Next Steps
 
 1. **CI Quality Gates**:
-   - Verification pending branch push and GitHub Actions execution for PR #80.
+   - CI on the reviewed head `ac5e1e6` is 6/6 green (all 2026-11-18): GitGuardian Security Checks 08:44:10Z, Application Builds 08:45:06Z, Code Quality (Lint & Typecheck) 08:45:28Z, API E2E Tests 08:45:29Z, Tests 08:46:04Z, Docker Build & Smoke Test 08:53:09Z. Note: CI re-runs on the docs-fix head and must be re-verified 6/6 green there before merge.
 2. **Release Gate**:
    - **Live Deployment**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending external infrastructure provisioning, live email delivery verification, live payment credentials, and disaster recovery rehearsals G18/G19).
 3. **Next Steps**:
-   - Push branch `fix/linkedin-scope-parsing` and open PR targeting `main`.
-   - Monitor CI until all 6 workflows complete green.
+   - PR #80 is open against main; CI was 6/6 green on the reviewed head `ac5e1e6`; next step is the docs-fix re-review, then merge by the owner.
    - Do NOT merge on this prompt alone.
 
 
