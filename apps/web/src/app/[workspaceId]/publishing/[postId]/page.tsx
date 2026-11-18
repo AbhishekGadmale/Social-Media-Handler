@@ -225,6 +225,27 @@ export default function PostDetailPage() {
   );
 }
 
+export const YOUTUBE_CATEGORIES = [
+  { id: '1', name: 'Film & Animation' },
+  { id: '2', name: 'Autos & Vehicles' },
+  { id: '10', name: 'Music' },
+  { id: '15', name: 'Pets & Animals' },
+  { id: '17', name: 'Sports' },
+  { id: '19', name: 'Travel & Events' },
+  { id: '20', name: 'Gaming' },
+  { id: '22', name: 'People & Blogs' },
+  { id: '23', name: 'Comedy' },
+  { id: '24', name: 'Entertainment' },
+  { id: '25', name: 'News & Politics' },
+  { id: '26', name: 'Howto & Style' },
+  { id: '27', name: 'Education' },
+  { id: '28', name: 'Science & Technology' },
+];
+
+const getValidYouTubeCategoryId = (raw: unknown): string => {
+  return typeof raw === 'string' && /^\d+$/.test(raw) ? raw : '';
+};
+
 function PlusIcon() {
   return <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>;
 }
@@ -238,7 +259,7 @@ function TargetCard({ variant, workspaceId, post }: { variant: PostPlatformVaria
 
   const [title, setTitle] = useState(variant.providerOptions?.title as string || '');
   const [privacyStatus, setPrivacyStatus] = useState(variant.providerOptions?.privacyStatus as string || 'private');
-  const [categoryId, setCategoryId] = useState((variant.providerOptions?.categoryId as string) || '');
+  const [categoryId, setCategoryId] = useState(getValidYouTubeCategoryId(variant.providerOptions?.categoryId));
   const [tags, setTags] = useState<string>(Array.isArray(variant.providerOptions?.tags) ? variant.providerOptions.tags.join(', ') : '');
 
   const [prevOptions, setPrevOptions] = useState(variant.providerOptions);
@@ -246,7 +267,7 @@ function TargetCard({ variant, workspaceId, post }: { variant: PostPlatformVaria
     setPrevOptions(variant.providerOptions);
     setTitle(variant.providerOptions?.title as string || '');
     setPrivacyStatus(variant.providerOptions?.privacyStatus as string || 'private');
-    setCategoryId((variant.providerOptions?.categoryId as string) || '');
+    setCategoryId(getValidYouTubeCategoryId(variant.providerOptions?.categoryId));
     setTags(Array.isArray(variant.providerOptions?.tags) ? variant.providerOptions.tags.join(', ') : '');
   }
 
@@ -303,8 +324,9 @@ function TargetCard({ variant, workspaceId, post }: { variant: PostPlatformVaria
 
       if (isYouTube) {
         const cat = overrides && 'categoryId' in overrides ? overrides.categoryId as string : categoryId;
-        if (cat) {
-          updatedOptions.categoryId = cat;
+        const validCat = getValidYouTubeCategoryId(cat);
+        if (validCat) {
+          updatedOptions.categoryId = validCat;
         } else {
           delete updatedOptions.categoryId;
         }
@@ -416,15 +438,24 @@ function TargetCard({ variant, workspaceId, post }: { variant: PostPlatformVaria
           {variant.socialAccount?.provider === 'YOUTUBE' && (
             <>
               <div>
-                <label className="block text-xs font-medium text-gray-700">Category ID</label>
-                <input
-                  type="text"
+                <label htmlFor={`category-${variant.id}`} className="block text-xs font-medium text-gray-700">Category</label>
+                <select
+                  id={`category-${variant.id}`}
                   className="mt-1 block w-full border-gray-300 rounded-md shadow-sm sm:text-sm border p-1"
                   value={categoryId}
-                  onChange={e => setCategoryId(e.target.value)}
-                  onBlur={() => handleUpdate()}
-                  placeholder="e.g. 22"
-                />
+                  onChange={e => {
+                    const newCat = e.target.value;
+                    setCategoryId(newCat);
+                    handleUpdate({ categoryId: newCat });
+                  }}
+                >
+                  <option value="">No category</option>
+                  {YOUTUBE_CATEGORIES.map(cat => (
+                    <option key={cat.id} value={cat.id}>
+                      {cat.name}
+                    </option>
+                  ))}
+                </select>
               </div>
               <div>
                 <label className="block text-xs font-medium text-gray-700">Tags</label>

@@ -163,7 +163,7 @@ const renderWithMultipleVariants = (variants: Array<Record<string, unknown>>) =>
   );
 };
 
-test('YouTube target renders categoryId and tags fields, LinkedIn does not', async () => {
+test('YouTube target renders category and tags fields, LinkedIn does not', async () => {
   renderWithMultipleVariants([
     {
       id: 'var-yt',
@@ -184,15 +184,15 @@ test('YouTube target renders categoryId and tags fields, LinkedIn does not', asy
   ]);
 
   // 1 & 2. YouTube renders fields
-  expect(screen.getByPlaceholderText('e.g. 22')).toBeInTheDocument();
+  expect(screen.getByRole('combobox', { name: /category/i })).toBeInTheDocument();
   expect(screen.getByPlaceholderText('e.g. tag1, tag2, tag3')).toBeInTheDocument();
 
   // 3. LinkedIn does NOT render YouTube-only fields (only 1 of each exists in the whole DOM)
-  expect(screen.getAllByPlaceholderText('e.g. 22')).toHaveLength(1);
+  expect(screen.getAllByRole('combobox', { name: /category/i })).toHaveLength(1);
   expect(screen.getAllByPlaceholderText('e.g. tag1, tag2, tag3')).toHaveLength(1);
 
   // 4 & 5. existing metadata hydrates correctly
-  expect(screen.getByDisplayValue('22')).toBeInTheDocument();
+  expect(screen.getByRole('combobox', { name: /category/i })).toHaveValue('22');
   expect(screen.getByDisplayValue('music, live')).toBeInTheDocument();
 });
 
@@ -208,12 +208,11 @@ test('Category/Tags change updates the correct YouTube target only, cleans white
     }
   ]);
 
-  const catInput = screen.getByPlaceholderText('e.g. 22');
+  const catSelect = screen.getByRole('combobox', { name: /category/i });
   const tagsInput = screen.getByPlaceholderText('e.g. tag1, tag2, tag3');
 
   // 6. category change updates correct target
-  fireEvent.change(catInput, { target: { value: '27' } });
-  fireEvent.blur(catInput);
+  fireEvent.change(catSelect, { target: { value: '27' } });
 
   await waitFor(() => {
     expect(api.patch).toHaveBeenCalledWith(
@@ -243,6 +242,81 @@ test('Category/Tags change updates the correct YouTube target only, cleans white
       })
     );
   });
+});
+
+test('YouTube category select: control is select, choosing "People & Blogs" saves categoryId 22, choosing "No category" removes categoryId key', async () => {
+  renderWithMultipleVariants([
+    {
+      id: 'var-yt',
+      postId: 'post-1',
+      socialAccountId: 'acc-yt',
+      status: 'DRAFT',
+      providerOptions: { privacyStatus: 'private' },
+      socialAccount: { name: 'My YouTube', provider: 'YOUTUBE' }
+    }
+  ]);
+
+  // Control is select
+  const catSelect = screen.getByRole('combobox', { name: /category/i }) as HTMLSelectElement;
+  expect(catSelect.tagName).toBe('SELECT');
+  expect(screen.getByRole('option', { name: 'No category' })).toBeInTheDocument();
+  expect(screen.getByRole('option', { name: 'People & Blogs' })).toHaveValue('22');
+
+  // Choosing 'People & Blogs' saves providerOptions.categoryId '22'
+  fireEvent.change(catSelect, { target: { value: '22' } });
+
+  await waitFor(() => {
+    expect(api.patch).toHaveBeenCalledWith(
+      'workspaces/ws-1/publications/var-yt',
+      expect.objectContaining({
+        providerOptions: expect.objectContaining({
+          categoryId: '22',
+        })
+      })
+    );
+  });
+
+  (api.patch as ReturnType<typeof vi.fn>).mockClear();
+
+  // Choosing 'No category' saves providerOptions without a categoryId key
+  fireEvent.change(catSelect, { target: { value: '' } });
+
+  await waitFor(() => {
+    expect(api.patch).toHaveBeenCalledWith(
+      'workspaces/ws-1/publications/var-yt',
+      expect.objectContaining({
+        providerOptions: expect.not.objectContaining({
+          categoryId: expect.anything()
+        })
+      })
+    );
+  });
+
+  const calls = (api.patch as ReturnType<typeof vi.fn>).mock.calls;
+  const lastCall = calls[calls.length - 1] as [string, { providerOptions: Record<string, unknown> }] | undefined;
+  expect(lastCall).toBeDefined();
+  expect(lastCall?.[1].providerOptions).toBeDefined();
+  expect('categoryId' in (lastCall?.[1].providerOptions || {})).toBe(false);
+});
+
+test('YouTube variant stored with categoryId "vlog" renders without crashing and shows "No category" selected', async () => {
+  renderWithMultipleVariants([
+    {
+      id: 'var-yt',
+      postId: 'post-1',
+      socialAccountId: 'acc-yt',
+      status: 'DRAFT',
+      providerOptions: { categoryId: 'vlog', privacyStatus: 'private' },
+      socialAccount: { name: 'My YouTube', provider: 'YOUTUBE' }
+    }
+  ]);
+
+  const catSelect = screen.getByRole('combobox', { name: /category/i }) as HTMLSelectElement;
+  expect(catSelect).toBeInTheDocument();
+  expect(catSelect.value).toBe('');
+
+  const noCategoryOption = screen.getByRole('option', { name: 'No category' }) as HTMLOptionElement;
+  expect(noCategoryOption.selected).toBe(true);
 });
 
 // === MEDIA COMPATIBILITY VALIDATION TESTS ===

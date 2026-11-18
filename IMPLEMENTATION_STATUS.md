@@ -5084,3 +5084,118 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
 3. **Next Steps**:
    - PR #84 is open against main; CI was 6/6 green on the reviewed head `1b41dbbf`; next step is the docs-fix re-review, then merge by the owner.
    - Do NOT merge on this prompt alone.
+
+
+---
+
+## 73. YouTube Category Flow End-to-End Alignment & Error Reason Surfacing
+
+*(Note: Section 68 remains reserved for the OAuthCallbackQueryDto error_description fix, per task specification; Section 69 was PR #81; Section 70 was PR #82; Section 71 was PR #83; Section 72 was PR #84)*
+
+### 1. Summary & Motivation
+
+- **Status**: implemented on branch `fix/youtube-category-id`; PR #85 open against main at reviewed head `098267d907df30507e568787c618fcfcce60000a`
+- **Origin**: During a live YouTube publish attempt (2026-11-18), publication failed with `failureCode: 'YOUTUBE_INVALID_METADATA'`. The variant's stored `providerOptions` were `{"title": " chchg  ", "categoryId": "vlog", "privacyStatus": "public"}` — the user had entered the string `"vlog"` into the publishing page's Category field. This value was stored verbatim and passed to YouTube Data API's `videos.insert`, which rejected it with HTTP 400 (YouTube category IDs are numeric IDs from YouTube's standard category list).
+- **Secondary Root Cause (Diagnostics Loss)**:
+  - In `YouTubeProvider.publish()`, every non-auth, non-quota 4xx was mapped to a generic `YOUTUBE_INVALID_METADATA` failure without recording `error.errors[0].reason` or `error.message`.
+  - The actual Google API rejection reason (`invalidCategoryId`) was discarded, leaving operator logs and attempt records without actionable diagnostic detail.
+- **Root Causes**:
+  1. *Free-text input for category*: `apps/web` rendered an unconstrained `<input type="text">` for YouTube's `categoryId`, allowing arbitrary non-numeric text like `"vlog"`.
+  2. *Permissive provider options schema*: `YouTubeProviderOptionsSchema` accepted `categoryId: z.string().optional()`, allowing any string through client and server validation until YouTube rejected it at runtime.
+  3. *Error detail loss in provider*: `YouTubeProvider.publish()` catch block collapsed all 4xx/5xx responses into hardcoded error message strings, discarding Google's specific error reason.
+- **API Merge Semantics Verification**:
+  - We inspected `apps/api/src/modules/publishing/services/publishing-application.service.ts` (`updateTarget` ~lines 323-332):
+    `providerOptions: dto.providerOptions !== undefined ? dto.providerOptions || Prisma.JsonNull : variant.providerOptions || Prisma.JsonNull`.
+  - The API completely replaces the variant's `providerOptions` column with the incoming DTO payload without partial merging. Therefore, selecting "No category" on the web deletes `categoryId` from the DTO, cleanly deleting the key in PostgreSQL.
+- **Scope & Exclusions**:
+  - Touched files strictly limited to:
+    - `apps/web/src/app/[workspaceId]/publishing/[postId]/page.tsx`
+    - `apps/web/src/app/[workspaceId]/publishing/[postId]/page.spec.tsx`
+    - `packages/providers/youtube/youtube.provider.ts`
+    - `packages/providers/youtube/youtube.provider.spec.ts`
+    - `IMPLEMENTATION_STATUS.md`
+  - Zero changes to `PublishabilityValidator.ts`, any other provider, the worker, or publications API.
+  - Zero new npm dependencies.
+
+### 2. Architecture & Implementation Details
+
+#### A. Web YouTube Category Dropdown (`apps/web/src/app/[workspaceId]/publishing/[postId]/page.tsx`)
+- Added constant `YOUTUBE_CATEGORIES` listing the 14 standard YouTube video categories:
+  - `1: Film & Animation`
+  - `2: Autos & Vehicles`
+  - `10: Music`
+  - `15: Pets & Animals`
+  - `17: Sports`
+  - `19: Travel & Events`
+  - `20: Gaming`
+  - `22: People & Blogs`
+  - `23: Comedy`
+  - `24: Entertainment`
+  - `25: News & Politics`
+  - `26: Howto & Style`
+  - `27: Education`
+  - `28: Science & Technology`
+- Added helper `getValidYouTubeCategoryId(raw)`: validates against `/^\d+$/`. If invalid (such as legacy `"vlog"`), it safely normalizes to `""` (rendering "No category").
+- Replaced the free-text input with a `<select>` dropdown rendering:
+  - `<option value="">No category</option>`
+  - The 14 categorized options with numeric IDs as values.
+- In `handleUpdate`:
+  - When a category is chosen, `providerOptions.categoryId` is set to the selected numeric ID string.
+  - When "No category" is selected, `delete updatedOptions.categoryId` removes the key completely prior to `api.patch`.
+
+#### B. Provider Schema Validation (`packages/providers/youtube/youtube.provider.ts`)
+- In `YouTubeProviderOptionsSchema`:
+  - Updated `categoryId` to enforce numeric strings:
+    `categoryId: z.string().regex(/^\d+$/, 'categoryId must be a numeric YouTube category ID').optional()`.
+  - Non-numeric strings now fail schema validation: `validateProviderOptions` returns `valid: false` with an issue on field `'categoryId'` carrying the message `'categoryId must be a numeric YouTube category ID'` (issue code `INVALID_OPTION`), which `PublishabilityValidator` wraps as `PROVIDER_OPTION_INVALID` during pre-publish checks.
+
+#### C. Preserving Google Rejection Reasons in Errors (`packages/providers/youtube/youtube.provider.ts`)
+- Added helper `formatFailureMessage(baseMessage, reason?, errorMessage?)`:
+  - It does not extract error properties itself; the `publish()` catch block computes:
+    ```ts
+    const firstError = error.errors?.[0];
+    const reason = firstError?.reason || error.reason;
+    const errorMsg = firstError?.message;
+    ```
+    and passes them in.
+  - The helper appends `' (reason: <reason>: <errorMessage>).'`, `' (reason: <reason>).'`, or `' (message: <errorMessage>).'` to the base message, falling back to the plain base message when neither is provided.
+- Applied across all catch block branches in `publish()`:
+  - 401 → `AUTH_REQUIRED / YOUTUBE_AUTH_REQUIRED`
+  - 429 → `RATE_LIMITED / YOUTUBE_RATE_LIMITED`
+  - 403 with reason `quotaExceeded` → `RATE_LIMITED / YOUTUBE_QUOTA_EXHAUSTED`
+  - 403 with reason `insufficientPermissions` → `AUTH_REQUIRED / PROVIDER_SCOPE_REQUIRED`
+  - 403 other → `AUTH_REQUIRED / YOUTUBE_UPLOAD_FORBIDDEN`
+  - other 4xx (400–499) → `VALIDATION / YOUTUBE_INVALID_METADATA`
+  - 5xx / network / no status → `UNKNOWN_RESULT / YOUTUBE_UPLOAD_OUTCOME_UNKNOWN`
+- No `failureCode` or `failureCategory` changed in any branch; only the message strings gained the reason/message suffix.
+
+#### D. Test Suite Updates
+- `packages/providers/youtube/youtube.provider.spec.ts`:
+  - Added test verifying `validateProviderOptions` accepts numeric category ID (`'22'`).
+  - Added test verifying `validateProviderOptions` rejects non-numeric category ID (`'vlog'`) (returns `valid: false` with issue on field `'categoryId'`, message `'categoryId must be a numeric YouTube category ID'`, and issue code `INVALID_OPTION`, which `PublishabilityValidator` wraps as `PROVIDER_OPTION_INVALID`).
+  - Added test verifying `publish()` returns `YOUTUBE_INVALID_METADATA` and includes Google's rejection reason in the result's `message` field when Google rejects with HTTP 400 `invalidCategoryId`.
+- `apps/web/src/app/[workspaceId]/publishing/[postId]/page.spec.tsx`:
+  - Added test asserting the Category control is a `<select>` with 15 options (empty default + 14 categories), and choosing a category (e.g. "People & Blogs") calls `api.patch` with `providerOptions.categoryId = '22'`.
+  - Added test asserting selecting "No category" deletes the `categoryId` key from `providerOptions`, and legacy non-numeric values (e.g. `'vlog'`) safely render "No category".
+
+### 3. Verification & Test Evidence
+
+- **Providers Unit Test Suite (`pnpm --filter @agency-os/providers test`)**:
+  - 15/15 test files PASS, 250/250 tests PASS (+3 new tests).
+  - `youtube.provider.spec.ts`: 22/22 tests PASS (+3 new tests).
+  - `publish.spec.ts`: 10/10 tests PASS.
+- **Web Unit Test Suite (`pnpm --filter @agency-os/web test`)**:
+  - 23/23 test files PASS, 252/252 tests PASS (+2 new tests).
+  - `publishing/[postId]/page.spec.tsx`: 35/35 tests PASS (+2 new tests).
+- **Monorepo Quality Gates (`pnpm turbo run lint typecheck build`)**:
+  - All 18 tasks across 9 packages PASS (0 errors).
+
+### 4. Release Gate & Next Steps
+
+1. **CI Quality Gates**:
+   - CI on the reviewed head `098267d9` is 6/6 green (all 2026-11-18): GitGuardian Security Checks 17:48:16Z, Application Builds 17:49:13Z, Code Quality (Lint & Typecheck) 17:49:27Z, API E2E Tests 17:49:47Z, Tests 17:50:12Z, Docker Build & Smoke Test 17:56:43Z. Note: CI re-runs on the docs-fix head and must be re-verified 6/6 green there before merge.
+2. **Release Gate**:
+   - **Live Deployment**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending external infrastructure provisioning, live email delivery verification, live payment credentials, and disaster recovery rehearsals G18/G19).
+3. **Next Steps**:
+   - PR #85 is open against main; CI was 6/6 green on the reviewed head `098267d9`; next step is the docs-fix re-review, then merge by the owner.
+   - Do NOT merge on this prompt alone.

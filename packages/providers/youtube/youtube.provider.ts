@@ -31,10 +31,31 @@ export const YouTubeProviderOptionsSchema = z
   .object({
     title: z.string().max(100).optional(),
     privacyStatus: z.enum(["public", "private", "unlisted"]).default("private"),
-    categoryId: z.string().optional(),
+    categoryId: z
+      .string()
+      .regex(/^\d+$/, "categoryId must be a numeric YouTube category ID")
+      .optional(),
     tags: z.array(z.string()).optional(),
   })
   .strict();
+
+function formatFailureMessage(
+  baseMessage: string,
+  reason?: string,
+  errorMessage?: string,
+): string {
+  const cleanBase = baseMessage.replace(/\.+$/, "");
+  if (reason && errorMessage) {
+    return `${cleanBase} (reason: ${reason}: ${errorMessage}).`;
+  }
+  if (reason) {
+    return `${cleanBase} (reason: ${reason}).`;
+  }
+  if (errorMessage) {
+    return `${cleanBase} (message: ${errorMessage}).`;
+  }
+  return `${cleanBase}.`;
+}
 
 export class YouTubeProvider implements ISocialProvider, IPublishingProvider {
   private clientId: string;
@@ -537,8 +558,10 @@ export class YouTubeProvider implements ISocialProvider, IPublishingProvider {
         processingState: "PROCESSING", // videos are always processing initially
       };
     } catch (error: any) {
-      // Reason extraction from googleapis
-      const reason = error.errors?.[0]?.reason || error.reason;
+      // Reason and message extraction from googleapis
+      const firstError = error.errors?.[0];
+      const reason = firstError?.reason || error.reason;
+      const errorMsg = firstError?.message;
       const status = error.code || error.status;
 
       // 401 Unauthorized
@@ -547,8 +570,11 @@ export class YouTubeProvider implements ISocialProvider, IPublishingProvider {
           success: false,
           failureCategory: "AUTH_REQUIRED",
           failureCode: "YOUTUBE_AUTH_REQUIRED",
-          message:
-            "Invalid or expired authorization. Please reconnect your account.",
+          message: formatFailureMessage(
+            "Invalid or expired authorization. Please reconnect your account",
+            reason,
+            errorMsg,
+          ),
         };
       }
 
@@ -558,7 +584,11 @@ export class YouTubeProvider implements ISocialProvider, IPublishingProvider {
           success: false,
           failureCategory: "RATE_LIMITED",
           failureCode: "YOUTUBE_RATE_LIMITED",
-          message: "YouTube rate limit exceeded.",
+          message: formatFailureMessage(
+            "YouTube rate limit exceeded",
+            reason,
+            errorMsg,
+          ),
           retryAfterSeconds: error.response?.headers?.["retry-after"]
             ? parseInt(error.response.headers["retry-after"], 10)
             : undefined,
@@ -572,7 +602,11 @@ export class YouTubeProvider implements ISocialProvider, IPublishingProvider {
             success: false,
             failureCategory: "RATE_LIMITED",
             failureCode: "YOUTUBE_QUOTA_EXHAUSTED",
-            message: "YouTube API quota exhausted.",
+            message: formatFailureMessage(
+              "YouTube API quota exhausted",
+              reason,
+              errorMsg,
+            ),
           };
         }
         if (reason === "insufficientPermissions") {
@@ -580,8 +614,11 @@ export class YouTubeProvider implements ISocialProvider, IPublishingProvider {
             success: false,
             failureCategory: "AUTH_REQUIRED",
             failureCode: "PROVIDER_SCOPE_REQUIRED",
-            message:
-              "Insufficient permissions. Please reconnect and grant YouTube publish access.",
+            message: formatFailureMessage(
+              "Insufficient permissions. Please reconnect and grant YouTube publish access",
+              reason,
+              errorMsg,
+            ),
           };
         }
 
@@ -590,8 +627,11 @@ export class YouTubeProvider implements ISocialProvider, IPublishingProvider {
           success: false,
           failureCategory: "AUTH_REQUIRED", // Conservative classification
           failureCode: "YOUTUBE_UPLOAD_FORBIDDEN",
-          message:
-            "Upload forbidden by YouTube (could be channel restriction or permission issue).",
+          message: formatFailureMessage(
+            "Upload forbidden by YouTube (could be channel restriction or permission issue)",
+            reason,
+            errorMsg,
+          ),
         };
       }
 
@@ -601,7 +641,11 @@ export class YouTubeProvider implements ISocialProvider, IPublishingProvider {
           success: false,
           failureCategory: "VALIDATION",
           failureCode: "YOUTUBE_INVALID_METADATA",
-          message: "YouTube rejected the video metadata or format.",
+          message: formatFailureMessage(
+            "YouTube rejected the video metadata or format",
+            reason,
+            errorMsg,
+          ),
         };
       }
 
@@ -610,8 +654,11 @@ export class YouTubeProvider implements ISocialProvider, IPublishingProvider {
         success: false,
         failureCategory: "UNKNOWN_RESULT",
         failureCode: "YOUTUBE_UPLOAD_OUTCOME_UNKNOWN",
-        message:
-          "Unknown outcome due to network or server error. Cannot safely retry without verification.",
+        message: formatFailureMessage(
+          "Unknown outcome due to network or server error. Cannot safely retry without verification",
+          reason,
+          errorMsg,
+        ),
       };
     }
   }
