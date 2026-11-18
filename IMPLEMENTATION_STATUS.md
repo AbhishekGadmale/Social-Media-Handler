@@ -4939,10 +4939,10 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
 
 ### 1. Summary & Motivation
 
-- **Status**: IN PROGRESS (branch `fix/youtube-publishability-contracts`, PR pending against `main`)
+- **Status**: implemented on branch `fix/youtube-publishability-contracts`; PR #83 open against main at reviewed head `26ed6ec4cbcb29926dcc9017ea89b8069a462667`
 - **Origin**: During the first real YouTube publish attempt (2026-11-18), publication was rejected with `PUBLISHABILITY_FAILED`. The API error log revealed three distinct validation issues:
   1. MIME constraint rejection: The attached video was rejected because `getPublishingCapabilities()` declared `mimeTypes: ["video/*"]`, whereas `PublishabilityValidator` and `execution.validator` perform exact inclusion checks (`!constraint.mimeTypes.includes(asset.mimeType)` against `'video/mp4'`).
-  2. `PROVIDER_OPTION_INVALID` for `privacyStatus`: The web client sent uppercase `'PRIVATE'`, whereas `YouTubeProviderOptionsSchema` strictly validates against lowercase enum `['public', 'private', 'unlisted']`, matching the YouTube Data API contract.
+  2. `PROVIDER_OPTION_INVALID` for `privacyStatus`: The live validation log recorded: `Invalid enum value. Expected 'public' | 'private' | 'unlisted', received 'PUBLIC'` — the variant that failed carried `'PUBLIC'` (the uppercase `'PRIVATE'` was the add-target default in code), whereas `YouTubeProviderOptionsSchema` strictly validates against lowercase enum `['public', 'private', 'unlisted']`, matching the YouTube Data API contract.
   3. `PROVIDER_OPTION_INVALID` (no field) — `"Unrecognized key(s) in object: 'title'"`: `YouTubeProviderOptionsSchema` is `.strict()` and omitted `title`, even though `publish()` reads `options.title`, capabilities advertise `'TITLE'`, and web sends `title`.
 - **Root Causes**:
   1. *Wildcard MIME vs. exact match*: `youtube.provider.ts` used a wildcard `["video/*"]` rather than listing the concrete video MIME types supported by YouTube and expected by the exact-match validator.
@@ -4995,10 +4995,9 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
 ### 4. Release Gate & Next Steps
 
 1. **CI Quality Gates**:
-   - Verification pending branch push and GitHub Actions execution for PR.
+   - CI on the reviewed head `26ed6ec4` is 6/6 green (all 2026-11-18): GitGuardian Security Checks 13:43:04Z, Application Builds 13:43:50Z, Code Quality (Lint & Typecheck) 13:44:06Z, Tests 13:44:21Z, API E2E Tests 13:44:33Z, Docker Build & Smoke Test 13:50:59Z. Note: CI re-runs on the docs-fix head and must be re-verified 6/6 green there before merge.
 2. **Release Gate**:
    - **Live Deployment**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending external infrastructure provisioning, live email delivery verification, live payment credentials, and disaster recovery rehearsals G18/G19).
 3. **Next Steps**:
-   - Push branch `fix/youtube-publishability-contracts` to GitHub and open PR against `main`.
-   - Verify CI 6/6 green.
+   - PR #83 is open against main; CI was 6/6 green on the reviewed head `26ed6ec4`; next step is the docs-fix re-review, then merge by the owner.
    - Do NOT merge on this prompt alone.
