@@ -4875,3 +4875,57 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
 3. **Next Steps**:
    - PR #81 is open against main; CI was 6/6 green on the reviewed head `5f57336a` (Tests green on re-run after a first-attempt worker flake); next step is the docs-fix re-review, then merge by the owner.
    - Do NOT merge on this prompt alone.
+
+
+---
+
+## 70. YouTube Publishing Permission Upgrade Scope Fix
+
+*(Note: Section 68 remains reserved for the OAuthCallbackQueryDto error_description fix, per task specification; Section 69 was PR #81)*
+
+### 1. Summary & Motivation
+
+- **Status**: implemented on branch `fix/youtube-upgrade-scope`; PR #82 open against main at reviewed head `d6292fca3be8e186e6cdbb278eba7f33bb6e3bf4`
+- **Origin**: During the live test immediately after PR #81 merged (2026-11-18), clicking the "Enable YouTube publishing access" button on the Publishing edit page (`/[workspaceId]/publishing/[postId]`) failed with `Failed to initiate permission upgrade.` The live API error log revealed: `Invalid or unauthorized OAuth scope requested: youtube.upload`.
+- **Root Cause**:
+  - PR #81 corrected the YouTube connect URL in `accounts/page.tsx` and the reconnect URL in `account-card.tsx` to pass the full URL `https://www.googleapis.com/auth/youtube.upload`.
+  - However, a third scope-carrying connect call site was missed: `apps/web/src/app/[workspaceId]/publishing/[postId]/page.tsx`, `handleConnectUpgrade`, which sent `workspaces/${workspaceId}/oauth/youtube/connect?scopes=youtube.upload` using the short scope name.
+  - The YouTube provider's `getAuthorizationUrl` validates requested scopes strictly against `ALLOWED_SCOPES`, which contains only full URLs (`'https://www.googleapis.com/auth/youtube.readonly'`, `'https://www.googleapis.com/auth/youtube.upload'`). Because `'youtube.upload'` does not match, the provider threw an exception, the API returned 500, and the upgrade flow failed.
+- **Operator Note (No Migration Needed)**:
+  - After this fix, either the Publishing page upgrade button or the Accounts card's "Grant Publishing Access" completes the YouTube permission upgrade. No database migration and no reconnect from scratch are required.
+- **Deliberate Exclusions**:
+  - Zero backend/provider changes (the backend validation against `ALLOWED_SCOPES` is correct).
+  - Scope is strictly limited to `apps/web/src/app/[workspaceId]/publishing/[postId]/page.tsx`, `page.spec.tsx`, and `IMPLEMENTATION_STATUS.md`.
+  - Zero new npm dependencies.
+
+### 2. Architecture & Implementation Details
+
+#### A. Web Upgrade Action (`apps/web/src/app/[workspaceId]/publishing/[postId]/page.tsx`)
+- In `handleConnectUpgrade`, changed the connect URL to pass the fully qualified URL encoded with `encodeURIComponent`, matching PR #81:
+  ```ts
+  const res = await api.post<{ url: string }>(
+    `workspaces/${workspaceId}/oauth/youtube/connect?scopes=${encodeURIComponent('https://www.googleapis.com/auth/youtube.upload')}`
+  );
+  ```
+- All other logic (saving the draft before the call, redirecting to `res.url`, and error handling) remains untouched.
+
+#### B. Test Suite Updates (`apps/web/src/app/[workspaceId]/publishing/[postId]/page.spec.tsx`)
+- Added a dedicated test: `handleConnectUpgrade initiates OAuth with encoded youtube.upload scope`.
+- Asserts that when a YouTube account without `POST_PUBLISH` is selected as a destination, clicking "Enable YouTube publishing access" calls `api.post` with the exact URL containing the encoded scope parameter, and asserts that decoding `scopes` yields `'https://www.googleapis.com/auth/youtube.upload'`.
+
+### 3. Verification & Test Evidence
+
+- **Web Unit Tests (`pnpm --filter @agency-os/web test`)**:
+  - 23/23 test files PASS, 248/248 tests PASS (including the new upgrade scope test in `page.spec.tsx` [31/31 tests PASS]).
+- **Monorepo Quality Gates (`pnpm turbo run lint typecheck build`)**:
+  - All 18 tasks across 9 packages PASS (0 errors).
+
+### 4. Release Gate & Next Steps
+
+1. **CI Quality Gates**:
+   - CI on the reviewed head `d6292fca` is 6/6 green (all 2026-11-18): GitGuardian Security Checks 12:06:08Z, Application Builds 12:06:55Z, Code Quality (Lint & Typecheck) 12:07:31Z, Tests 12:07:52Z, API E2E Tests 12:07:54Z, Docker Build & Smoke Test 12:14:44Z. Note: CI re-runs on the docs-fix head and must be re-verified 6/6 green there before merge.
+2. **Release Gate**:
+   - **Live Deployment**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending external infrastructure provisioning, live email delivery verification, live payment credentials, and disaster recovery rehearsals G18/G19).
+3. **Next Steps**:
+   - PR #82 is open against main; CI was 6/6 green on the reviewed head `d6292fca`; next step is the docs-fix re-review, then merge by the owner.
+   - Do NOT merge on this prompt alone.
