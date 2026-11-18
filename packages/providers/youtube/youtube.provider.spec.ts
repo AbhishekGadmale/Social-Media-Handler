@@ -1,6 +1,28 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { Readable } from 'stream';
+import { google } from 'googleapis';
 import { YouTubeProvider } from './youtube.provider';
 import { providerRegistry } from '../core/provider-registry';
+
+vi.mock('googleapis', () => {
+  class MockOAuth2 {
+    setCredentials = vi.fn();
+  }
+  return {
+    google: {
+      auth: {
+        OAuth2: MockOAuth2,
+      },
+      youtube: vi.fn().mockReturnValue({
+        videos: {
+          insert: vi.fn().mockResolvedValue({
+            data: { id: 'fake-youtube-id' },
+          }),
+        },
+      }),
+    },
+  };
+});
 
 describe('YouTubeProvider', () => {
   let provider: YouTubeProvider;
@@ -9,6 +31,13 @@ describe('YouTubeProvider', () => {
     process.env.YOUTUBE_CLIENT_ID = 'test-client';
     process.env.YOUTUBE_CLIENT_SECRET = 'test-secret';
     provider = new YouTubeProvider();
+    vi.mocked(google.youtube).mockReturnValue({
+      videos: {
+        insert: vi.fn().mockResolvedValue({
+          data: { id: 'fake-youtube-id' },
+        }),
+      },
+    } as any);
   });
 
   afterEach(() => {
@@ -286,6 +315,69 @@ describe('YouTubeProvider', () => {
           }),
         ]),
       );
+    });
+
+    it('validateProviderOptions rejects non-numeric categoryId (e.g. vlog)', () => {
+      const invalid = provider.validateProviderOptions({
+        categoryId: 'vlog',
+      });
+      expect(invalid.valid).toBe(false);
+      expect(invalid.issues).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            field: 'categoryId',
+            message: 'categoryId must be a numeric YouTube category ID',
+          }),
+        ]),
+      );
+    });
+
+    it('validateProviderOptions accepts numeric categoryId (e.g. 22)', () => {
+      const valid = provider.validateProviderOptions({
+        categoryId: '22',
+      });
+      expect(valid.valid).toBe(true);
+      expect(valid.issues).toHaveLength(0);
+    });
+
+    it('returns failureCode YOUTUBE_INVALID_METADATA with reason present when videos.insert fails with 400 invalidCategoryId', async () => {
+      const mockInsert = vi.fn().mockRejectedValue({
+        code: 400,
+        errors: [{ reason: 'invalidCategoryId' }],
+      });
+      vi.mocked(google.youtube).mockReturnValueOnce({
+        videos: { insert: mockInsert },
+      } as any);
+
+      const mediaSource = {
+        getStream: vi.fn().mockResolvedValue(new Readable({ read() {} })),
+      };
+
+      const res = await provider.publish(
+        { accessToken: 'fake-token' },
+        {
+          attemptId: '1',
+          targetId: '2',
+          workspaceId: 'ws-1',
+          content: 'hello',
+          media: [{ key: 'video.mp4', mimeType: 'video/mp4', sizeBytes: 100 }],
+          providerOptions: { categoryId: '99999' },
+        },
+        mediaSource,
+        {
+          onRemotePrepared: vi.fn().mockResolvedValue(undefined),
+          beforeFinalMutation: vi.fn().mockResolvedValue(undefined),
+        },
+      );
+
+      expect(res.success).toBe(false);
+      if (!res.success) {
+        expect(res.failureCode).toBe('YOUTUBE_INVALID_METADATA');
+        expect(res.message).toContain('invalidCategoryId');
+        expect(res.message).toBe(
+          'YouTube rejected the video metadata or format (reason: invalidCategoryId).',
+        );
+      }
     });
 
     it('getPublishingCapabilities() contains video/mp4 and no video/* wildcard entry', () => {
