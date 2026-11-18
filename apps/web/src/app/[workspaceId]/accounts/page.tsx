@@ -38,7 +38,9 @@ export default function AccountsPage() {
     try {
       setIsConnectingYt(true);
       setConnectError(null);
-      const res = await api.post<{ url: string }>(`workspaces/${workspaceId}/oauth/youtube/connect`);
+      const res = await api.post<{ url: string }>(
+        `workspaces/${workspaceId}/oauth/youtube/connect?scopes=${encodeURIComponent('https://www.googleapis.com/auth/youtube.upload')}`
+      );
       if (res.url) {
         window.location.href = res.url;
       } else {

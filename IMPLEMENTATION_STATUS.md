@@ -4803,3 +4803,76 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
 
 
 
+
+
+---
+
+## 69. YouTube OAuth Publishing Scope Fix
+
+*(Note: Section 68 is reserved for the OAuthCallbackQueryDto error_description fix, per task specification)*
+
+### 1. Summary & Motivation
+
+- **Status**: IN PROGRESS (branch `fix/youtube-publishing-scope`, PR pending against `main`)
+- **Origin**: During the first live YouTube connect test (2026-11-18), a production bug was confirmed: the YouTube channel connected successfully, but the Accounts page permanently displayed `Publishing Unavailable`, and clicking "Grant Publishing Access" never cleared the error state.
+- **Root Cause**:
+  - The YouTube provider (`packages/providers/youtube/youtube.provider.ts`) defaults to requesting only `'https://www.googleapis.com/auth/youtube.readonly'`.
+  - Its `ALLOWED_SCOPES` already includes `'https://www.googleapis.com/auth/youtube.upload'`, and `getCapabilities` already returns `POST_PUBLISH` when that scope is among the granted scopes.
+  - The connect endpoint (`POST /workspaces/:workspaceId/oauth/youtube/connect`) already accepts an optional `?scopes=` query parameter (comma-separated) and passes requested scopes through to Google OAuth.
+  - No backend change was needed or permitted.
+  - The bug was frontend-only:
+    1. In `apps/web/src/app/[workspaceId]/accounts/page.tsx`: `handleConnectYoutube` initiated the connect flow via `api.post('workspaces/${workspaceId}/oauth/youtube/connect')` without specifying any `scopes` parameter, causing Google to grant only the default `readonly` scope.
+    2. In `apps/web/src/components/account-card.tsx`: `handleReconnect` only appended `?scopes=w_member_social` for LinkedIn when `forceScopes` was set (i.e. on clicking "Grant Publishing Access"), and never passed scopes for YouTube.
+- **Operator Note (No Migration Needed)**:
+  - After deploying this fix, existing connected YouTube accounts require no database migration or reconnect from scratch. Clicking "Grant Publishing Access" on a connected YouTube account re-consents with the upload scope and re-stores scopes and capabilities via the existing upsert.
+- **Deliberate Exclusions**:
+  - Strictly no backend or provider changes (`packages/providers/` and `apps/api/` remain untouched).
+  - Zero new npm dependencies.
+
+### 2. Architecture & Implementation Details
+
+#### A. Web Connect Action (`apps/web/src/app/[workspaceId]/accounts/page.tsx`)
+- In `handleConnectYoutube`, updated the connect URL to include the upload scope:
+  ```ts
+  const res = await api.post<{ url: string }>(
+    `workspaces/${workspaceId}/oauth/youtube/connect?scopes=${encodeURIComponent('https://www.googleapis.com/auth/youtube.upload')}`
+  );
+  ```
+
+#### B. Web Reconnect Action (`apps/web/src/components/account-card.tsx`)
+- In `handleReconnect`, made the `forceScopes` branch provider-aware so YouTube requests the upload scope:
+  ```ts
+  if (forceScopes) {
+    if (account.provider === 'LINKEDIN') {
+      url += '?scopes=w_member_social';
+    } else if (account.provider === 'YOUTUBE') {
+      url += `?scopes=${encodeURIComponent('https://www.googleapis.com/auth/youtube.upload')}`;
+    }
+  }
+  ```
+
+#### C. Test Suite Updates
+- `apps/web/src/app/[workspaceId]/accounts/page.spec.tsx`:
+  - Updated test (g) to assert `mockApiPost` is called with the URL containing `scopes=` and verified the decoded parameter equals `'https://www.googleapis.com/auth/youtube.upload'`.
+- `apps/web/src/components/account-card.spec.tsx`:
+  - Updated YouTube Grant Publishing Access test to assert `api.post` is called with the URL containing `scopes=` and verified the decoded parameter equals `'https://www.googleapis.com/auth/youtube.upload'`.
+
+### 3. Verification & Test Evidence
+
+- **Web Unit Tests (`pnpm --filter @agency-os/web test`)**:
+  - 23/23 test files PASS, 247/247 tests PASS.
+  - `accounts/page.spec.tsx`: 11/11 tests PASS.
+  - `account-card.spec.tsx`: 16/16 tests PASS.
+- **Monorepo Quality Gates (`pnpm turbo run lint typecheck build`)**:
+  - All 18 tasks across 9 packages PASS (0 errors).
+
+### 4. Release Gate & Next Steps
+
+1. **CI Quality Gates**:
+   - Verification pending branch push and GitHub Actions execution for PR.
+2. **Release Gate**:
+   - **Live Deployment**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending external infrastructure provisioning, live email delivery verification, live payment credentials, and disaster recovery rehearsals G18/G19).
+3. **Next Steps**:
+   - Push branch `fix/youtube-publishing-scope` to GitHub and open PR against `main`.
+   - Verify CI 6/6 green.
+   - Do NOT merge on this prompt alone.

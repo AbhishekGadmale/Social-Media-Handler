@@ -29,8 +29,12 @@ export function AccountCard({ account, onDisconnect }: AccountCardProps) {
       setIsReconnecting(true);
       setError(null);
       let url = `workspaces/${account.workspaceId}/oauth/${account.provider.toLowerCase()}/connect`;
-      if (forceScopes && account.provider === 'LINKEDIN') {
-        url += '?scopes=w_member_social';
+      if (forceScopes) {
+        if (account.provider === 'LINKEDIN') {
+          url += '?scopes=w_member_social';
+        } else if (account.provider === 'YOUTUBE') {
+          url += `?scopes=${encodeURIComponent('https://www.googleapis.com/auth/youtube.upload')}`;
+        }
       }
       const res = await api.post<{ url: string }>(url);
       if (res.url) {

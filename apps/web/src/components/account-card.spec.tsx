@@ -117,7 +117,7 @@ describe('AccountCard Capabilities UI', () => {
     expect(api.post).toHaveBeenCalledWith('workspaces/ws-1/oauth/linkedin/connect?scopes=w_member_social');
   });
 
-  it('triggers the correct OAuth endpoint when Grant Publishing Access is clicked (YouTube)', async () => {
+  it('triggers the correct OAuth endpoint with youtube.upload scope when Grant Publishing Access is clicked (YouTube)', async () => {
     const account = { ...baseAccount, provider: 'YOUTUBE', capabilities: [] };
     render(<AccountCard account={account} />);
 
@@ -126,7 +126,11 @@ describe('AccountCard Capabilities UI', () => {
     const btn = screen.getByRole('button', { name: /Grant Publishing Access/i });
     fireEvent.click(btn);
 
-    expect(api.post).toHaveBeenCalledWith('workspaces/ws-1/oauth/youtube/connect');
+    const expectedUrl = `workspaces/ws-1/oauth/youtube/connect?scopes=${encodeURIComponent('https://www.googleapis.com/auth/youtube.upload')}`;
+    expect(api.post).toHaveBeenCalledWith(expectedUrl);
+    const calledUrl = vi.mocked(api.post).mock.calls[0][0] as string;
+    const urlObj = new URL(calledUrl, 'http://localhost');
+    expect(decodeURIComponent(urlObj.searchParams.get('scopes')!)).toBe('https://www.googleapis.com/auth/youtube.upload');
   });
 
   describe('Account Disconnect Flow', () => {
