@@ -78,7 +78,7 @@ describe('LinkedInProvider', () => {
         access_token: 'access-123',
         refresh_token: 'refresh-456',
         expires_in: 3600,
-        scope: 'openid profile email',
+        scope: 'email,openid,profile',
       }),
     });
 
@@ -90,7 +90,7 @@ describe('LinkedInProvider', () => {
 
     expect(creds.accessToken).toBe('access-123');
     expect(creds.refreshToken).toBe('refresh-456');
-    expect(creds.scopes).toEqual(['openid', 'profile', 'email']);
+    expect(creds.scopes).toEqual(['email', 'openid', 'profile']);
     
     // Check that code_verifier is NOT sent
     expect(mockFetch).toHaveBeenCalledWith('https://www.linkedin.com/oauth/v2/accessToken', expect.objectContaining({
@@ -110,13 +110,51 @@ describe('LinkedInProvider', () => {
     expect(bodyParams.has('code_verifier')).toBe(false);
   });
 
+  it('correctly parses comma-separated scopes including w_member_social from token endpoint (regression)', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        access_token: 'access-123',
+        refresh_token: 'refresh-456',
+        expires_in: 3600,
+        scope: 'email,openid,profile,w_member_social',
+      }),
+    });
+
+    const creds = await provider.exchangeAuthorizationCode({
+      code: 'auth-code',
+      redirectUri: 'http://localhost/callback',
+    });
+
+    expect(creds.scopes).toEqual(['email', 'openid', 'profile', 'w_member_social']);
+  });
+
+  it('handles space-separated scope strings gracefully for robustness', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        access_token: 'access-123',
+        refresh_token: 'refresh-456',
+        expires_in: 3600,
+        scope: 'openid profile email',
+      }),
+    });
+
+    const creds = await provider.exchangeAuthorizationCode({
+      code: 'auth-code',
+      redirectUri: 'http://localhost/callback',
+    });
+
+    expect(creds.scopes).toEqual(['openid', 'profile', 'email']);
+  });
+
   it('should refresh access token successfully', async () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
       json: async () => ({
         access_token: 'new-li-access',
         expires_in: 5184000,
-        scope: 'openid profile email',
+        scope: 'email,openid,profile',
       }),
     });
 
@@ -124,6 +162,7 @@ describe('LinkedInProvider', () => {
     expect(creds.accessToken).toBe('new-li-access');
     expect(creds.refreshToken).toBe('current-li-refresh');
     expect(creds.expiresAt).toBeDefined();
+    expect(creds.scopes).toEqual(['email', 'openid', 'profile']);
 
     const callArgs = mockFetch.mock.calls[0][1];
     const bodyParams = new URLSearchParams(callArgs.body);
@@ -191,6 +230,16 @@ describe('LinkedInProvider', () => {
     // This depends on how resolveCapabilities is implemented in capability-resolver.ts
     // Let's assume the resolver maps nothing for openid, but if there's no mapping it returns [] or ACCOUNT_READ
   });
+
+  it('returns capabilities including POST_PUBLISH when grantedScopes includes w_member_social and externalId is provided', async () => {
+    const capabilities = await provider.getCapabilities({
+      provider: 'linkedin',
+      grantedScopes: ['email', 'openid', 'profile', 'w_member_social'],
+      externalId: 'urn:li:person:123',
+    });
+    expect(capabilities).toContain('POST_PUBLISH');
+  });
+
   describe('revokeToken', () => {
     it('gracefully no-ops without error as LinkedIn lacks server-side token revocation', async () => {
       await expect(
