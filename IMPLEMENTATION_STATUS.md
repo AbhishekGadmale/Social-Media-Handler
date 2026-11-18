@@ -5209,7 +5209,7 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
 
 ### 1. Summary & Motivation
 
-- **Status**: implemented on branch `fix/oauth-callback-error-description`; PR pending open against main
+- **Status**: implemented on branch `fix/oauth-callback-error-description`; PR #86 open against main at reviewed head `0105e2effd5a3f5b8ab5d929429547e354b74604`
 - **Origin & Live Evidence (2026-11-18)**:
   - During the first real LinkedIn connect attempt, user denial failed with:
     `{"error":{"code":"BadRequestException","message":"property error_description should not exist"}}`.
@@ -5279,9 +5279,10 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
 
 ### 4. Release Gate & Next Steps
 
-1. **Release Gate**:
+1. **CI Quality Gates**:
+   - CI on the reviewed head `0105e2ef` is 6/6 green (all 2026-11-18): GitGuardian Security Checks 18:41:18Z, Application Builds 18:42:10Z, API E2E Tests 18:42:34Z, Code Quality (Lint & Typecheck) 18:42:46Z, Tests 18:42:55Z, Docker Build & Smoke Test 18:49:32Z. Note: CI re-runs on the docs-fix head and must be re-verified 6/6 green there before merge.
+2. **Release Gate**:
    - **Live Deployment**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending external infrastructure provisioning, live email delivery verification, live payment credentials, and disaster recovery rehearsals G18/G19).
-2. **Next Steps**:
-   - Push branch `fix/oauth-callback-error-description` and open pull request against `main`.
-   - Re-verify CI 6/6 green on GitHub Actions.
+3. **Next Steps**:
+   - PR #86 is open against main; CI was 6/6 green on the reviewed head `0105e2ef`; next step is the docs-fix re-review, then merge by the owner.
    - Do NOT merge on this prompt alone.
