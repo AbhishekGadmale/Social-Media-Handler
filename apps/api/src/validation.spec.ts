@@ -60,6 +60,18 @@ describe('Validation Tests', () => {
       expect(errors.length).toBe(0);
     });
 
+    it('should validate provider error callback with error, error_description, and state under strict whitelist', async () => {
+      const dto = new OAuthCallbackQueryDto();
+      dto.error = 'user_cancelled_authorize';
+      dto.error_description = 'The user cancelled the authorization request.';
+      dto.state = 'valid-state';
+      const errors = await validate(dto, {
+        whitelist: true,
+        forbidNonWhitelisted: true,
+      });
+      expect(errors.length).toBe(0);
+    });
+
     it('should reject missing code on successful path (no error)', async () => {
       const dto = new OAuthCallbackQueryDto();
       dto.state = 'valid-state';

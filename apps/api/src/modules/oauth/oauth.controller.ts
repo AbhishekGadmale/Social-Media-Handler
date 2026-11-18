@@ -95,7 +95,7 @@ export class OAuthController {
     @Req() req: Request,
     @Res() res: Response,
   ) {
-    const { code, state, error } = query;
+    const { code, state, error, error_description } = query;
     const requestId = getOrCreateCorrelationId(req);
 
     if (req.user && !req.user.emailVerified) {
@@ -115,7 +115,11 @@ export class OAuthController {
         requestId,
         ipAddress: req.ip,
         userAgent: req.headers?.['user-agent'],
-        metadata: { provider, reason: 'OAUTH_PROVIDER_DENIED' },
+        metadata: {
+          provider,
+          reason: 'OAUTH_PROVIDER_DENIED',
+          ...(error_description ? { errorDescription: error_description } : {}),
+        },
       });
       const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
       return res.redirect(`${frontendUrl}/dashboard?error=oauth_failed`);

@@ -5199,3 +5199,89 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
 3. **Next Steps**:
    - PR #85 is open against main; CI was 6/6 green on the reviewed head `098267d9`; next step is the docs-fix re-review, then merge by the owner.
    - Do NOT merge on this prompt alone.
+
+
+---
+
+## 68. OAuth Callback DTO Error Description Support & Denied-Path Audit Threading
+
+*(Note: Section 68 was deliberately reserved during previous milestones PR #81–#85 / §§69–73 and is documented here out of numerical sequence)*
+
+### 1. Summary & Motivation
+
+- **Status**: implemented on branch `fix/oauth-callback-error-description`; PR pending open against main
+- **Origin & Live Evidence (2026-11-18)**:
+  - During the first real LinkedIn connect attempt, user denial failed with:
+    `{"error":{"code":"BadRequestException","message":"property error_description should not exist"}}`.
+  - LinkedIn had redirected back to the OAuth callback with `error` and `error_description` (the standard OAuth 2.0 user-facing authorization refusal).
+  - However, `apps/api/src/modules/oauth/dto/oauth-callback-query.dto.ts` declared only `code`, `state`, `iss`, `scope`, and `error`.
+  - The API's global `ValidationPipe` (`whitelist: true`, `forbidNonWhitelisted: true`) rejected the incoming callback query with a 400 Bad Request before controller execution.
+  - As a result, the real provider error was masked, and the controller's provider-denied handling in `apps/api/src/modules/oauth/oauth.controller.ts` (which audits `OAUTH_CONNECTION_FAILED` with metadata `{ provider, reason: 'OAUTH_PROVIDER_DENIED' }` and redirects to `/dashboard?error=oauth_failed`) was completely unreachable.
+  - This vulnerability affected all provider error callbacks (Meta, Google, and LinkedIn all transmit `error_description` upon user cancellation or denial).
+- **The Fix**:
+  1. `apps/api/src/modules/oauth/dto/oauth-callback-query.dto.ts`: added optional field `@IsOptional() @IsString() error_description?: string;` matching existing DTO field conventions.
+  2. `apps/api/src/modules/oauth/oauth.controller.ts`: extended query destructuring in `callbackProvider` to extract `error_description`. On the provider-denied branch (`if (error)`), threaded the description into the `OAUTH_CONNECTION_FAILED` audit metadata under the key `errorDescription` only when present (`...(error_description ? { errorDescription: error_description } : {})`).
+  3. No other handler behavior changes: identical redirect to `${frontendUrl}/dashboard?error=oauth_failed`, identical audit action, identical `OAUTH_PROVIDER_DENIED` reason.
+- **Scope & Exclusions**:
+  - Touched files strictly limited to:
+    - `apps/api/src/modules/oauth/dto/oauth-callback-query.dto.ts`
+    - `apps/api/src/modules/oauth/oauth.controller.ts`
+    - `apps/api/src/modules/oauth/oauth.controller.spec.ts`
+    - `apps/api/src/validation.spec.ts`
+    - `IMPLEMENTATION_STATUS.md`
+  - Zero modifications to provider packages (`packages/providers/`), `oauth.service.ts`, or global `ValidationPipe` configuration.
+  - Zero new npm dependencies.
+
+### 2. Architecture & Implementation Details
+
+#### A. DTO Extension (`apps/api/src/modules/oauth/dto/oauth-callback-query.dto.ts`)
+- Added `error_description` field:
+  ```ts
+  @IsOptional()
+  @IsString()
+  error_description?: string;
+  ```
+- Whitelists `error_description` so that NestJS `ValidationPipe` with `forbidNonWhitelisted: true` accepts provider denial callbacks without throwing `BadRequestException`.
+
+#### B. Audit Threading (`apps/api/src/modules/oauth/oauth.controller.ts`)
+- Extended query destructuring:
+  ```ts
+  const { code, state, error, error_description } = query;
+  ```
+- In provider-denied branch (`if (error)`), included `errorDescription` in audit log metadata only when provided:
+  ```ts
+  metadata: {
+    provider,
+    reason: 'OAUTH_PROVIDER_DENIED',
+    ...(error_description ? { errorDescription: error_description } : {}),
+  },
+  ```
+
+#### C. Test Suites & Locations
+- Tests reside across two spec files:
+  1. `apps/api/src/modules/oauth/oauth.controller.spec.ts`:
+     - Added test asserting that a callback query with `error` + `error_description` reaches provider-denied handling: redirects to dashboard `oauth_failed` URL, does NOT produce a 400, and `OAUTH_CONNECTION_FAILED` audit metadata carries `errorDescription`.
+     - Added test verifying through `ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true })` that a query containing `error`, `error_description`, and `state` passes validation without throwing `BadRequestException` and successfully executes the controller's provider-denied flow.
+     - Preserved existing test verifying callback query with `error` only (no `error_description`) reaches provider-denied handling, redirects as before, and omits `errorDescription` from audit metadata.
+  2. `apps/api/src/validation.spec.ts`:
+     - Added test asserting that `OAuthCallbackQueryDto` populated with `error`, `error_description`, and `state` passes `class-validator` `validate()` with `whitelist: true, forbidNonWhitelisted: true` with 0 validation errors.
+
+### 3. Verification & Test Evidence
+
+- **OAuth Controller Spec (`apps/api/src/modules/oauth/oauth.controller.spec.ts`)**:
+  - 20/20 tests PASS (+2 new tests).
+- **Validation Spec (`apps/api/src/validation.spec.ts`)**:
+  - 17/17 tests PASS (+1 new test).
+- **Combined Spec Execution (`pnpm --filter @agency-os/api test src/modules/oauth/oauth.controller.spec.ts src/validation.spec.ts`)**:
+  - 2/2 test files PASS, 37/37 tests PASS.
+- **Monorepo Quality Gates (`pnpm turbo run lint typecheck build`)**:
+  - All 18 tasks across 9 packages PASS (0 errors).
+
+### 4. Release Gate & Next Steps
+
+1. **Release Gate**:
+   - **Live Deployment**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending external infrastructure provisioning, live email delivery verification, live payment credentials, and disaster recovery rehearsals G18/G19).
+2. **Next Steps**:
+   - Push branch `fix/oauth-callback-error-description` and open pull request against `main`.
+   - Re-verify CI 6/6 green on GitHub Actions.
+   - Do NOT merge on this prompt alone.
