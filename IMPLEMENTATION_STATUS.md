@@ -4726,6 +4726,79 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
    - PR #79 is open against `main` at the reviewed head with CI 6/6 green. Next step is the docs-fix re-review, then merge by the owner.
    - Do NOT merge on this prompt alone.
 
+---
+
+## 67. LinkedIn OAuth Scope Parsing Bug Fix
+
+### 1. Summary & Motivation
+
+- **Status**: **IN PROGRESS** (Branch `fix/linkedin-scope-parsing`)
+- **Origin**: During the first live LinkedIn connect test (2026-11-18), a production bug was confirmed: the LinkedIn account connected successfully, but the Accounts page permanently displayed `Publishing Unavailable`, and clicking "Grant Publishing Access" never cleared the error state.
+- **Database Evidence**: Inspection of the live database revealed that `SocialConnection.grantedScopes` was stored as `{"email,openid,profile,w_member_social"}` — a ONE-element array containing the entire comma-delimited scope string.
+- **Root Cause**:
+  - The OAuth 2.0 specification allows providers to format granted scope strings. LinkedIn's token endpoint (`https://www.linkedin.com/oauth/v2/accessToken`) documents and returns the `scope` response field as a COMMA-separated string (e.g. `"r_liteprofile,r_emailaddress,w_member_social"` or `"email,openid,profile,w_member_social"`).
+  - `packages/providers/linkedin/linkedin.provider.ts` erroneously parsed `data.scope` with `data.scope.split(' ')` in two locations: `exchangeAuthorizationCode` and `refreshCredentials`.
+  - Splitting a comma-separated string on spaces resulted in a single mangled array element: `["email,openid,profile,w_member_social"]`.
+  - Downstream, `getCapabilities` evaluates `context.grantedScopes?.includes('w_member_social')`. Because `"email,openid,profile,w_member_social"` !== `"w_member_social"`, the lookup failed unconditionally, preventing the `POST_PUBLISH` capability from ever being computed or persisted.
+- **Why CI Never Caught It**:
+  - In `packages/providers/linkedin/linkedin.provider.spec.ts`, the mock token-response fixtures for `exchangeAuthorizationCode` and `refreshCredentials` encoded the exact same false assumption by supplying `scope: 'openid profile email'` (space-separated). The unit tests passed because the test fixtures matched the bug rather than the provider's actual API contract.
+- **Operator Note (No Migration Needed)**:
+  - Existing connections in the database store the mangled single-element array. Following deployment of this fix, performing a fresh "Grant Publishing Access" or reconnecting the LinkedIn account invokes `exchangeAuthorizationCode` and re-stores the cleanly parsed scopes and `POST_PUBLISH` capability via `SocialAccountRepository.upsertWithConnection`. No database migration is necessary.
+- **Deliberate Exclusions**:
+  - `getAuthorizationUrl` joins requested scopes with spaces (`this.BASE_SCOPES.join(' ')` or Set iteration), which is the standard OAuth 2.0 query parameter format required by LinkedIn's authorization endpoint — this is correct and intentionally untouched.
+  - The YouTube provider's `data.scope.split(' ')` is correct because Google genuinely returns space-separated scopes — intentionally untouched.
+  - The Meta provider does not parse `data.scope` — intentionally untouched.
+  - The `OAuthCallbackQueryDto` error-description handling gap is a separate issue and out of scope for this PR.
+
+### 2. Architecture & Implementation Details
+
+#### A. Provider Scope Parser Helper (`packages/providers/linkedin/linkedin.provider.ts`)
+- Added a shared module-level helper function `parseGrantedScopes`:
+  ```ts
+  function parseGrantedScopes(scope: string | undefined): string[] {
+    if (!scope) return ['openid', 'profile', 'email'];
+    const parsed = scope.split(/[\s,]+/).map((s) => s.trim()).filter(Boolean);
+    return parsed.length > 0 ? parsed : ['openid', 'profile', 'email'];
+  }
+  ```
+- Uses `/[\s,]+/` regex to robustly split across commas, spaces, or both, trims each scope, filters out empty tokens, and safely falls back to base scopes `['openid', 'profile', 'email']`.
+- Updated call sites:
+  - `exchangeAuthorizationCode`: `scopes: parseGrantedScopes(data.scope)`
+  - `refreshCredentials`: `scopes: parseGrantedScopes(data.scope)`
+- Preserved all other provider interfaces, constants (`BASE_SCOPES`, `ALLOWED_SCOPES`), and methods.
+
+#### B. Test Suite Updates (`packages/providers/linkedin/linkedin.provider.spec.ts`)
+- **Corrected Existing Fixtures**:
+  - `exchangeAuthorizationCode` fixture updated from `scope: 'openid profile email'` to `scope: 'email,openid,profile'`; asserted `expect(creds.scopes).toEqual(['email', 'openid', 'profile'])`.
+  - `refreshCredentials` fixture updated from `scope: 'openid profile email'` to `scope: 'email,openid,profile'`; asserted `expect(creds.scopes).toEqual(['email', 'openid', 'profile'])`.
+- **Added Regression Test**:
+  - Mocks token response with LinkedIn's live response format: `scope: 'email,openid,profile,w_member_social'`.
+  - Asserts `creds.scopes` equals `['email', 'openid', 'profile', 'w_member_social']` (4 elements). Under the pre-fix code, this returned a single element `['email,openid,profile,w_member_social']` and failed.
+- **Added Robustness Test**:
+  - Asserts that space-separated scope strings (`'openid profile email'`) still parse cleanly to `['openid', 'profile', 'email']`.
+- **Added Capability Integration Test**:
+  - Asserts that `getCapabilities` with `grantedScopes: ['email', 'openid', 'profile', 'w_member_social']` and `externalId: 'urn:li:person:123'` computes and returns capabilities including `'POST_PUBLISH'`.
+
+### 3. Verification & Test Evidence
+
+- **Providers Unit Test Suite (`pnpm --filter @agency-os/providers test`)**:
+  - 15/15 test files PASS, 244/244 tests PASS (previously 241; +3 tests).
+  - `linkedin.provider.spec.ts`: 14/14 tests PASS (previously 11; +3 tests).
+- **Monorepo Quality Gates (`pnpm turbo run lint typecheck build`)**:
+  - All 18 tasks across 9 packages PASS (0 errors).
+
+### 4. Release Gate & Next Steps
+
+1. **CI Quality Gates**:
+   - Verification pending branch push and GitHub Actions execution for PR #80.
+2. **Release Gate**:
+   - **Live Deployment**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending external infrastructure provisioning, live email delivery verification, live payment credentials, and disaster recovery rehearsals G18/G19).
+3. **Next Steps**:
+   - Push branch `fix/linkedin-scope-parsing` and open PR targeting `main`.
+   - Monitor CI until all 6 workflows complete green.
+   - Do NOT merge on this prompt alone.
+
+
 
 
 

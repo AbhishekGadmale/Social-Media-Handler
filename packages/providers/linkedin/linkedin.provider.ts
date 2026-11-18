@@ -21,6 +21,12 @@ import { resolveCapabilities } from '../core/capability-resolver';
 import { ProviderCoordinationError } from '../core/errors';
 import { ProviderApiError } from '../core/errors/index';
 
+function parseGrantedScopes(scope: string | undefined): string[] {
+  if (!scope) return ['openid', 'profile', 'email'];
+  const parsed = scope.split(/[\s,]+/).map((s) => s.trim()).filter(Boolean);
+  return parsed.length > 0 ? parsed : ['openid', 'profile', 'email'];
+}
+
 export class LinkedInProvider implements ISocialProvider, IPublishingProvider {
   private clientId: string;
   private clientSecret: string;
@@ -127,7 +133,7 @@ export class LinkedInProvider implements ISocialProvider, IPublishingProvider {
       accessToken: data.access_token,
       refreshToken: data.refresh_token,
       expiresAt: data.expires_in ? new Date(Date.now() + data.expires_in * 1000) : undefined,
-      scopes: data.scope ? data.scope.split(' ') : ['openid', 'profile', 'email'],
+      scopes: parseGrantedScopes(data.scope),
     };
   }
 
@@ -175,7 +181,7 @@ export class LinkedInProvider implements ISocialProvider, IPublishingProvider {
       accessToken: data.access_token,
       refreshToken: data.refresh_token || refreshToken,
       expiresAt: data.expires_in ? new Date(Date.now() + data.expires_in * 1000) : undefined,
-      scopes: data.scope ? data.scope.split(' ') : ['openid', 'profile', 'email'],
+      scopes: parseGrantedScopes(data.scope),
     };
   }
 
