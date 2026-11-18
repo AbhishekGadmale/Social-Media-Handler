@@ -4813,7 +4813,7 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
 
 ### 1. Summary & Motivation
 
-- **Status**: IN PROGRESS (branch `fix/youtube-publishing-scope`, PR pending against `main`)
+- **Status**: implemented on branch `fix/youtube-publishing-scope`; PR #81 open against main at reviewed head `5f57336ace73cc2f04f82c50429d97768d7c3419`
 - **Origin**: During the first live YouTube connect test (2026-11-18), a production bug was confirmed: the YouTube channel connected successfully, but the Accounts page permanently displayed `Publishing Unavailable`, and clicking "Grant Publishing Access" never cleared the error state.
 - **Root Cause**:
   - The YouTube provider (`packages/providers/youtube/youtube.provider.ts`) defaults to requesting only `'https://www.googleapis.com/auth/youtube.readonly'`.
@@ -4869,10 +4869,9 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
 ### 4. Release Gate & Next Steps
 
 1. **CI Quality Gates**:
-   - Verification pending branch push and GitHub Actions execution for PR.
+   - CI on the reviewed head `5f57336a` is 6/6 green (all 2026-11-18): GitGuardian Security Checks 11:00:28Z, Application Builds 11:01:32Z, Code Quality (Lint & Typecheck) 11:01:51Z, API E2E Tests 11:02:06Z, Docker Build & Smoke Test 11:09:47Z, Tests 11:23:56Z. The Tests job's first attempt failed at 11:01:56Z in the apps/worker package (untouched by this PR) and passed on re-run at 11:23:56Z with no code change; the Tests job was also green on base main `84e08f20` the same morning. Note: CI re-runs on the docs-fix head and must be re-verified 6/6 green there before merge.
 2. **Release Gate**:
    - **Live Deployment**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending external infrastructure provisioning, live email delivery verification, live payment credentials, and disaster recovery rehearsals G18/G19).
 3. **Next Steps**:
-   - Push branch `fix/youtube-publishing-scope` to GitHub and open PR against `main`.
-   - Verify CI 6/6 green.
+   - PR #81 is open against main; CI was 6/6 green on the reviewed head `5f57336a` (Tests green on re-run after a first-attempt worker flake); next step is the docs-fix re-review, then merge by the owner.
    - Do NOT merge on this prompt alone.
