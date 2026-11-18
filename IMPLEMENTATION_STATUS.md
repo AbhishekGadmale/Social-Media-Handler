@@ -5094,7 +5094,7 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
 
 ### 1. Summary & Motivation
 
-- **Status**: implemented on branch `fix/youtube-category-id`; PR pending open against main
+- **Status**: implemented on branch `fix/youtube-category-id`; PR #85 open against main at reviewed head `098267d907df30507e568787c618fcfcce60000a`
 - **Origin**: During a live YouTube publish attempt (2026-11-18), publication failed with `failureCode: 'YOUTUBE_INVALID_METADATA'`. The variant's stored `providerOptions` were `{"title": " chchg  ", "categoryId": "vlog", "privacyStatus": "public"}` — the user had entered the string `"vlog"` into the publishing page's Category field. This value was stored verbatim and passed to YouTube Data API's `videos.insert`, which rejected it with HTTP 400 (YouTube category IDs are numeric IDs from YouTube's standard category list).
 - **Secondary Root Cause (Diagnostics Loss)**:
   - In `YouTubeProvider.publish()`, every non-auth, non-quota 4xx was mapped to a generic `YOUTUBE_INVALID_METADATA` failure without recording `error.errors[0].reason` or `error.message`.
@@ -5147,26 +5147,33 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
 - In `YouTubeProviderOptionsSchema`:
   - Updated `categoryId` to enforce numeric strings:
     `categoryId: z.string().regex(/^\d+$/, 'categoryId must be a numeric YouTube category ID').optional()`.
-  - Non-numeric strings now fail schema validation immediately during pre-publish checks with `failureCode: 'PROVIDER_OPTION_INVALID'`.
+  - Non-numeric strings now fail schema validation: `validateProviderOptions` returns `valid: false` with an issue on field `'categoryId'` carrying the message `'categoryId must be a numeric YouTube category ID'` (issue code `INVALID_OPTION`), which `PublishabilityValidator` wraps as `PROVIDER_OPTION_INVALID` during pre-publish checks.
 
 #### C. Preserving Google Rejection Reasons in Errors (`packages/providers/youtube/youtube.provider.ts`)
-- Added helper `formatFailureMessage(baseMessage, error)`:
-  - Extracts `reason = error?.errors?.[0]?.reason` and `message = error?.message`.
-  - Appends `(reason: ...)` and `(message: ...)` when available, falling back cleanly to the base message when absent.
+- Added helper `formatFailureMessage(baseMessage, reason?, errorMessage?)`:
+  - It does not extract error properties itself; the `publish()` catch block computes:
+    ```ts
+    const firstError = error.errors?.[0];
+    const reason = firstError?.reason || error.reason;
+    const errorMsg = firstError?.message;
+    ```
+    and passes them in.
+  - The helper appends `' (reason: <reason>: <errorMessage>).'`, `' (reason: <reason>).'`, or `' (message: <errorMessage>).'` to the base message, falling back to the plain base message when neither is provided.
 - Applied across all catch block branches in `publish()`:
-  - 401 Unauthorized (`PROVIDER_AUTH_FAILED`)
-  - 429 / rateLimitExceeded (`RATE_LIMITED`)
-  - 403 quotaExceeded (`PROVIDER_QUOTA_EXCEEDED`)
-  - 403 other / upload permission (`PROVIDER_PERMISSION_DENIED`)
-  - 400..499 other (`YOUTUBE_INVALID_METADATA`)
-  - 5xx / other errors (`PROVIDER_TEMPORARY_ERROR`)
-- Preserves existing `failureCode` and `failureCategory` classifications without disruption.
+  - 401 → `AUTH_REQUIRED / YOUTUBE_AUTH_REQUIRED`
+  - 429 → `RATE_LIMITED / YOUTUBE_RATE_LIMITED`
+  - 403 with reason `quotaExceeded` → `RATE_LIMITED / YOUTUBE_QUOTA_EXHAUSTED`
+  - 403 with reason `insufficientPermissions` → `AUTH_REQUIRED / PROVIDER_SCOPE_REQUIRED`
+  - 403 other → `AUTH_REQUIRED / YOUTUBE_UPLOAD_FORBIDDEN`
+  - other 4xx (400–499) → `VALIDATION / YOUTUBE_INVALID_METADATA`
+  - 5xx / network / no status → `UNKNOWN_RESULT / YOUTUBE_UPLOAD_OUTCOME_UNKNOWN`
+- No `failureCode` or `failureCategory` changed in any branch; only the message strings gained the reason/message suffix.
 
 #### D. Test Suite Updates
 - `packages/providers/youtube/youtube.provider.spec.ts`:
   - Added test verifying `validateProviderOptions` accepts numeric category ID (`'22'`).
-  - Added test verifying `validateProviderOptions` rejects non-numeric category ID (`'vlog'`) with `PROVIDER_OPTION_INVALID`.
-  - Added test verifying `publish()` returns `YOUTUBE_INVALID_METADATA` and includes Google's rejection reason in `errorMessage` when Google rejects with HTTP 400 `invalidCategoryId`.
+  - Added test verifying `validateProviderOptions` rejects non-numeric category ID (`'vlog'`) (returns `valid: false` with issue on field `'categoryId'`, message `'categoryId must be a numeric YouTube category ID'`, and issue code `INVALID_OPTION`, which `PublishabilityValidator` wraps as `PROVIDER_OPTION_INVALID`).
+  - Added test verifying `publish()` returns `YOUTUBE_INVALID_METADATA` and includes Google's rejection reason in the result's `message` field when Google rejects with HTTP 400 `invalidCategoryId`.
 - `apps/web/src/app/[workspaceId]/publishing/[postId]/page.spec.tsx`:
   - Added test asserting the Category control is a `<select>` with 15 options (empty default + 14 categories), and choosing a category (e.g. "People & Blogs") calls `api.patch` with `providerOptions.categoryId = '22'`.
   - Added test asserting selecting "No category" deletes the `categoryId` key from `providerOptions`, and legacy non-numeric values (e.g. `'vlog'`) safely render "No category".
@@ -5185,9 +5192,10 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
 
 ### 4. Release Gate & Next Steps
 
-1. **Release Gate**:
+1. **CI Quality Gates**:
+   - CI on the reviewed head `098267d9` is 6/6 green (all 2026-11-18): GitGuardian Security Checks 17:48:16Z, Application Builds 17:49:13Z, Code Quality (Lint & Typecheck) 17:49:27Z, API E2E Tests 17:49:47Z, Tests 17:50:12Z, Docker Build & Smoke Test 17:56:43Z. Note: CI re-runs on the docs-fix head and must be re-verified 6/6 green there before merge.
+2. **Release Gate**:
    - **Live Deployment**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending external infrastructure provisioning, live email delivery verification, live payment credentials, and disaster recovery rehearsals G18/G19).
-2. **Next Steps**:
-   - Push branch `fix/youtube-category-id` and open pull request against `main`.
-   - Re-verify CI 6/6 green on GitHub Actions.
+3. **Next Steps**:
+   - PR #85 is open against main; CI was 6/6 green on the reviewed head `098267d9`; next step is the docs-fix re-review, then merge by the owner.
    - Do NOT merge on this prompt alone.
