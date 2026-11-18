@@ -4885,7 +4885,7 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
 
 ### 1. Summary & Motivation
 
-- **Status**: IN PROGRESS (branch `fix/youtube-upgrade-scope`, PR pending against `main`)
+- **Status**: implemented on branch `fix/youtube-upgrade-scope`; PR #82 open against main at reviewed head `d6292fca3be8e186e6cdbb278eba7f33bb6e3bf4`
 - **Origin**: During the live test immediately after PR #81 merged (2026-11-18), clicking the "Enable YouTube publishing access" button on the Publishing edit page (`/[workspaceId]/publishing/[postId]`) failed with `Failed to initiate permission upgrade.` The live API error log revealed: `Invalid or unauthorized OAuth scope requested: youtube.upload`.
 - **Root Cause**:
   - PR #81 corrected the YouTube connect URL in `accounts/page.tsx` and the reconnect URL in `account-card.tsx` to pass the full URL `https://www.googleapis.com/auth/youtube.upload`.
@@ -4923,10 +4923,9 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
 ### 4. Release Gate & Next Steps
 
 1. **CI Quality Gates**:
-   - Verification pending branch push and GitHub Actions execution for PR.
+   - CI on the reviewed head `d6292fca` is 6/6 green (all 2026-11-18): GitGuardian Security Checks 12:06:08Z, Application Builds 12:06:55Z, Code Quality (Lint & Typecheck) 12:07:31Z, Tests 12:07:52Z, API E2E Tests 12:07:54Z, Docker Build & Smoke Test 12:14:44Z. Note: CI re-runs on the docs-fix head and must be re-verified 6/6 green there before merge.
 2. **Release Gate**:
    - **Live Deployment**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending external infrastructure provisioning, live email delivery verification, live payment credentials, and disaster recovery rehearsals G18/G19).
 3. **Next Steps**:
-   - Push branch `fix/youtube-upgrade-scope` to GitHub and open PR against `main`.
-   - Verify CI 6/6 green.
+   - PR #82 is open against main; CI was 6/6 green on the reviewed head `d6292fca`; next step is the docs-fix re-review, then merge by the owner.
    - Do NOT merge on this prompt alone.
