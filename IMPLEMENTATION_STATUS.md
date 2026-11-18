@@ -5001,3 +5001,86 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
 3. **Next Steps**:
    - PR #83 is open against main; CI was 6/6 green on the reviewed head `26ed6ec4`; next step is the docs-fix re-review, then merge by the owner.
    - Do NOT merge on this prompt alone.
+
+
+---
+
+## 72. Worker Post-Checkpoint Failure Routing Fix
+
+*(Note: Section 68 remains reserved for the OAuthCallbackQueryDto error_description fix, per task specification; Section 69 was PR #81; Section 70 was PR #82; Section 71 was PR #83)*
+
+### 1. Summary & Motivation
+
+- **Status**: implemented on branch `fix/publish-failure-phase-routing`; PR pending open against main
+- **Origin**: During the first real YouTube publish attempt (2026-11-18), the worker log recorded:
+  - `publication.claimed` (dispatchVersion 1), then `publication.provider_publish_start` (YOUTUBE)
+  - ~77s later: `publication.transition_failed_failed` — `"Failed to transition to FAILED: Cannot transition from PUBLISH_REQUESTED to FAILED"`
+  - ~4 min later the background dispatcher recovered the dangling execution as stale (`dispatcher.recovered_stale_unknown`), setting the attempt to `EXECUTION_STALE` and erasing the provider's real failure reason.
+- **Root Cause**:
+  - `YouTubeProvider.publish()` calls `context.beforeFinalMutation()` immediately prior to `youtube.videos.insert(...)`. This moves the execution phase to `PUBLISH_REQUESTED`.
+  - When the upload failed (e.g. Google rejected the call due to missing upload scope or auth error), the provider returned a non-success result `{ success: false, failureCategory: 'AUTH_REQUIRED', failureCode: 'PROVIDER_SCOPE_REQUIRED' }`.
+  - In `apps/worker/src/publishing/publishing.processor.ts` (~lines 898-957), the returned-result failure router evaluated:
+    ```ts
+    const isUnknownPublish =
+      isPublishRequested &&
+      (result.failureCategory === 'UNKNOWN_RESULT' ||
+        result.failureCategory === 'TRANSIENT');
+    ```
+    and only routed to `this.handleUnknown` if `result.failureCategory === 'UNKNOWN_RESULT' || isUnknownPublish || isAmbiguousContainer`.
+  - When `failureCategory` was `'AUTH_REQUIRED'` (or any category other than `UNKNOWN_RESULT` or `TRANSIENT`), `isUnknownPublish` evaluated to `false`, causing execution to fall through to `this.handleFailure(...)`.
+  - `handleFailure` called `transitionOperation(variant.id, attemptId, 'FAILED', ...)`. However, in `ExecutionMetadataRepository.ts`, `PUBLISH_REQUESTED` only permits transitions to `COMPLETED`, `AMBIGUOUS`, or `PROCESSING_REMOTE`. Transitioning directly from `PUBLISH_REQUESTED` to `FAILED` is forbidden by design because the provider mutation was already in-flight and its remote outcome cannot be assumed failed.
+  - The catch block in `handleFailure` caught the throw, logged `publication.transition_failed_failed`, swallowed the exception, and exited without setting any terminal status on the variant.
+  - The publication was left dangling in `PUBLISHING` until the dispatcher recovered it minutes later as `EXECUTION_STALE`, wiping out the provider's actual `failureCode`.
+  - In contrast, the exception handler (~lines 798-814) already had `if (isPublishRequested || isProcessingRemote) ... handleUnknown`. The returned-result path was missing this check.
+- **The Fix**:
+  - In `apps/worker/src/publishing/publishing.processor.ts`, simplified the condition so that whenever `isPublishRequested` is true, the failure result routes unconditionally to `this.handleUnknown(...)`, regardless of `result.failureCategory`.
+  - `handleUnknown` records the provider's `result.failureCode` (e.g. `PROVIDER_SCOPE_REQUIRED`) on the attempt, transitions the execution phase to `AMBIGUOUS`, and sets variant status to `UNKNOWN`, preventing crashes and avoiding dangling executions.
+  - Pre-checkpoint failures (execution phase `INITIATED`) continue routing to `this.handleFailure(...)` and cleanly transitioning to `FAILED`.
+- **Deliberate Exclusions**:
+  - Strictly no modifications to `PublishabilityValidator.ts`, any provider, `handleFailure`, `handleUnknown`, the dispatcher, or the phase state machine.
+  - Zero new npm dependencies.
+
+### 2. Architecture & Implementation Details
+
+#### A. PublishingProcessor Result Routing (`apps/worker/src/publishing/publishing.processor.ts`)
+- In `process()` result-handling block (~lines 898-912):
+  - Removed `isUnknownPublish` variable definition.
+  - Updated the router condition:
+    ```ts
+    const isPublishRequested =
+      (currentSourcePhase as string) === 'PUBLISH_REQUESTED';
+    const isAmbiguousContainer =
+      result.failureCode === 'AMBIGUOUS_PUBLISHED_CONTAINER';
+
+    if (
+      result.failureCategory === 'UNKNOWN_RESULT' ||
+      isPublishRequested ||
+      isAmbiguousContainer
+    ) {
+      // routes to this.handleUnknown, preserving result.failureCode
+    ```
+
+#### B. Test Suite Updates (`apps/worker/src/publishing/publishing.worker.spec.ts`)
+- Updated `TestPublishingProvider.publish` mock signature to accept `(credentials, input, mediaSource?, context?)`.
+- Added test fixture trigger `trigger-post-checkpoint-auth-fail` which executes `await context.beforeFinalMutation()` and returns `{ success: false, failureCategory: 'AUTH_REQUIRED', failureCode: 'PROVIDER_SCOPE_REQUIRED' }`.
+- Added regression test:
+  - `routes post-checkpoint failure result (phase PUBLISH_REQUESTED) with AUTH_REQUIRED to handleUnknown and preserves failureCode`: verifies variant ends in `UNKNOWN`, metadata phase is `AMBIGUOUS`, and attempt status is `FAILED` with `failureCategory: 'UNKNOWN_RESULT'` and `failureCode: 'PROVIDER_SCOPE_REQUIRED'`.
+- Added safety test:
+  - `routes pre-checkpoint failure result (phase INITIATED) to handleFailure and ends in FAILED`: verifies variant ends in `FAILED`, metadata phase is `FAILED`, and attempt status is `FAILED` with `failureCategory: 'AUTH_REQUIRED'` and `failureCode: 'TOKEN_EXPIRED'`.
+
+### 3. Verification & Test Evidence
+
+- **Worker Unit Tests (`pnpm --filter @agency-os/worker test`)**:
+  - `publishing.worker.spec.ts`: 24/24 tests PASS (+2 new tests).
+- **Monorepo Quality Gates (`pnpm turbo run lint typecheck build`)**:
+  - All 18 tasks across 9 packages PASS (0 errors).
+
+### 4. Release Gate & Next Steps
+
+1. **CI Quality Gates**:
+   - Verification pending branch push and GitHub Actions execution for PR.
+2. **Release Gate**:
+   - **Live Deployment**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending external infrastructure provisioning, live email delivery verification, live payment credentials, and disaster recovery rehearsals G18/G19).
+3. **Next Steps**:
+   - Push branch `fix/publish-failure-phase-routing` and open PR against `main`.
+   - Do NOT merge on this prompt alone.
