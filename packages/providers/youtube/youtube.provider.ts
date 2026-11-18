@@ -29,6 +29,7 @@ import { google } from "googleapis";
 
 export const YouTubeProviderOptionsSchema = z
   .object({
+    title: z.string().max(100).optional(),
     privacyStatus: z.enum(["public", "private", "unlisted"]).default("private"),
     categoryId: z.string().optional(),
     tags: z.array(z.string()).optional(),
@@ -362,7 +363,17 @@ export class YouTubeProvider implements ISocialProvider, IPublishingProvider {
           maxLength: 5000,
           maxBytes: 256 * 1024 * 1024 * 1024, // 256 GB
           maxCount: 1,
-          mimeTypes: ["video/*"], // Simplest representation per prompt
+          mimeTypes: [
+            "video/mp4",
+            "video/quicktime",
+            "video/webm",
+            "video/x-matroska",
+            "video/x-msvideo",
+            "video/x-ms-wmv",
+            "video/x-flv",
+            "video/3gpp",
+            "video/mpeg",
+          ],
         },
         TEXT_POST: { supported: false },
         IMAGE_POST: { supported: false },

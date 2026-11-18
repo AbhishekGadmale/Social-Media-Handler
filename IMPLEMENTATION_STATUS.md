@@ -4929,3 +4929,75 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
 3. **Next Steps**:
    - PR #82 is open against main; CI was 6/6 green on the reviewed head `d6292fca`; next step is the docs-fix re-review, then merge by the owner.
    - Do NOT merge on this prompt alone.
+
+
+---
+
+## 71. YouTube Publishability Contract Harmonization & Options Alignment
+
+*(Note: Section 68 remains reserved for the OAuthCallbackQueryDto error_description fix, per task specification; Section 69 was PR #81; Section 70 was PR #82)*
+
+### 1. Summary & Motivation
+
+- **Status**: implemented on branch `fix/youtube-publishability-contracts`; PR #83 open against main at reviewed head `26ed6ec4cbcb29926dcc9017ea89b8069a462667`
+- **Origin**: During the first real YouTube publish attempt (2026-11-18), publication was rejected with `PUBLISHABILITY_FAILED`. The API error log revealed three distinct validation issues:
+  1. MIME constraint rejection: The attached video was rejected because `getPublishingCapabilities()` declared `mimeTypes: ["video/*"]`, whereas `PublishabilityValidator` and `execution.validator` perform exact inclusion checks (`!constraint.mimeTypes.includes(asset.mimeType)` against `'video/mp4'`).
+  2. `PROVIDER_OPTION_INVALID` for `privacyStatus`: The live validation log recorded: `Invalid enum value. Expected 'public' | 'private' | 'unlisted', received 'PUBLIC'` — the variant that failed carried `'PUBLIC'` (the uppercase `'PRIVATE'` was the add-target default in code), whereas `YouTubeProviderOptionsSchema` strictly validates against lowercase enum `['public', 'private', 'unlisted']`, matching the YouTube Data API contract.
+  3. `PROVIDER_OPTION_INVALID` (no field) — `"Unrecognized key(s) in object: 'title'"`: `YouTubeProviderOptionsSchema` is `.strict()` and omitted `title`, even though `publish()` reads `options.title`, capabilities advertise `'TITLE'`, and web sends `title`.
+- **Root Causes**:
+  1. *Wildcard MIME vs. exact match*: `youtube.provider.ts` used a wildcard `["video/*"]` rather than listing the concrete video MIME types supported by YouTube and expected by the exact-match validator.
+  2. *Uppercase privacy enum mismatch*: Web components set uppercase privacy values (`'PRIVATE'`), while the provider expects the YouTube-accurate lowercase enum.
+  3. *Missing title in strict options schema*: `YouTubeProviderOptionsSchema` declared only `privacyStatus`, `categoryId`, and `tags`, rejecting `title` due to `.strict()`.
+- **Provider Options Scoping Finding**:
+  - We verified during implementation that `privacyStatus` select, add-target default, and `handleUpdate` state were previously shared across all providers (unconditionally rendered and saved for any variant).
+  - We scoped the change so that `privacyStatus: 'private'` is only set on add-target when `account.provider === 'YOUTUBE'`, `handleUpdate` only writes `privacyStatus` for YouTube variants, and the privacy `<select>` is only rendered for YouTube variants, ensuring other providers' stored values are NOT altered.
+- **Operator Note (No Migration Needed)**:
+  - Variants already stored with an uppercase `privacyStatus` keep failing validation until the value is re-saved from the fixed dropdown (now lowercase) or the target is removed and re-added — no database migration is required.
+- **Deliberate Exclusions**:
+  - Strictly no changes to `PublishabilityValidator.ts` or any other provider (`packages/providers/youtube/` and `apps/web/` only).
+  - Zero new npm dependencies.
+
+### 2. Architecture & Implementation Details
+
+#### A. Provider Capabilities & Schema (`packages/providers/youtube/youtube.provider.ts`)
+- In `getPublishingCapabilities()`:
+  - Replaced wildcard `mimeTypes: ["video/*"]` with the concrete list of YouTube-accepted video MIME types:
+    `['video/mp4', 'video/quicktime', 'video/webm', 'video/x-matroska', 'video/x-msvideo', 'video/x-ms-wmv', 'video/x-flv', 'video/3gpp', 'video/mpeg']`.
+- In `YouTubeProviderOptionsSchema`:
+  - Added `title: z.string().max(100).optional()` (YouTube's 100-character title limit), preserving `.strict()` and all existing fields.
+
+#### B. Web Publishing UI (`apps/web/src/app/[workspaceId]/publishing/[postId]/page.tsx`)
+- Updated add-target handler: sets `providerOptions.privacyStatus: 'private'` exclusively for YouTube accounts.
+- Updated `TargetCard` state defaults: `privacyStatus` defaults to `'private'`.
+- Updated `handleUpdate`: only persists `privacyStatus` for YouTube variants.
+- Updated `TargetCard` JSX: scoped Privacy Status `<select>` to YouTube variants only (`variant.socialAccount?.provider === 'YOUTUBE'`), with lowercase option values `'public'`, `'private'`, `'unlisted'`.
+
+#### C. Test Suite Updates
+- `packages/providers/youtube/youtube.provider.spec.ts`:
+  - Added tests asserting `validateProviderOptions` accepts `{ title: 'My video', privacyStatus: 'public' }` and rejects `privacyStatus: 'PUBLIC'`.
+  - Added test asserting `getPublishingCapabilities()` VIDEO_POST `mimeTypes` contains `'video/mp4'` and contains no `'video/*'` wildcard entry.
+- `apps/web/src/app/[workspaceId]/publishing/[postId]/page.spec.tsx`:
+  - Updated existing test to assert lowercase `privacyStatus: 'private'`.
+  - Added test asserting add-target call sends `providerOptions.privacyStatus: 'private'` for YouTube targets.
+  - Added test asserting selecting an option from the privacy dropdown stores the lowercase value via `api.patch`.
+
+### 3. Verification & Test Evidence
+
+- **Providers Unit Test Suite (`pnpm --filter @agency-os/providers test`)**:
+  - 15/15 test files PASS, 247/247 tests PASS.
+  - `youtube.provider.spec.ts`: 19/19 tests PASS (+3 new tests).
+- **Web Unit Test Suite (`pnpm --filter @agency-os/web test`)**:
+  - 23/23 test files PASS, 250/250 tests PASS (+2 new tests).
+  - `publishing/[postId]/page.spec.tsx`: 33/33 tests PASS.
+- **Monorepo Quality Gates (`pnpm turbo run lint typecheck build`)**:
+  - All 18 tasks across 9 packages PASS (0 errors).
+
+### 4. Release Gate & Next Steps
+
+1. **CI Quality Gates**:
+   - CI on the reviewed head `26ed6ec4` is 6/6 green (all 2026-11-18): GitGuardian Security Checks 13:43:04Z, Application Builds 13:43:50Z, Code Quality (Lint & Typecheck) 13:44:06Z, Tests 13:44:21Z, API E2E Tests 13:44:33Z, Docker Build & Smoke Test 13:50:59Z. Note: CI re-runs on the docs-fix head and must be re-verified 6/6 green there before merge.
+2. **Release Gate**:
+   - **Live Deployment**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending external infrastructure provisioning, live email delivery verification, live payment credentials, and disaster recovery rehearsals G18/G19).
+3. **Next Steps**:
+   - PR #83 is open against main; CI was 6/6 green on the reviewed head `26ed6ec4`; next step is the docs-fix re-review, then merge by the owner.
+   - Do NOT merge on this prompt alone.

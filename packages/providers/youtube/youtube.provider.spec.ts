@@ -263,4 +263,48 @@ describe('YouTubeProvider', () => {
       expect(global.fetch).not.toHaveBeenCalled();
     });
   });
+
+  describe('publishing contracts & validation', () => {
+    it('validateProviderOptions accepts title and lowercase privacyStatus', () => {
+      const valid = provider.validateProviderOptions({
+        title: 'My video',
+        privacyStatus: 'public',
+      });
+      expect(valid.valid).toBe(true);
+      expect(valid.issues).toHaveLength(0);
+    });
+
+    it('validateProviderOptions rejects uppercase privacyStatus', () => {
+      const invalid = provider.validateProviderOptions({
+        privacyStatus: 'PUBLIC',
+      });
+      expect(invalid.valid).toBe(false);
+      expect(invalid.issues).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            field: 'privacyStatus',
+          }),
+        ]),
+      );
+    });
+
+    it('getPublishingCapabilities() contains video/mp4 and no video/* wildcard entry', () => {
+      const caps = provider.getPublishingCapabilities();
+      const mimeTypes = caps.contentTypes.VIDEO_POST.mimeTypes;
+      expect(mimeTypes).toBeDefined();
+      expect(mimeTypes).toContain('video/mp4');
+      expect(mimeTypes).not.toContain('video/*');
+      expect(mimeTypes).toEqual([
+        'video/mp4',
+        'video/quicktime',
+        'video/webm',
+        'video/x-matroska',
+        'video/x-msvideo',
+        'video/x-ms-wmv',
+        'video/x-flv',
+        'video/3gpp',
+        'video/mpeg',
+      ]);
+    });
+  });
 });
