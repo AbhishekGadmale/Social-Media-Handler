@@ -97,7 +97,9 @@ export default function PostDetailPage() {
   const handleConnectUpgrade = async () => {
     try {
       await handleUpdateDraft();
-      const res = await api.post<{ url: string }>(`workspaces/${workspaceId}/oauth/youtube/connect?scopes=youtube.upload`);
+      const res = await api.post<{ url: string }>(
+        `workspaces/${workspaceId}/oauth/youtube/connect?scopes=${encodeURIComponent('https://www.googleapis.com/auth/youtube.upload')}`
+      );
       if (res.url) {
         window.location.href = res.url;
       }

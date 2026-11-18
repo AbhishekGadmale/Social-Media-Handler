@@ -601,3 +601,50 @@ test('19, 20, 21, 22. Error behaviors (403, 409, 422, 500)', async () => {
   await checkError(422, 'Invalid data provided. Please check the fields and try again.');
   await checkError(500, 'An internal system error occurred. Please try again later.');
 });
+
+test('handleConnectUpgrade initiates OAuth with encoded youtube.upload scope', async () => {
+  queryClient.setQueryData(['workspaces', 'ws-1', 'posts', 'post-1'], {
+    id: 'post-1',
+    workspaceId: 'ws-1',
+    content: 'Draft content for YouTube test',
+    status: 'DRAFT',
+    media: [],
+    variants: [],
+  });
+
+  queryClient.setQueryData(['workspaces', 'ws-1', 'accounts'], {
+    accounts: [
+      { id: 'acc-yt-no-pub', name: 'My YouTube Channel', provider: 'YOUTUBE', capabilities: [] }
+    ]
+  });
+
+  render(
+    <QueryClientProvider client={queryClient}>
+      <PostDetailPage />
+    </QueryClientProvider>
+  );
+
+  const select = await screen.findByRole('combobox');
+  fireEvent.change(select, { target: { value: 'acc-yt-no-pub' } });
+
+  const addBtn = select.nextElementSibling as HTMLButtonElement;
+  fireEvent.click(addBtn);
+
+  const upgradeBtn = await screen.findByRole('button', { name: /Enable YouTube publishing access/i });
+  expect(upgradeBtn).toBeInTheDocument();
+
+  (api.patch as ReturnType<typeof vi.fn>).mockResolvedValueOnce({});
+  (api.post as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ url: 'https://accounts.google.com/o/oauth2/v2/auth' });
+
+  fireEvent.click(upgradeBtn);
+
+  const expectedUrl = `workspaces/ws-1/oauth/youtube/connect?scopes=${encodeURIComponent('https://www.googleapis.com/auth/youtube.upload')}`;
+  await waitFor(() => {
+    expect(api.post).toHaveBeenCalledWith(expectedUrl);
+  });
+
+  const calledUrl = (api.post as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
+  const urlObj = new URL(calledUrl, 'http://localhost');
+  expect(decodeURIComponent(urlObj.searchParams.get('scopes')!)).toBe('https://www.googleapis.com/auth/youtube.upload');
+});
+
