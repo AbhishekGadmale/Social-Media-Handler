@@ -5294,7 +5294,7 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
 
 ### 1. Summary & Motivation
 
-- **Status**: implemented on branch `feat/client-approvals`; PR #87 open against main at commit `5c2526b`
+- **Status**: implemented on branch `feat/client-approvals`; PR #87 open against main at reviewed head `c6ce96d65a8e8a9aeeee5633fe0c774cef9dd88b`
 - **Origin & Requirements**:
   - Adds a client approvals flow allowing drafts to be submitted for review before publishing or scheduling.
   - A post can be submitted for approval (`approvalStatus: PENDING`).
@@ -5420,9 +5420,9 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
 ### 4. Release Gate & Next Steps
 
 1. **CI Quality Gates**:
-   - Verification pending GitHub Actions execution for PR #87.
+   - CI on the reviewed head `c6ce96d` is 6/6 green (all 2026-11-19): GitGuardian Security Checks 07:51:33Z, Application Builds 07:52:47Z, Code Quality (Lint & Typecheck) 07:53:09Z, API E2E Tests 07:53:26Z, Tests 07:53:36Z, Docker Build & Smoke Test 08:00:22Z.
 2. **Release Gate**:
    - **Live Deployment**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending external infrastructure provisioning, live email delivery verification, live payment credentials, and disaster recovery rehearsals G18/G19).
 3. **Next Steps**:
-   - PR #87 is open against main at commit `5c2526b`; awaiting CI execution and code review.
-   - Do NOT merge on this prompt alone.
+   - PR #87 is open against main at reviewed head `c6ce96d`; CI is 6/6 green; awaiting code review.
+   - Do NOT merge on this prompt alone. Live deployment remains STRICT NO-GO.
