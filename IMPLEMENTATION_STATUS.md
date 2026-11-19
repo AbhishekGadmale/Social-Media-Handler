@@ -5294,7 +5294,7 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
 
 ### 1. Summary & Motivation
 
-- **Status**: implemented on branch `feat/client-approvals`; PR to be opened against main
+- **Status**: implemented on branch `feat/client-approvals`; PR #87 open against main at commit `5c2526b`
 - **Origin & Requirements**:
   - Adds a client approvals flow allowing drafts to be submitted for review before publishing or scheduling.
   - A post can be submitted for approval (`approvalStatus: PENDING`).
@@ -5420,9 +5420,9 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
 ### 4. Release Gate & Next Steps
 
 1. **CI Quality Gates**:
-   - Verification pending branch push and GitHub Actions execution for PR.
+   - Verification pending GitHub Actions execution for PR #87.
 2. **Release Gate**:
    - **Live Deployment**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending external infrastructure provisioning, live email delivery verification, live payment credentials, and disaster recovery rehearsals G18/G19).
 3. **Next Steps**:
-   - Push branch `feat/client-approvals` to origin and open PR against `main`.
+   - PR #87 is open against main at commit `5c2526b`; awaiting CI execution and code review.
    - Do NOT merge on this prompt alone.
