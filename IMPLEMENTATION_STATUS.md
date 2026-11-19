@@ -5544,7 +5544,7 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
 
 ### 1. Summary & Motivation
 
-- **Status**: implemented on branch `feat/google-sign-in`; pending PR against `main`
+- **Status**: implemented on branch `feat/google-sign-in`; PR #89 open against main at reviewed head `da6e1bf41c53730807098ab2aed17f9b88abbf60`
 - **Origin & Requirements**:
   - Implements official Google Identity Services (GIS) Sign in with Google: rendered button + One Tap prompt on `/login` and `/signup`.
   - Auth is a high-risk surface: adheres strictly to existing session, cookie, audit, and provisioning architectures.
@@ -5667,10 +5667,10 @@ To enable Sign in with Google in an environment:
 
 ### 5. Release Gate & Next Steps
 
-1. **Release Gate**:
+1. **CI Quality Gates**:
+   - CI on the reviewed head `da6e1bf4` is 6/6 green (all 2026-11-19): GitGuardian Security Checks 13:01:55Z, Application Builds 13:02:49Z, API E2E Tests 13:03:27Z, Tests 13:03:28Z, Code Quality (Lint & Typecheck) 13:03:33Z, Docker Build & Smoke Test 13:10:40Z. Note: CI re-runs on the docs-fix head and must be re-verified 6/6 green there before merge.
+2. **Release Gate**:
    - **Live Deployment**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending external infrastructure provisioning, live email delivery verification, live payment credentials, and disaster recovery rehearsals G18/G19).
-2. **Next Steps**:
-   - Push branch `feat/google-sign-in` to remote.
-   - Open Pull Request against `main`.
-   - Monitor GitHub Actions CI until 6/6 green.
+3. **Next Steps**:
+   - PR #89 is open against main at reviewed head `da6e1bf41c53730807098ab2aed17f9b88abbf60`; CI is 6/6 green on the reviewed head; next step is the docs-fix re-review, then merge by the owner.
    - Do NOT merge on this prompt alone. Live deployment remains STRICT NO-GO.
