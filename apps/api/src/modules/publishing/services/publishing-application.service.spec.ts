@@ -71,6 +71,15 @@ describe('PublishingApplicationService - reconcile()', () => {
       logActionBestEffort: vi.fn(),
     } as any;
     validatorMock = {} as any;
+    const mockEmailDeliveryService = {
+      sendVerificationEmail: vi.fn(),
+      sendPasswordResetEmail: vi.fn(),
+      sendDunningEmail: vi.fn(),
+      sendDuplicateSignupEmail: vi.fn(),
+      sendAccountLockedEmail: vi.fn(),
+      sendApprovalRequestedEmail: vi.fn().mockResolvedValue(undefined),
+      sendApprovalDecisionEmail: vi.fn().mockResolvedValue(undefined),
+    } as any;
     const mockLogger = {
       info: vi.fn(),
       warn: vi.fn(),
@@ -83,6 +92,7 @@ describe('PublishingApplicationService - reconcile()', () => {
       prismaMock,
       auditMock,
       validatorMock,
+      mockEmailDeliveryService,
       mockLogger,
     );
   });
@@ -632,6 +642,11 @@ describe('PublishingApplicationService - Audit Logging Coverage', () => {
           media: [],
           variants: [],
         }),
+        findUnique: vi.fn().mockResolvedValue({
+          id: postId,
+          workspaceId,
+          approvalStatus: 'NOT_SUBMITTED',
+        }),
         update: vi.fn().mockResolvedValue({
           id: postId,
           workspaceId,
@@ -681,6 +696,7 @@ describe('PublishingApplicationService - Audit Logging Coverage', () => {
           workspaceId,
           variants: [],
         }),
+        update: vi.fn().mockResolvedValue({ id: postId }),
         delete: vi.fn().mockResolvedValue({ id: postId }),
       },
       variants: {
@@ -722,10 +738,21 @@ describe('PublishingApplicationService - Audit Logging Coverage', () => {
       setContext: vi.fn(),
     } as any;
 
+    const mockEmailDeliveryService = {
+      sendVerificationEmail: vi.fn(),
+      sendPasswordResetEmail: vi.fn(),
+      sendDunningEmail: vi.fn(),
+      sendDuplicateSignupEmail: vi.fn(),
+      sendAccountLockedEmail: vi.fn(),
+      sendApprovalRequestedEmail: vi.fn().mockResolvedValue(undefined),
+      sendApprovalDecisionEmail: vi.fn().mockResolvedValue(undefined),
+    } as any;
+
     service = new PublishingApplicationService(
       prismaMock,
       auditMock,
       validatorMock,
+      mockEmailDeliveryService,
       mockLogger,
     );
     (service as any).getRepo = vi.fn().mockReturnValue(repoMock);
@@ -1078,5 +1105,518 @@ describe('PublishingApplicationService - Audit Logging Coverage', () => {
     await expect(
       service.deletePost(workspaceId, authorId, postId),
     ).rejects.toThrow('Audit DB write failed during delete');
+  });
+
+  describe('Client Approvals Workflow', () => {
+    let approvalEmailMock: any;
+
+    beforeEach(() => {
+      approvalEmailMock = {
+        sendApprovalRequestedEmail: vi.fn().mockResolvedValue(undefined),
+        sendApprovalDecisionEmail: vi.fn().mockResolvedValue(undefined),
+      };
+      (service as any).emailDeliveryService = approvalEmailMock;
+      prismaMock.workspaceMember = {
+        findMany: vi.fn().mockResolvedValue([
+          {
+            id: 'mem-1',
+            userId: 'user-manager',
+            role: 'MANAGER',
+            user: { email: 'manager@agency.io' },
+          },
+          {
+            id: 'mem-2',
+            userId: 'user-client',
+            role: 'CLIENT_APPROVER',
+            user: { email: 'client@agency.io' },
+          },
+        ]),
+      };
+      prismaMock.user = {
+        findUnique: vi.fn().mockResolvedValue({
+          id: authorId,
+          email: 'author@agency.io',
+        }),
+      };
+    });
+
+    describe('requestApproval', () => {
+      it('successfully transitions from NOT_SUBMITTED to PENDING, audits, and dispatches email to approvers', async () => {
+        repoMock.posts.findById.mockResolvedValueOnce({
+          id: postId,
+          content: 'Hello world approval test',
+          approvalStatus: 'NOT_SUBMITTED',
+          variants: [{ id: variantId, status: PostStatus.DRAFT }],
+        });
+
+        await service.requestApproval(workspaceId, authorId, postId);
+
+        expect(repoMock.posts.update).toHaveBeenCalledWith(
+          expect.objectContaining({
+            where: { id: postId },
+            data: expect.objectContaining({
+              approvalStatus: 'PENDING',
+              approvalRequestedById: authorId,
+              approvalDecidedById: null,
+              approvalDecidedAt: null,
+              approvalComment: null,
+            }),
+          }),
+        );
+
+        expect(auditMock.logAction).toHaveBeenCalledWith(
+          expect.objectContaining({
+            workspaceId,
+            actorId: authorId,
+            action: AuditAction.POST_APPROVAL_REQUESTED,
+            targetType: 'POST',
+            targetId: postId,
+          }),
+        );
+
+        expect(
+          approvalEmailMock.sendApprovalRequestedEmail,
+        ).toHaveBeenCalledTimes(2);
+        expect(
+          approvalEmailMock.sendApprovalRequestedEmail,
+        ).toHaveBeenCalledWith(
+          'manager@agency.io',
+          'Hello world approval test',
+        );
+        expect(
+          approvalEmailMock.sendApprovalRequestedEmail,
+        ).toHaveBeenCalledWith('client@agency.io', 'Hello world approval test');
+      });
+
+      it('successfully transitions from CHANGES_REQUESTED to PENDING and clears comment', async () => {
+        repoMock.posts.findById.mockResolvedValueOnce({
+          id: postId,
+          content: 'Revised post',
+          approvalStatus: 'CHANGES_REQUESTED',
+          approvalComment: 'Fix typo',
+          variants: [{ id: variantId, status: PostStatus.DRAFT }],
+        });
+
+        await service.requestApproval(workspaceId, authorId, postId);
+
+        expect(repoMock.posts.update).toHaveBeenCalledWith(
+          expect.objectContaining({
+            where: { id: postId },
+            data: expect.objectContaining({
+              approvalStatus: 'PENDING',
+              approvalComment: null,
+            }),
+          }),
+        );
+      });
+
+      it('throws ConflictException if post is already PENDING', async () => {
+        repoMock.posts.findById.mockResolvedValueOnce({
+          id: postId,
+          approvalStatus: 'PENDING',
+          variants: [{ id: variantId, status: PostStatus.DRAFT }],
+        });
+
+        await expect(
+          service.requestApproval(workspaceId, authorId, postId),
+        ).rejects.toThrow('Post is already pending approval.');
+      });
+
+      it('throws ConflictException if post is already APPROVED', async () => {
+        repoMock.posts.findById.mockResolvedValueOnce({
+          id: postId,
+          approvalStatus: 'APPROVED',
+          variants: [{ id: variantId, status: PostStatus.DRAFT }],
+        });
+
+        await expect(
+          service.requestApproval(workspaceId, authorId, postId),
+        ).rejects.toThrow('Post is already approved.');
+      });
+
+      it('throws ConflictException if any variant has left DRAFT', async () => {
+        repoMock.posts.findById.mockResolvedValueOnce({
+          id: postId,
+          approvalStatus: 'NOT_SUBMITTED',
+          variants: [
+            { id: 'v1', status: PostStatus.DRAFT },
+            { id: 'v2', status: PostStatus.SCHEDULED },
+          ],
+        });
+
+        await expect(
+          service.requestApproval(workspaceId, authorId, postId),
+        ).rejects.toThrow('Only a draft post can be sent for approval.');
+      });
+    });
+
+    describe('approvePost', () => {
+      it('throws ConflictException if post is not PENDING', async () => {
+        repoMock.posts.findById.mockResolvedValueOnce({
+          id: postId,
+          approvalStatus: 'NOT_SUBMITTED',
+        });
+
+        await expect(
+          service.approvePost(workspaceId, 'reviewer-1', postId),
+        ).rejects.toThrow('Post is not pending approval.');
+      });
+
+      it('transitions from PENDING to APPROVED, audits, and notifies author', async () => {
+        repoMock.posts.findById.mockResolvedValueOnce({
+          id: postId,
+          content: 'Great copy',
+          authorId,
+          approvalStatus: 'PENDING',
+        });
+
+        await service.approvePost(workspaceId, 'reviewer-1', postId);
+
+        expect(repoMock.posts.update).toHaveBeenCalledWith(
+          expect.objectContaining({
+            where: { id: postId },
+            data: expect.objectContaining({
+              approvalStatus: 'APPROVED',
+              approvalDecidedById: 'reviewer-1',
+              approvalComment: null,
+            }),
+          }),
+        );
+
+        expect(auditMock.logAction).toHaveBeenCalledWith(
+          expect.objectContaining({
+            workspaceId,
+            actorId: 'reviewer-1',
+            action: AuditAction.POST_APPROVAL_APPROVED,
+            targetType: 'POST',
+            targetId: postId,
+          }),
+        );
+
+        expect(
+          approvalEmailMock.sendApprovalDecisionEmail,
+        ).toHaveBeenCalledWith('author@agency.io', 'Great copy', 'APPROVED');
+      });
+
+      it('does not send decision email if approver is the author', async () => {
+        repoMock.posts.findById.mockResolvedValueOnce({
+          id: postId,
+          content: 'Self-approval',
+          authorId,
+          approvalStatus: 'PENDING',
+        });
+
+        await service.approvePost(workspaceId, authorId, postId);
+
+        expect(
+          approvalEmailMock.sendApprovalDecisionEmail,
+        ).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('requestChanges', () => {
+      it('throws ConflictException if post is not PENDING', async () => {
+        repoMock.posts.findById.mockResolvedValueOnce({
+          id: postId,
+          approvalStatus: 'APPROVED',
+        });
+
+        await expect(
+          service.requestChanges(
+            workspaceId,
+            'reviewer-1',
+            postId,
+            'Need changes',
+          ),
+        ).rejects.toThrow('Post is not pending approval.');
+      });
+
+      it('transitions from PENDING to CHANGES_REQUESTED, audits with comment, and notifies author', async () => {
+        repoMock.posts.findById.mockResolvedValueOnce({
+          id: postId,
+          content: 'Draft content needing edit',
+          authorId,
+          approvalStatus: 'PENDING',
+        });
+
+        await service.requestChanges(
+          workspaceId,
+          'reviewer-1',
+          postId,
+          'Please update the hashtags',
+        );
+
+        expect(repoMock.posts.update).toHaveBeenCalledWith(
+          expect.objectContaining({
+            where: { id: postId },
+            data: expect.objectContaining({
+              approvalStatus: 'CHANGES_REQUESTED',
+              approvalDecidedById: 'reviewer-1',
+              approvalComment: 'Please update the hashtags',
+            }),
+          }),
+        );
+
+        expect(auditMock.logAction).toHaveBeenCalledWith(
+          expect.objectContaining({
+            workspaceId,
+            actorId: 'reviewer-1',
+            action: AuditAction.POST_APPROVAL_CHANGES_REQUESTED,
+            targetType: 'POST',
+            targetId: postId,
+            metadata: { postId, comment: 'Please update the hashtags' },
+          }),
+        );
+
+        expect(
+          approvalEmailMock.sendApprovalDecisionEmail,
+        ).toHaveBeenCalledWith(
+          'author@agency.io',
+          'Draft content needing edit',
+          'CHANGES_REQUESTED',
+          'Please update the hashtags',
+        );
+      });
+    });
+
+    describe('Publishing Gate', () => {
+      it('blocks requestPublish if post is PENDING approval', async () => {
+        repoMock.variants.findById.mockResolvedValueOnce({
+          id: variantId,
+          postId,
+        });
+        repoMock.posts.findById.mockResolvedValueOnce({
+          id: postId,
+          approvalStatus: 'PENDING',
+        });
+
+        await expect(
+          service.requestPublish(workspaceId, authorId, variantId),
+        ).rejects.toThrow(
+          'Post is pending approval and cannot be published yet.',
+        );
+      });
+
+      it('blocks requestPublish if post is CHANGES_REQUESTED', async () => {
+        repoMock.variants.findById.mockResolvedValueOnce({
+          id: variantId,
+          postId,
+        });
+        repoMock.posts.findById.mockResolvedValueOnce({
+          id: postId,
+          approvalStatus: 'CHANGES_REQUESTED',
+        });
+
+        await expect(
+          service.requestPublish(workspaceId, authorId, variantId),
+        ).rejects.toThrow(
+          'Changes were requested for this post. Edit it and resubmit for approval before publishing.',
+        );
+      });
+
+      it('blocks schedule if post is PENDING', async () => {
+        repoMock.variants.findById.mockResolvedValueOnce({
+          id: variantId,
+          postId,
+          status: PostStatus.DRAFT,
+        });
+        repoMock.posts.findById.mockResolvedValueOnce({
+          id: postId,
+          approvalStatus: 'PENDING',
+        });
+
+        const futureDate = new Date(Date.now() + 3600000).toISOString();
+        await expect(
+          service.schedule(workspaceId, authorId, variantId, {
+            scheduledAt: futureDate,
+          }),
+        ).rejects.toThrow(
+          'Post is pending approval and cannot be published yet.',
+        );
+      });
+
+      it('blocks reschedule if post is CHANGES_REQUESTED', async () => {
+        repoMock.variants.findById.mockResolvedValueOnce({
+          id: variantId,
+          postId,
+          status: PostStatus.SCHEDULED,
+        });
+        repoMock.posts.findById.mockResolvedValueOnce({
+          id: postId,
+          approvalStatus: 'CHANGES_REQUESTED',
+        });
+
+        const futureDate = new Date(Date.now() + 3600000).toISOString();
+        await expect(
+          service.reschedule(workspaceId, authorId, variantId, {
+            scheduledAt: futureDate,
+          }),
+        ).rejects.toThrow(
+          'Changes were requested for this post. Edit it and resubmit for approval before publishing.',
+        );
+      });
+
+      it('blocks requestRetry if post is PENDING', async () => {
+        repoMock.variants.findById.mockResolvedValueOnce({
+          id: variantId,
+          postId,
+          status: PostStatus.FAILED,
+        });
+        repoMock.posts.findById.mockResolvedValueOnce({
+          id: postId,
+          approvalStatus: 'PENDING',
+        });
+
+        await expect(
+          service.requestRetry(workspaceId, authorId, variantId),
+        ).rejects.toThrow(
+          'Post is pending approval and cannot be published yet.',
+        );
+      });
+    });
+
+    describe('Edit Invalidation', () => {
+      it('invalidates approval on updateDraft when post is APPROVED', async () => {
+        txMock.post.findUnique.mockResolvedValueOnce({
+          id: postId,
+          workspaceId,
+          approvalStatus: 'APPROVED',
+          approvalDecidedById: 'decider-1',
+          approvalDecidedAt: new Date(),
+        });
+
+        await service.updateDraft(workspaceId, authorId, postId, {
+          content: 'New content after approval',
+        });
+
+        expect(txMock.post.update).toHaveBeenCalledWith(
+          expect.objectContaining({
+            where: { id: postId, workspaceId },
+            data: expect.objectContaining({
+              approvalStatus: 'NOT_SUBMITTED',
+              approvalDecidedById: null,
+              approvalDecidedAt: null,
+              approvalComment: null,
+            }),
+          }),
+        );
+
+        expect(auditMock.logAction).toHaveBeenCalledWith(
+          expect.objectContaining({
+            workspaceId,
+            actorId: authorId,
+            action: AuditAction.POST_APPROVAL_INVALIDATED,
+            targetType: 'POST',
+            targetId: postId,
+            metadata: { postId, reason: 'draft_updated' },
+          }),
+          txMock,
+        );
+      });
+
+      it('invalidates approval on addTarget when post is APPROVED', async () => {
+        repoMock.posts.findById.mockResolvedValue({
+          id: postId,
+          approvalStatus: 'APPROVED',
+          variants: [],
+        });
+
+        await service.addTarget(workspaceId, authorId, postId, {
+          socialAccountId,
+          content: 'Target content',
+        });
+
+        expect(repoMock.posts.update).toHaveBeenCalledWith(
+          expect.objectContaining({
+            where: { id: postId },
+            data: expect.objectContaining({
+              approvalStatus: 'NOT_SUBMITTED',
+            }),
+          }),
+        );
+
+        expect(auditMock.logAction).toHaveBeenCalledWith(
+          expect.objectContaining({
+            workspaceId,
+            actorId: authorId,
+            action: AuditAction.POST_APPROVAL_INVALIDATED,
+            targetType: 'POST',
+            targetId: postId,
+            metadata: { postId, reason: 'target_added' },
+          }),
+        );
+      });
+
+      it('invalidates approval on updateTarget when post is APPROVED', async () => {
+        repoMock.variants.findById.mockResolvedValueOnce({
+          id: variantId,
+          postId,
+          status: PostStatus.DRAFT,
+          content: 'Old variant content',
+        });
+        repoMock.posts.findById.mockResolvedValueOnce({
+          id: postId,
+          approvalStatus: 'APPROVED',
+        });
+
+        await service.updateTarget(workspaceId, authorId, variantId, {
+          content: 'New variant content',
+        });
+
+        expect(repoMock.posts.update).toHaveBeenCalledWith(
+          expect.objectContaining({
+            where: { id: postId },
+            data: expect.objectContaining({
+              approvalStatus: 'NOT_SUBMITTED',
+            }),
+          }),
+        );
+
+        expect(auditMock.logAction).toHaveBeenCalledWith(
+          expect.objectContaining({
+            workspaceId,
+            actorId: authorId,
+            action: AuditAction.POST_APPROVAL_INVALIDATED,
+            targetType: 'POST',
+            targetId: postId,
+            metadata: { postId, reason: 'target_updated' },
+          }),
+        );
+      });
+
+      it('invalidates approval on removeTarget when post is APPROVED', async () => {
+        repoMock.variants.findById.mockResolvedValueOnce({
+          id: variantId,
+          postId,
+          status: PostStatus.DRAFT,
+        });
+        repoMock.posts.findById.mockResolvedValueOnce({
+          id: postId,
+          approvalStatus: 'APPROVED',
+        });
+
+        await service.removeTarget(workspaceId, authorId, variantId);
+
+        expect(repoMock.posts.update).toHaveBeenCalledWith(
+          expect.objectContaining({
+            where: { id: postId },
+            data: expect.objectContaining({
+              approvalStatus: 'NOT_SUBMITTED',
+            }),
+          }),
+        );
+
+        expect(auditMock.logAction).toHaveBeenCalledWith(
+          expect.objectContaining({
+            workspaceId,
+            actorId: authorId,
+            action: AuditAction.POST_APPROVAL_INVALIDATED,
+            targetType: 'POST',
+            targetId: postId,
+            metadata: { postId, reason: 'target_removed' },
+          }),
+        );
+      });
+    });
   });
 });

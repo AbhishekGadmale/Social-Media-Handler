@@ -5286,3 +5286,146 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
 3. **Next Steps**:
    - PR #86 is open against main; CI was 6/6 green on the reviewed head `0105e2ef`; next step is the docs-fix re-review, then merge by the owner.
    - Do NOT merge on this prompt alone.
+
+
+---
+
+## 74. Client Approvals Workflow & Permission Enforcement
+
+### 1. Summary & Motivation
+
+- **Status**: implemented on branch `feat/client-approvals`; PR #87 open against main at reviewed head `6f491cd901fb628e98e1ef50aeb4e9e757fefd08`
+- **Origin & Requirements**:
+  - Adds a client approvals flow allowing drafts to be submitted for review before publishing or scheduling.
+  - A post can be submitted for approval (`approvalStatus: PENDING`).
+  - A workspace member holding the `posts.approve` permission (`OWNER`, `MANAGER`, or `CLIENT_APPROVER` in `PermissionMatrix`) can approve the post (`APPROVED`) or request changes with feedback (`CHANGES_REQUESTED`).
+  - Publication gating: A post with `approvalStatus` equal to `PENDING` or `CHANGES_REQUESTED` cannot be published (`requestPublish`), scheduled (`schedule`), rescheduled (`reschedule`), or retried (`requestRetry`) — attempts fail via `assertPostCanPublish(repo, postId)`, throwing `ConflictException('Post is pending approval and cannot be published yet.')` when `approvalStatus` is `PENDING` and `ConflictException('Changes were requested for this post. Edit it and resubmit for approval before publishing.')` when `CHANGES_REQUESTED`.
+  - Edit invalidation: Any edit to post content, media, or targets (`updateDraft`, `addTarget`, `updateTarget`, `removeTarget`) while in `PENDING` or `APPROVED` status invalidates the approval, resetting `approvalStatus` back to `NOT_SUBMITTED`, clearing approval metadata, and recording a `POST_APPROVAL_INVALIDATED` audit log event.
+  - Email notifications: Fire-and-forget notification emails dispatched via `EmailDeliveryService` when approval is requested (to workspace reviewers with `posts.approve`) and when an approval decision (`APPROVED` or `CHANGES_REQUESTED`) is made (to the post author).
+- **Scope & Exclusions**:
+  - OUT OF SCOPE (deferred to future milestones):
+    - Per-variant approval (approval operates at the post level).
+    - External/share-link approvers (approval requires workspace membership).
+    - Plan gating / feature flags (available to all workspace tiers).
+    - Background worker modifications (enforcement resides at API mutation and transition boundaries).
+    - Approval queue / dedicated review dashboard page.
+    - Push / in-app notifications.
+
+### 2. Architecture & Implementation Details
+
+#### A. Database Schema & Migration (`packages/database`)
+- **Schema (`packages/database/prisma/schema.prisma`)**:
+  - Added enum `ApprovalStatus`:
+    ```prisma
+    enum ApprovalStatus {
+      NOT_SUBMITTED
+      PENDING
+      APPROVED
+      CHANGES_REQUESTED
+    }
+    ```
+  - Added approval fields to `Post` model:
+    - `approvalStatus ApprovalStatus @default(NOT_SUBMITTED)`
+    - `approvalRequestedById String?`
+    - `approvalRequestedAt DateTime?`
+    - `approvalDecidedById String?`
+    - `approvalDecidedAt DateTime?`
+    - `approvalComment String?`
+- **Migration (`packages/database/prisma/migrations/20261119000000_add_post_approval_fields/migration.sql`)**:
+  - Created enum and added the 6 columns to the `Post` table.
+- **Audit Actions (`packages/database/src/repositories/AuditLogRepository.ts`)**:
+  - Added `POST_APPROVAL_REQUESTED`, `POST_APPROVAL_APPROVED`, `POST_APPROVAL_CHANGES_REQUESTED`, `POST_APPROVAL_INVALIDATED`.
+
+#### B. Email Delivery Service (`apps/api/src/modules/auth/email-delivery.service.ts`)
+- Extended `EmailDeliveryService` interface with positional methods:
+  - `sendApprovalRequestedEmail(toEmail: string, contentPreview: string): Promise<void>`
+  - `sendApprovalDecisionEmail(toEmail: string, contentPreview: string, decision: 'APPROVED' | 'CHANGES_REQUESTED', comment?: string): Promise<void>`
+- Implemented in:
+  - `ResendEmailDeliveryService`: Sends structured HTML/plain text notification emails using configured `EMAIL_FROM` and `FRONTEND_URL`.
+  - `MockEmailDeliveryService`: Tracks dispatched emails in in-memory arrays `sentApprovalRequestedEmails` and `sentApprovalDecisionEmails` for testing.
+  - `NoopEmailDeliveryService`: Logs safe debug/warning message when no email provider is configured.
+
+#### C. API Publishing Service & Controller (`apps/api/src/modules/publishing`)
+- **DTOs (`post.dto.ts`)**:
+  - Added `RequestChangesDto` with `@IsString() @IsNotEmpty() @MaxLength(1000) comment: string`.
+- **PublishingApplicationService (`publishing-application.service.ts`)**:
+  - Injected `EmailDeliveryService`.
+  - Implemented `requestApproval(workspaceId, userId, postId)`:
+    - Verifies post existence and non-terminal state.
+    - Rejects a post whose variants are not all `DRAFT` with `ConflictException('Only a draft post can be sent for approval.')`.
+    - Rejects already `PENDING` posts with `ConflictException('Post is already pending approval.')` and already `APPROVED` posts with `ConflictException('Post is already approved.')`.
+    - Transitions `approvalStatus` to `PENDING`, sets `approvalRequestedById = userId`, `approvalRequestedAt = new Date()`, clears decision metadata.
+    - Emits `POST_APPROVAL_REQUESTED` audit log.
+    - Asynchronously dispatches `sendApprovalRequestedEmail` to workspace approvers (`posts.approve`).
+  - Implemented `approvePost(workspaceId, userId, postId)`:
+    - Verifies post is in `PENDING` status (409 Conflict if not).
+    - Transitions `approvalStatus` to `APPROVED`, sets `approvalDecidedById = userId`, `approvalDecidedAt = new Date()`, clears comment.
+    - Emits `POST_APPROVAL_APPROVED` audit log.
+    - Asynchronously dispatches `sendApprovalDecisionEmail` to post author.
+  - Implemented `requestChanges(workspaceId, userId, postId, comment)`:
+    - Verifies post is in `PENDING` status (409 Conflict if not).
+    - Transitions `approvalStatus` to `CHANGES_REQUESTED`, sets `approvalDecidedById = userId`, `approvalDecidedAt = new Date()`, stores `approvalComment = comment`.
+    - Emits `POST_APPROVAL_CHANGES_REQUESTED` audit log.
+    - Asynchronously dispatches `sendApprovalDecisionEmail` with comment to author.
+  - Implemented `assertPostCanPublish(repo, postId)`:
+    - Invoked at the top of `requestPublish`, `schedule`, `reschedule`, and `requestRetry`.
+    - Throws `ConflictException('Post is pending approval and cannot be published yet.')` when `approvalStatus` is `PENDING`.
+    - Throws `ConflictException('Changes were requested for this post. Edit it and resubmit for approval before publishing.')` when `approvalStatus` is `CHANGES_REQUESTED`.
+  - Invalidation semantics:
+    - Helper `invalidateApprovalIfActive(workspaceId, authorId, postId, reason)`: When `approvalStatus` is `PENDING` or `APPROVED`, resets status to `NOT_SUBMITTED`, clears approval timestamps/actors/comment, and records `POST_APPROVAL_INVALIDATED` audit log. Called by `addTarget` (reason `'target_added'`), `updateTarget` (reason `'target_updated'`), and `removeTarget` (reason `'target_removed'`).
+    - `updateDraft` performs the invalidation inline inside its transaction with reason `'draft_updated'` and does not call the helper.
+  - Verified Concurrency & State Invariant:
+    - The existing edit methods reject content/target mutations once variants leave draft states, which is why approval decisions (`PENDING`-only) and edit-invalidation can never race a scheduled or queued variant, and why the worker needs no approval check.
+- **PostsController (`posts.controller.ts`)**:
+  - `POST :postId/request-approval`: Guarded by `WorkspaceWritableGuard` and `RequirePermission('posts.update')`.
+  - `POST :postId/approve`: Guarded by `WorkspaceWritableGuard` and `RequirePermission('posts.approve')`.
+  - `POST :postId/request-changes`: Guarded by `WorkspaceWritableGuard` and `RequirePermission('posts.approve')`.
+
+#### D. Web UI & Frontend (`apps/web`)
+- **Query Types (`apps/web/src/lib/query/publishing.ts`)**:
+  - Added `ApprovalStatus` enum and post approval fields to `Post` interface.
+- **Post Detail (`apps/web/src/app/[workspaceId]/publishing/[postId]/page.tsx`)**:
+  - Added `ApprovalCard`:
+    - Displays current approval state badge (`NOT_SUBMITTED`, `PENDING`, `APPROVED`, `CHANGES_REQUESTED`).
+    - For draft authors: provides "Send for Approval" action button when draft is unsubmitted or changes requested.
+    - For reviewers with `posts.approve`: provides "Approve Post" and "Request Changes" action buttons with collapsible feedback comment form.
+    - Displays reviewer feedback note when in `CHANGES_REQUESTED` status.
+  - Publish & Schedule buttons disabled with explanatory tooltip / warning banner when `approvalStatus === 'PENDING' || approvalStatus === 'CHANGES_REQUESTED'`.
+- **Post List (`apps/web/src/app/[workspaceId]/publishing/page.tsx`)**:
+  - Added `ApprovalBadge` component rendering status tags in post cards.
+
+### 3. Verification & Test Evidence
+
+- **API Unit Tests (`apps/api`)**:
+  - 41/41 test files PASS, 577/577 tests PASS.
+  - `email-delivery.service.spec.ts`: 20/20 tests PASS (+7 new tests).
+  - `publishing-application.service.spec.ts`: 79/79 tests PASS (+19 new test blocks).
+  - `posts.controller.spec.ts`: 8/8 tests PASS (+6 new tests).
+- **API E2E Tests (`apps/api/test/publishing.e2e-spec.ts`)**:
+  - 1/1 test suite PASS, 63/63 tests PASS (+8 new tests).
+  - Dedicated suite `Client Approvals End-to-End Workflow` verifying:
+    - EDITOR submits draft for approval (`PENDING`).
+    - Duplicate request-approval returns 409 Conflict.
+    - EDITOR forbidden from approving (403 Forbidden without `posts.approve`).
+    - Publication blocked while `PENDING` (409 Conflict).
+    - OWNER requests changes with comment (`CHANGES_REQUESTED`).
+    - Publication blocked while `CHANGES_REQUESTED` (409 Conflict).
+    - OWNER approves post after resubmission (`APPROVED`).
+    - Content edit after approval invalidates status back to `NOT_SUBMITTED`.
+- **Web Unit Tests (`apps/web`)**:
+  - 24/24 test files PASS, 260/260 tests PASS.
+  - `apps/web/src/app/[workspaceId]/publishing/[postId]/page.spec.tsx`: 42/42 tests PASS (+7 new tests).
+  - `apps/web/src/app/[workspaceId]/publishing/page.spec.tsx`: 1/1 test PASS.
+- **Monorepo Quality Gates**:
+  - `pnpm turbo run test`: 10/10 tasks successful.
+  - `pnpm turbo run lint typecheck build`: 18/18 tasks successful (0 errors).
+
+### 4. Release Gate & Next Steps
+
+1. **CI Quality Gates**:
+   - CI on the reviewed head `6f491cd9` is 6/6 green (all 2026-11-19): GitGuardian Security Checks 08:03:18Z, Application Builds 08:03:26Z, Code Quality (Lint & Typecheck) 08:03:35Z, Tests 08:04:14Z, API E2E Tests 08:04:15Z, Docker Build & Smoke Test 08:11:06Z. Note: CI re-runs on the docs-fix head and must be re-verified 6/6 green there before merge.
+2. **Release Gate**:
+   - **Live Deployment**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending external infrastructure provisioning, live email delivery verification, live payment credentials, and disaster recovery rehearsals G18/G19).
+3. **Next Steps**:
+   - PR #87 is open against main at reviewed head `6f491cd9`; CI is 6/6 green; next step is the docs-fix re-review, then merge by the owner.
+   - Do NOT merge on this prompt alone. Live deployment remains STRICT NO-GO.

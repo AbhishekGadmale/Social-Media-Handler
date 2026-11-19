@@ -4,6 +4,7 @@ import { queryOptions } from '@tanstack/react-query';
 import { api } from '../api/client';
 
 export type PostStatus = 'DRAFT' | 'SCHEDULED' | 'QUEUED' | 'PUBLISHING' | 'PUBLISHED' | 'FAILED' | 'UNKNOWN' | 'DELETING' | 'DELETED';
+export type ApprovalStatus = 'NOT_SUBMITTED' | 'PENDING' | 'APPROVED' | 'CHANGES_REQUESTED';
 export type Visibility = 'PUBLIC' | 'PRIVATE' | 'UNLISTED';
 
 export interface PostMedia {
@@ -38,8 +39,15 @@ export interface PostPlatformVariant {
 export interface Post {
   id: string;
   workspaceId: string;
+  authorId?: string | null;
   content: string;
   status: PostStatus;
+  approvalStatus?: ApprovalStatus;
+  approvalRequestedById?: string | null;
+  approvalRequestedAt?: string | null;
+  approvalDecidedById?: string | null;
+  approvalDecidedAt?: string | null;
+  approvalComment?: string | null;
   createdAt: string;
   updatedAt: string;
   media: PostMedia[];

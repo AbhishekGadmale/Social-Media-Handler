@@ -113,6 +113,83 @@ describe('EmailDeliveryService (Safety & Environment Controls)', () => {
         toEmail: 'locked@example.com',
       });
     });
+
+    it('records simulated approval requested email in memory during test/development', async () => {
+      process.env.NODE_ENV = 'test';
+      const service = new MockEmailDeliveryService();
+
+      await service.sendApprovalRequestedEmail(
+        'approver@example.com',
+        'Post content preview...',
+      );
+
+      expect(service.sentApprovalRequestedEmails).toHaveLength(1);
+      expect(service.sentApprovalRequestedEmails[0]).toEqual({
+        toEmail: 'approver@example.com',
+        contentPreview: 'Post content preview...',
+      });
+    });
+
+    it('records simulated approval decision email in memory during test/development', async () => {
+      process.env.NODE_ENV = 'test';
+      const service = new MockEmailDeliveryService();
+
+      await service.sendApprovalDecisionEmail(
+        'author@example.com',
+        'Post content preview...',
+        'APPROVED',
+      );
+      await service.sendApprovalDecisionEmail(
+        'author@example.com',
+        'Post content preview...',
+        'CHANGES_REQUESTED',
+        'Please fix the tone.',
+      );
+
+      expect(service.sentApprovalDecisionEmails).toHaveLength(2);
+      expect(service.sentApprovalDecisionEmails[0]).toEqual({
+        toEmail: 'author@example.com',
+        contentPreview: 'Post content preview...',
+        decision: 'APPROVED',
+        comment: undefined,
+      });
+      expect(service.sentApprovalDecisionEmails[1]).toEqual({
+        toEmail: 'author@example.com',
+        contentPreview: 'Post content preview...',
+        decision: 'CHANGES_REQUESTED',
+        comment: 'Please fix the tone.',
+      });
+    });
+
+    it('throws error if sendApprovalRequestedEmail is called in production', async () => {
+      process.env.NODE_ENV = 'production';
+      const service = new MockEmailDeliveryService();
+
+      await expect(
+        service.sendApprovalRequestedEmail('victim@example.com', 'preview'),
+      ).rejects.toThrow(
+        'MockEmailDeliveryService must NEVER be used in production.',
+      );
+
+      expect(service.sentApprovalRequestedEmails).toHaveLength(0);
+    });
+
+    it('throws error if sendApprovalDecisionEmail is called in production', async () => {
+      process.env.NODE_ENV = 'production';
+      const service = new MockEmailDeliveryService();
+
+      await expect(
+        service.sendApprovalDecisionEmail(
+          'victim@example.com',
+          'preview',
+          'APPROVED',
+        ),
+      ).rejects.toThrow(
+        'MockEmailDeliveryService must NEVER be used in production.',
+      );
+
+      expect(service.sentApprovalDecisionEmails).toHaveLength(0);
+    });
   });
 
   describe('NoopEmailDeliveryService', () => {
@@ -131,6 +208,16 @@ describe('EmailDeliveryService (Safety & Environment Controls)', () => {
       ).resolves.toBeUndefined();
       await expect(
         service.sendAccountLockedEmail('prod@example.com'),
+      ).resolves.toBeUndefined();
+      await expect(
+        service.sendApprovalRequestedEmail('prod@example.com', 'preview'),
+      ).resolves.toBeUndefined();
+      await expect(
+        service.sendApprovalDecisionEmail(
+          'prod@example.com',
+          'preview',
+          'APPROVED',
+        ),
       ).resolves.toBeUndefined();
     });
   });
@@ -318,6 +405,101 @@ describe('EmailDeliveryService (Safety & Environment Controls)', () => {
       );
       expect(body.html).toContain(
         'Multiple failed login attempts detected on your account. For your security, your account has been temporarily locked for 15 minutes. If this was you, wait 15 minutes and try again, or reset your password. If this was not you, we recommend resetting your password after the lock expires.',
+      );
+    });
+
+    it('successfully sends approval requested email via Resend API', async () => {
+      process.env.RESEND_API_KEY = 'mock-resend-api-key-test';
+      process.env.EMAIL_FROM = 'Test App <auth@example.com>';
+
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        json: async () => ({ id: 'email-resend-approval-req-id' }),
+      });
+      vi.stubGlobal('fetch', fetchMock);
+
+      const service = new ResendEmailDeliveryService();
+      await service.sendApprovalRequestedEmail(
+        'reviewer@example.com',
+        'Check out our latest update!',
+      );
+
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      const [url, options] = fetchMock.mock.calls[0];
+      expect(url).toBe('https://api.resend.com/emails');
+      expect(options.method).toBe('POST');
+      const body = JSON.parse(options.body);
+      expect(body.from).toBe('Test App <auth@example.com>');
+      expect(body.to).toEqual(['reviewer@example.com']);
+      expect(body.subject).toBe(
+        'A post is waiting for your approval in Agency OS',
+      );
+      expect(body.text).toContain('Check out our latest update!');
+      expect(body.html).toContain('Check out our latest update!');
+    });
+
+    it('successfully sends approval decision email (APPROVED) via Resend API', async () => {
+      process.env.RESEND_API_KEY = 'mock-resend-api-key-test';
+      process.env.EMAIL_FROM = 'Test App <auth@example.com>';
+
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        json: async () => ({ id: 'email-resend-approved-id' }),
+      });
+      vi.stubGlobal('fetch', fetchMock);
+
+      const service = new ResendEmailDeliveryService();
+      await service.sendApprovalDecisionEmail(
+        'author@example.com',
+        'Great post content',
+        'APPROVED',
+      );
+
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      const [, options] = fetchMock.mock.calls[0];
+      const body = JSON.parse(options.body);
+      expect(body.to).toEqual(['author@example.com']);
+      expect(body.subject).toBe('Your post was approved in Agency OS');
+      expect(body.text).toContain('Great post content');
+    });
+
+    it('successfully sends approval decision email (CHANGES_REQUESTED) via Resend API with comment', async () => {
+      process.env.RESEND_API_KEY = 'mock-resend-api-key-test';
+      process.env.EMAIL_FROM = 'Test App <auth@example.com>';
+
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        json: async () => ({ id: 'email-resend-changes-id' }),
+      });
+      vi.stubGlobal('fetch', fetchMock);
+
+      const service = new ResendEmailDeliveryService();
+      await service.sendApprovalDecisionEmail(
+        'author@example.com',
+        'Draft content',
+        'CHANGES_REQUESTED',
+        'Please replace image with higher resolution',
+      );
+
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      const [, options] = fetchMock.mock.calls[0];
+      const body = JSON.parse(options.body);
+      expect(body.to).toEqual(['author@example.com']);
+      expect(body.subject).toBe(
+        'Changes were requested on your post in Agency OS',
+      );
+      expect(body.text).toContain('Draft content');
+      expect(body.text).toContain(
+        'Please replace image with higher resolution',
+      );
+      expect(body.html).toContain(
+        'Please replace image with higher resolution',
       );
     });
   });

@@ -11,6 +11,16 @@ export interface EmailDeliveryService {
   ): Promise<void>;
   sendDuplicateSignupEmail(toEmail: string): Promise<void>;
   sendAccountLockedEmail(toEmail: string): Promise<void>;
+  sendApprovalRequestedEmail(
+    toEmail: string,
+    contentPreview: string,
+  ): Promise<void>;
+  sendApprovalDecisionEmail(
+    toEmail: string,
+    contentPreview: string,
+    decision: 'APPROVED' | 'CHANGES_REQUESTED',
+    comment?: string,
+  ): Promise<void>;
 }
 
 @Injectable()
@@ -27,6 +37,16 @@ export class MockEmailDeliveryService implements EmailDeliveryService {
   }> = [];
   public sentDuplicateSignupEmails: Array<{ toEmail: string }> = [];
   public sentAccountLockedEmails: Array<{ toEmail: string }> = [];
+  public sentApprovalRequestedEmails: Array<{
+    toEmail: string;
+    contentPreview: string;
+  }> = [];
+  public sentApprovalDecisionEmails: Array<{
+    toEmail: string;
+    contentPreview: string;
+    decision: 'APPROVED' | 'CHANGES_REQUESTED';
+    comment?: string;
+  }> = [];
 
   async sendVerificationEmail(
     toEmail: string,
@@ -101,6 +121,45 @@ export class MockEmailDeliveryService implements EmailDeliveryService {
       `[MockEmailDeliveryService] Account locked notification simulated for ${toEmail}`,
     );
   }
+
+  async sendApprovalRequestedEmail(
+    toEmail: string,
+    contentPreview: string,
+  ): Promise<void> {
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error(
+        'MockEmailDeliveryService must NEVER be used in production.',
+      );
+    }
+
+    this.sentApprovalRequestedEmails.push({ toEmail, contentPreview });
+    this.logger.debug(
+      `[MockEmailDeliveryService] Approval requested email simulated for ${toEmail}`,
+    );
+  }
+
+  async sendApprovalDecisionEmail(
+    toEmail: string,
+    contentPreview: string,
+    decision: 'APPROVED' | 'CHANGES_REQUESTED',
+    comment?: string,
+  ): Promise<void> {
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error(
+        'MockEmailDeliveryService must NEVER be used in production.',
+      );
+    }
+
+    this.sentApprovalDecisionEmails.push({
+      toEmail,
+      contentPreview,
+      decision,
+      comment,
+    });
+    this.logger.debug(
+      `[MockEmailDeliveryService] Approval decision (${decision}) email simulated for ${toEmail}`,
+    );
+  }
 }
 
 @Injectable()
@@ -143,6 +202,26 @@ export class NoopEmailDeliveryService implements EmailDeliveryService {
   async sendAccountLockedEmail(toEmail: string): Promise<void> {
     this.logger.warn(
       `[NoopEmailDeliveryService] Account locked email delivery skipped for ${toEmail}: no email provider configured.`,
+    );
+  }
+
+  async sendApprovalRequestedEmail(
+    toEmail: string,
+    _contentPreview: string,
+  ): Promise<void> {
+    this.logger.warn(
+      `[NoopEmailDeliveryService] Approval requested email delivery skipped for ${toEmail}: no email provider configured.`,
+    );
+  }
+
+  async sendApprovalDecisionEmail(
+    toEmail: string,
+    _contentPreview: string,
+    decision: 'APPROVED' | 'CHANGES_REQUESTED',
+    _comment?: string,
+  ): Promise<void> {
+    this.logger.warn(
+      `[NoopEmailDeliveryService] Approval decision (${decision}) email delivery skipped for ${toEmail}: no email provider configured.`,
     );
   }
 }
@@ -364,6 +443,104 @@ export class ResendEmailDeliveryService implements EmailDeliveryService {
 
     this.logger.log(
       `[ResendEmailDeliveryService] Account locked email successfully sent to ${toEmail}`,
+    );
+  }
+
+  async sendApprovalRequestedEmail(
+    toEmail: string,
+    contentPreview: string,
+  ): Promise<void> {
+    if (!this.apiKey) {
+      throw new Error(
+        'Resend API key is not configured (RESEND_API_KEY environment variable missing)',
+      );
+    }
+
+    const text = `A post is waiting for your approval in Agency OS.\n\nContent preview:\n${contentPreview}`;
+    const html = `<p>A post is waiting for your approval in Agency OS.</p><blockquote>${contentPreview}</blockquote>`;
+
+    const response = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${this.apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        from: this.fromEmail,
+        to: [toEmail],
+        subject: 'A post is waiting for your approval in Agency OS',
+        html,
+        text,
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => '');
+      this.logger.error(
+        `[ResendEmailDeliveryService] Failed to send approval requested email to ${toEmail}: ${response.status} ${response.statusText} - ${errorText}`,
+      );
+      throw new Error(
+        `Failed to send approval requested email via Resend (${response.status})`,
+      );
+    }
+
+    this.logger.log(
+      `[ResendEmailDeliveryService] Approval requested email successfully sent to ${toEmail}`,
+    );
+  }
+
+  async sendApprovalDecisionEmail(
+    toEmail: string,
+    contentPreview: string,
+    decision: 'APPROVED' | 'CHANGES_REQUESTED',
+    comment?: string,
+  ): Promise<void> {
+    if (!this.apiKey) {
+      throw new Error(
+        'Resend API key is not configured (RESEND_API_KEY environment variable missing)',
+      );
+    }
+
+    const isApproved = decision === 'APPROVED';
+    const subject = isApproved
+      ? 'Your post was approved in Agency OS'
+      : 'Changes were requested on your post in Agency OS';
+
+    const text = isApproved
+      ? `Your post was approved in Agency OS.\n\nContent preview:\n${contentPreview}`
+      : `Changes were requested on your post in Agency OS.\n\nContent preview:\n${contentPreview}\n\nReviewer comment:\n${comment || ''}`;
+
+    const html = isApproved
+      ? `<p>Your post was approved in Agency OS.</p><blockquote>${contentPreview}</blockquote>`
+      : `<p>Changes were requested on your post in Agency OS.</p><blockquote>${contentPreview}</blockquote>${comment ? `<p><strong>Reviewer comment:</strong></p><p>${comment}</p>` : ''}`;
+
+    const response = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${this.apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        from: this.fromEmail,
+        to: [toEmail],
+        subject,
+        html,
+        text,
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => '');
+      this.logger.error(
+        `[ResendEmailDeliveryService] Failed to send approval decision email to ${toEmail}: ${response.status} ${response.statusText} - ${errorText}`,
+      );
+      throw new Error(
+        `Failed to send approval decision email via Resend (${response.status})`,
+      );
+    }
+
+    this.logger.log(
+      `[ResendEmailDeliveryService] Approval decision email successfully sent to ${toEmail}`,
     );
   }
 }
