@@ -7,6 +7,14 @@ import { api, ApiError } from '../../../lib/api/client';
 const mockPush = vi.fn();
 let currentWorkspaceId = 'ws-test-123';
 
+const { mockDownloadClientReportPdf } = vi.hoisted(() => ({
+  mockDownloadClientReportPdf: vi.fn(),
+}));
+
+vi.mock('../../../lib/query/reports', () => ({
+  downloadClientReportPdf: (...args: unknown[]) => mockDownloadClientReportPdf(...args),
+}));
+
 vi.mock('next/navigation', () => ({
   useParams: () => ({ workspaceId: currentWorkspaceId }),
   useRouter: () => ({ push: mockPush }),
@@ -276,5 +284,70 @@ describe('AnalyticsDashboard Page', () => {
     expect(await screen.findByText('Active')).toBeDefined();
     expect(screen.getByText('Reauth Required')).toBeDefined();
     expect(screen.getByText('Disconnected')).toBeDefined();
+  });
+
+  describe('Client Performance Report Card', () => {
+    it('renders client report card with date inputs, accounts dropdown, and download button', async () => {
+      vi.mocked(api.get).mockResolvedValueOnce(mockOverviewData);
+      renderDashboard();
+
+      await screen.findByText('Client Performance Report');
+      expect(screen.getByLabelText('From Date')).toBeInTheDocument();
+      expect(screen.getByLabelText('To Date')).toBeInTheDocument();
+      expect(screen.getByLabelText('Account Filter')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /download pdf/i })).toBeInTheDocument();
+
+      // Check account options in select
+      expect(screen.getByText('All accounts')).toBeInTheDocument();
+      expect(screen.getByText('Agency LinkedIn (LINKEDIN)')).toBeInTheDocument();
+      expect(screen.getByText('Agency Channel (YOUTUBE)')).toBeInTheDocument();
+    });
+
+    it('submits download request with selected date range and account filter', async () => {
+      vi.mocked(api.get).mockResolvedValueOnce(mockOverviewData);
+      mockDownloadClientReportPdf.mockResolvedValueOnce(undefined);
+      renderDashboard();
+
+      await screen.findByText('Client Performance Report');
+
+      const fromInput = screen.getByLabelText('From Date');
+      const toInput = screen.getByLabelText('To Date');
+      const accountSelect = screen.getByLabelText('Account Filter');
+      const downloadBtn = screen.getByRole('button', { name: /download pdf/i });
+
+      fireEvent.change(fromInput, { target: { value: '2026-10-01' } });
+      fireEvent.change(toInput, { target: { value: '2026-10-31' } });
+      fireEvent.change(accountSelect, { target: { value: 'acc-li-1' } });
+
+      fireEvent.click(downloadBtn);
+
+      await waitFor(() => {
+        expect(mockDownloadClientReportPdf).toHaveBeenCalledWith(
+          'ws-test-123',
+          '2026-10-01',
+          '2026-10-31',
+          'acc-li-1'
+        );
+      });
+    });
+
+    it('displays error alert when report generation fails', async () => {
+      vi.mocked(api.get).mockResolvedValueOnce(mockOverviewData);
+      mockDownloadClientReportPdf.mockRejectedValueOnce(
+        new Error('Date range cannot exceed 366 days.')
+      );
+      renderDashboard();
+
+      await screen.findByText('Client Performance Report');
+
+      const downloadBtn = screen.getByRole('button', { name: /download pdf/i });
+      fireEvent.click(downloadBtn);
+
+      await waitFor(() => {
+        expect(screen.getByRole('alert')).toHaveTextContent(
+          'Date range cannot exceed 366 days.'
+        );
+      });
+    });
   });
 });

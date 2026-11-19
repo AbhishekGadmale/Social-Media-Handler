@@ -5429,3 +5429,111 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
 3. **Next Steps**:
    - PR #87 is open against main at reviewed head `6f491cd9`; CI is 6/6 green; next step is the docs-fix re-review, then merge by the owner.
    - Do NOT merge on this prompt alone. Live deployment remains STRICT NO-GO.
+
+---
+
+## 75. White-Label Client Reports & Workspace Branding
+
+### 1. Summary & Motivation
+
+- **Status**: implemented on branch `feat/white-label-reports`; PR #88 open against main at reviewed head `f632cccfdbc5cf20a99ee028b6c2a74ce65749d0`
+- **Origin & Requirements**:
+  - Allows workspaces to store agency branding (`brandDisplayName`, `brandLogoUrl`, `brandAccentColor`) and generate branded PDF performance reports for a specified date range.
+  - Strict data-reality constraint: report aggregates only real product data (`followers` and `engagement` from `AccountMetricDaily`, and publishing counts from `PostPlatformVariant` with status `PUBLISHED` and `publishedAt` inside the period). Zero invented metrics (no reach, impressions, or clicks exist anywhere in the product schema).
+  - UTC period bounds: `from` evaluates from 00:00:00.000Z to `to` 23:59:59.999Z, validated with `from <= to` and maximum span `<= 366 days`.
+  - White-label rule: when `whiteLabeled: true` (`!!brandDisplayName`), strings `'Agency OS'` and `'Gadmale'` must appear nowhere in the document (including document metadata `Title`, `Producer`, `Creator`). When false, footer reads `${displayName} • Generated with Agency OS`.
+  - PDFKit generation: uses `compress: false` in `PDFDocument` options so generated buffer text streams are uncompressed and verifiable.
+  - External logo fetching: uses an `AbortController` with a 3s timeout, validates `content-type` (`image/png`, `image/jpeg`, `image/jpg`), and silently falls back to name-only if network fails or image cannot be decoded.
+  - Permissions:
+    - `reports.generate`: `['OWNER', 'MANAGER', 'EDITOR']`
+    - `branding.manage`: `['OWNER', 'MANAGER']`
+    - `workspace.view`: `['OWNER', 'MANAGER', 'EDITOR', 'CLIENT_APPROVER', 'VIEWER']` (on `GET /branding`)
+  - `WorkspaceWritableGuard` applied on `PUT /branding`, but deliberately omitted from `GET /client-report` so analytical reporting remains accessible even if workspace subscription is expired or read-only.
+  - Audit logging: records `REPORT_GENERATED` on PDF generation and `WORKSPACE_BRANDING_UPDATED` on branding mutations.
+  - Web UI:
+    - Analytics page: Client Report card with date range picker (default: last 30 days), account select dropdown (All accounts + connected accounts), and 'Download PDF' button.
+    - Settings page: Workspace Branding card with display name (max 120 chars), logo URL (max 2048 chars, format validated), accent color picker and live hex input (`/^#[0-9A-Fa-f]{6}$/`).
+- **Scope & Exclusions**:
+  - OUT OF SCOPE:
+    - Scheduled or recurring emailed reports.
+    - CSV or Excel exports.
+    - Per-post detail listings in PDF.
+    - Charts or vector graphs in PDF (tables and summary cards only).
+    - File upload endpoint for logos (URL references only).
+    - Plan gating (available across all plans).
+
+### 2. Architecture & Implementation Details
+
+#### A. Database Schema & Migration (`packages/database`)
+- **Schema (`packages/database/prisma/schema.prisma`)**:
+  - Added optional fields to `Workspace` model:
+    - `brandDisplayName String?`
+    - `brandLogoUrl String?`
+    - `brandAccentColor String?`
+- **Migration**:
+  - `packages/database/prisma/migrations/20261119010000_add_workspace_branding/migration.sql`
+  - Applied to local `agency_os` and test database `agency_os_remote_execution_test`.
+- **Audit Actions (`packages/database/src/repositories/AuditLogRepository.ts`)**:
+  - Added `REPORT_GENERATED = 'REPORT_GENERATED'`
+  - Added `WORKSPACE_BRANDING_UPDATED = 'WORKSPACE_BRANDING_UPDATED'`
+
+#### B. API Reports Module (`apps/api/src/modules/reports/`)
+- **DTOs (`dto/report.dto.ts`)**:
+  - `UpdateBrandingDto`: optional `brandDisplayName` (max 120), `brandLogoUrl` (max 2048, http/https URL), `brandAccentColor` (`/^#[0-9A-Fa-f]{6}$/`). Empty strings permitted to clear stored values to `null`.
+  - `ReportQueryDto`: required `from` and `to` (`@IsDateString()`), optional `socialAccountId` (`@IsUUID()`).
+- **Service (`services/reports.service.ts`)**:
+  - `getBranding(workspaceId)`: returns stored `brandDisplayName`, `brandLogoUrl`, `brandAccentColor`.
+  - `updateBranding(workspaceId, actorId, dto)`: validates input format, normalizes empty strings to null, updates `Workspace`, and emits `WORKSPACE_BRANDING_UPDATED` audit log.
+  - `assembleReportData(workspaceId, from, to, socialAccountId?)`: validates date bounds (`from <= to`, max 366 days), queries accounts in workspace (or single account), computes `postsPublished` per account and overall, extracts start and end `followers` and sums `engagement` within UTC window, sets `hasMetrics: false` when unmeasured, computes totals only across accounts with metrics, and resolves branding with fallback to workspace name.
+- **PDF Generation (`services/report-pdf.service.ts`)**:
+  - Pure server-side PDFKit service (`new PDFDocument({ size: 'A4', margin: 40, compress: false, info: { ... } })`).
+  - Renders accent-colored header band, optional fetched logo, title and UTC period subheader, summary cards (Posts published, Follower growth, Total engagement), account performance table with 'No data' for unmeasured accounts, and white-label footer.
+- **Controller (`controllers/reports.controller.ts`)**:
+  - `GET /api/v1/workspaces/:workspaceId/reports/branding`: protected by `@RequirePermission('workspace.view')`.
+  - `PUT /api/v1/workspaces/:workspaceId/reports/branding`: protected by `@RequirePermission('branding.manage')` and `WorkspaceWritableGuard`.
+  - `GET /api/v1/workspaces/:workspaceId/reports/client-report`: protected by `@RequirePermission('reports.generate')` (no `WorkspaceWritableGuard`). Sets `Content-Type: application/pdf`, `Content-Disposition: attachment; filename="client-report-<workspaceId>-<from>-<to>.pdf"`, and audits `REPORT_GENERATED`.
+- **Module Registration (`reports.module.ts`, `app.module.ts`)**:
+  - Registered `ReportsModule` in `AppModule.imports`.
+- **Permission Matrix (`apps/api/src/modules/auth/guards/permission.guard.ts`)**:
+  - Added `'reports.generate': ['OWNER', 'MANAGER', 'EDITOR']`.
+  - Added `'branding.manage': ['OWNER', 'MANAGER']`.
+
+#### C. Web UI Implementation (`apps/web`)
+- **Query & Helper Layer (`apps/web/src/lib/query/reports.ts`)**:
+  - `reportsQueries.branding(workspaceId)`: query definition for workspace branding.
+  - `downloadClientReportPdf(workspaceId, from, to, socialAccountId?)`: fetches PDF blob from API with session credentials, creates a blob URL, triggers browser download via temporary anchor element, and revokes object URL.
+- **Analytics Dashboard (`apps/web/src/app/[workspaceId]/analytics/page.tsx`)**:
+  - Client Report card with start/end date inputs (initialized lazily to avoid impure render calls), account selector dropdown, and 'Download PDF' button with loading indicator and inline error alerts.
+- **Workspace Settings (`apps/web/src/app/[workspaceId]/settings/page.tsx`)**:
+  - Workspace Branding card with display name, logo URL, and accent color picker with live hex input and swatch preview. Controlled form state initialized lazily from server query, client-side format validation, and success/error feedback.
+
+### 3. Verification & Evidence
+
+- **Backend Unit Tests (`apps/api`)**:
+  - 44/44 test files PASS, 606/606 tests PASS.
+  - `reports.service.spec.ts`: 15/15 tests PASS.
+  - `reports.controller.spec.ts`: 8/8 tests PASS.
+  - `report-pdf.service.spec.ts`: 6/6 tests PASS.
+- **API E2E Tests (`apps/api/test/reports.e2e-spec.ts`)**:
+  - 1/1 test suite PASS, 15/15 tests PASS.
+  - Verifies:
+    - `GET /branding`: 401 unauthenticated, 403 non-member, 200 default branding for uncustomized workspace.
+    - `PUT /branding`: 403 for EDITOR (requires `branding.manage`), 400 for invalid hex color, 400 for invalid logo URL, 200 for OWNER with full custom fields, 200 on empty strings clearing fields to null.
+    - `GET /client-report`: 401 unauthenticated, 403 for VIEWER (requires `reports.generate`), 400 on missing or invalid dates, 400 on `from > to`, 200 generating valid PDF buffer starting with `%PDF` with attachment header and audit log entry, 200 with `socialAccountId` filter, 404 for non-existent account.
+- **Web Unit Tests (`apps/web`)**:
+  - 24/24 test files PASS, 263/263 tests PASS.
+  - `apps/web/src/app/[workspaceId]/analytics/page.spec.tsx`: 14/14 tests PASS (+3 new tests).
+  - `apps/web/src/app/[workspaceId]/settings/page.spec.tsx`: 17/17 tests PASS (+5 new tests).
+- **Monorepo Quality Gates**:
+  - `pnpm turbo run test`: 10/10 tasks successful.
+  - `pnpm turbo run lint typecheck build`: 18/18 tasks successful (0 errors).
+
+### 4. Release Gate & Next Steps
+
+1. **CI Quality Gates**:
+   - CI on the reviewed head `f632cccf` is 6/6 green (all 2026-11-19): GitGuardian Security Checks 09:49:05Z, Application Builds 09:49:55Z, Code Quality (Lint & Typecheck) 09:50:19Z, API E2E Tests 09:50:30Z, Tests 09:50:47Z, Docker Build & Smoke Test 09:57:17Z. Note: CI re-runs on the docs-fix head and must be re-verified 6/6 green there before merge.
+2. **Release Gate**:
+   - **Live Deployment**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending external infrastructure provisioning, live email delivery verification, live payment credentials, and disaster recovery rehearsals G18/G19).
+3. **Next Steps**:
+   - PR #88 is open against main at reviewed head `f632cccfdbc5cf20a99ee028b6c2a74ce65749d0`; CI is 6/6 green on the reviewed head; next step is the docs-fix re-review, then merge by the owner.
+   - Do NOT merge on this prompt alone. Live deployment remains STRICT NO-GO.

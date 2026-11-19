@@ -9,6 +9,7 @@ import { BullModule } from '@nestjs/bullmq';
 import { OAuthModule } from './modules/oauth/oauth.module';
 import { AccountsModule } from './modules/accounts/accounts.module';
 import { AnalyticsModule } from './modules/analytics/analytics.module';
+import { ReportsModule } from './modules/reports/reports.module';
 import { HealthModule } from './modules/health/health.module';
 import { PublishingModule } from './modules/publishing/publishing.module';
 import { MediaModule } from './modules/media/media.module';
@@ -52,6 +53,7 @@ import { ExecutionMetadataInterceptor } from './modules/core/interceptors/execut
     OAuthModule,
     AccountsModule,
     AnalyticsModule,
+    ReportsModule,
     PublishingModule,
     MediaModule,
     BillingModule,

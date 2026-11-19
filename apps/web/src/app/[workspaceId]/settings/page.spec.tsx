@@ -3,7 +3,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import SettingsPage from './page';
 import { vi, describe, it, expect, beforeEach } from 'vitest';
 
-const { mockApiGet, mockApiDelete, mockApiPost, MockApiError } = vi.hoisted(() => {
+const { mockApiGet, mockApiDelete, mockApiPost, mockApiPut, MockApiError } = vi.hoisted(() => {
   class MockApiError extends Error {
     public status: number;
     public data: unknown;
@@ -20,15 +20,21 @@ const { mockApiGet, mockApiDelete, mockApiPost, MockApiError } = vi.hoisted(() =
     mockApiGet: vi.fn(),
     mockApiDelete: vi.fn(),
     mockApiPost: vi.fn(),
+    mockApiPut: vi.fn(),
     MockApiError,
   };
 });
+
+vi.mock('next/navigation', () => ({
+  useParams: () => ({ workspaceId: 'ws-123' }),
+}));
 
 vi.mock('../../../lib/api/client', () => ({
   api: {
     get: (...args: unknown[]) => mockApiGet(...args),
     delete: (...args: unknown[]) => mockApiDelete(...args),
     post: (...args: unknown[]) => mockApiPost(...args),
+    put: (...args: unknown[]) => mockApiPut(...args),
   },
   ApiError: MockApiError,
 }));
@@ -348,5 +354,170 @@ describe('SettingsPage - Change Password', () => {
     expect(screen.getByLabelText('Current password')).toHaveValue('');
     expect(screen.getByLabelText('New password')).toHaveValue('');
     expect(screen.getByLabelText('Confirm new password')).toHaveValue('');
+  });
+
+  describe('SettingsPage - Workspace Branding', () => {
+    it('loads and pre-populates existing branding values from GET endpoint', async () => {
+      mockApiGet.mockImplementation((endpoint: string) => {
+        if (endpoint.includes('branding')) {
+          return Promise.resolve({
+            brandDisplayName: 'Acme Growth Labs',
+            brandLogoUrl: 'https://cdn.example.com/logo.png',
+            brandAccentColor: '#4F46E5',
+          });
+        }
+        return Promise.resolve({ sessions: [] });
+      });
+
+      renderWithClient(<SettingsPage />);
+
+      await waitFor(() => {
+        expect(screen.getByLabelText('Brand Display Name')).toHaveValue('Acme Growth Labs');
+        expect(screen.getByLabelText('Brand Logo URL')).toHaveValue('https://cdn.example.com/logo.png');
+        expect(screen.getByDisplayValue('#4F46E5')).toBeInTheDocument();
+      });
+    });
+
+    it('validates logo URL client-side and shows inline error if invalid', async () => {
+      mockApiGet.mockImplementation((endpoint: string) => {
+        if (endpoint.includes('branding')) {
+          return Promise.resolve({
+            brandDisplayName: '',
+            brandLogoUrl: '',
+            brandAccentColor: '#111827',
+          });
+        }
+        return Promise.resolve({ sessions: [] });
+      });
+
+      renderWithClient(<SettingsPage />);
+
+      await waitFor(() => {
+        expect(screen.getByLabelText('Brand Logo URL')).not.toBeDisabled();
+      });
+
+      fireEvent.change(screen.getByLabelText('Brand Logo URL'), {
+        target: { value: 'not-a-valid-url' },
+      });
+
+      fireEvent.click(screen.getByRole('button', { name: 'Save Branding' }));
+
+      await waitFor(() => {
+        expect(screen.getByText('Logo URL must be a valid http or https URL.')).toBeInTheDocument();
+      });
+      expect(mockApiPut).not.toHaveBeenCalled();
+    });
+
+    it('validates accent color client-side and shows inline error if invalid', async () => {
+      mockApiGet.mockImplementation((endpoint: string) => {
+        if (endpoint.includes('branding')) {
+          return Promise.resolve({
+            brandDisplayName: '',
+            brandLogoUrl: '',
+            brandAccentColor: '#111827',
+          });
+        }
+        return Promise.resolve({ sessions: [] });
+      });
+
+      renderWithClient(<SettingsPage />);
+
+      await waitFor(() => {
+        expect(screen.getByPlaceholderText('#111827')).not.toBeDisabled();
+      });
+
+      fireEvent.change(screen.getByPlaceholderText('#111827'), {
+        target: { value: 'invalid-hex' },
+      });
+
+      fireEvent.click(screen.getByRole('button', { name: 'Save Branding' }));
+
+      await waitFor(() => {
+        expect(
+          screen.getByText('Accent color must be a valid 6-character hex color code (e.g. #111827).')
+        ).toBeInTheDocument();
+      });
+      expect(mockApiPut).not.toHaveBeenCalled();
+    });
+
+    it('submits updated branding to PUT endpoint and displays success message', async () => {
+      mockApiGet.mockImplementation((endpoint: string) => {
+        if (endpoint.includes('branding')) {
+          return Promise.resolve({
+            brandDisplayName: 'Old Name',
+            brandLogoUrl: null,
+            brandAccentColor: null,
+          });
+        }
+        return Promise.resolve({ sessions: [] });
+      });
+
+      mockApiPut.mockResolvedValue({
+        brandDisplayName: 'New Agency Name',
+        brandLogoUrl: 'https://example.com/logo.png',
+        brandAccentColor: '#3B82F6',
+      });
+
+      renderWithClient(<SettingsPage />);
+
+      await waitFor(() => {
+        expect(screen.getByLabelText('Brand Display Name')).toHaveValue('Old Name');
+      });
+
+      fireEvent.change(screen.getByLabelText('Brand Display Name'), {
+        target: { value: 'New Agency Name' },
+      });
+      fireEvent.change(screen.getByLabelText('Brand Logo URL'), {
+        target: { value: 'https://example.com/logo.png' },
+      });
+      fireEvent.change(screen.getByPlaceholderText('#111827'), {
+        target: { value: '#3B82F6' },
+      });
+
+      fireEvent.click(screen.getByRole('button', { name: 'Save Branding' }));
+
+      await waitFor(() => {
+        expect(mockApiPut).toHaveBeenCalledWith(
+          'workspaces/ws-123/reports/branding',
+          {
+            brandDisplayName: 'New Agency Name',
+            brandLogoUrl: 'https://example.com/logo.png',
+            brandAccentColor: '#3B82F6',
+          }
+        );
+        expect(screen.getByText('Branding updated successfully.')).toBeInTheDocument();
+      });
+    });
+
+    it('displays error alert when updateBranding API call fails', async () => {
+      mockApiGet.mockImplementation((endpoint: string) => {
+        if (endpoint.includes('branding')) {
+          return Promise.resolve({
+            brandDisplayName: '',
+            brandLogoUrl: '',
+            brandAccentColor: '#111827',
+          });
+        }
+        return Promise.resolve({ sessions: [] });
+      });
+
+      mockApiPut.mockRejectedValue(new Error('Workspace is read-only.'));
+
+      renderWithClient(<SettingsPage />);
+
+      await waitFor(() => {
+        expect(screen.getByLabelText('Brand Display Name')).toBeInTheDocument();
+      });
+
+      fireEvent.change(screen.getByLabelText('Brand Display Name'), {
+        target: { value: 'My Agency' },
+      });
+
+      fireEvent.click(screen.getByRole('button', { name: 'Save Branding' }));
+
+      await waitFor(() => {
+        expect(screen.getByText('Workspace is read-only.')).toBeInTheDocument();
+      });
+    });
   });
 });

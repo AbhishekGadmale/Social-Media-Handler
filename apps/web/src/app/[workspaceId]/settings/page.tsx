@@ -1,8 +1,14 @@
 'use client';
 
 import React, { useState } from 'react';
+import { useParams } from 'next/navigation';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { authQueries, SessionInfo } from '../../../lib/query/auth';
+import {
+  reportsQueries,
+  UpdateBrandingPayload,
+  WorkspaceBranding,
+} from '../../../lib/query/reports';
 import { api } from '../../../lib/api/client';
 import {
   Laptop,
@@ -13,6 +19,7 @@ import {
   Lock,
   CheckCircle2,
   AlertTriangle,
+  Palette,
 } from 'lucide-react';
 
 function getDeviceTitle(browser: string, os: string): string {
@@ -34,6 +41,9 @@ function getDeviceIcon(os: string) {
 
 export default function SettingsPage() {
   const queryClient = useQueryClient();
+  const params = useParams();
+  const workspaceId = (params?.workspaceId as string) || '';
+
   const [revokingId, setRevokingId] = useState<string | null>(null);
   const [revokeError, setRevokeError] = useState<string | null>(null);
 
@@ -44,6 +54,88 @@ export default function SettingsPage() {
   const [passwordError, setPasswordError] = useState<string | null>(null);
   const [passwordSuccess, setPasswordSuccess] = useState<string | null>(null);
   const [passwordWarning, setPasswordWarning] = useState<string | null>(null);
+
+  // Branding state (null means inherit from query)
+  const [customDisplayName, setCustomDisplayName] = useState<string | null>(null);
+  const [customLogoUrl, setCustomLogoUrl] = useState<string | null>(null);
+  const [customAccentColor, setCustomAccentColor] = useState<string | null>(null);
+  const [brandingError, setBrandingError] = useState<string | null>(null);
+  const [brandingSuccess, setBrandingSuccess] = useState<string | null>(null);
+
+  const brandingQuery = useQuery(reportsQueries.branding(workspaceId));
+
+  const brandDisplayName =
+    customDisplayName !== null
+      ? customDisplayName
+      : brandingQuery.data?.brandDisplayName || '';
+  const brandLogoUrl =
+    customLogoUrl !== null
+      ? customLogoUrl
+      : brandingQuery.data?.brandLogoUrl || '';
+  const brandAccentColor =
+    customAccentColor !== null
+      ? customAccentColor
+      : brandingQuery.data?.brandAccentColor || '#111827';
+
+  const saveBrandingMutation = useMutation({
+    mutationFn: async (payload: UpdateBrandingPayload) => {
+      return await api.put<WorkspaceBranding>(
+        `workspaces/${workspaceId}/reports/branding`,
+        payload
+      );
+    },
+    onSuccess: (data) => {
+      setBrandingSuccess('Branding updated successfully.');
+      setCustomDisplayName(null);
+      setCustomLogoUrl(null);
+      setCustomAccentColor(null);
+      queryClient.setQueryData(
+        ['workspaces', workspaceId, 'reports', 'branding'],
+        data
+      );
+    },
+    onError: (err: unknown) => {
+      const message =
+        err instanceof Error ? err.message : 'Failed to update branding.';
+      setBrandingError(message);
+    },
+  });
+
+  const handleSaveBranding = (e: React.FormEvent) => {
+    e.preventDefault();
+    setBrandingError(null);
+    setBrandingSuccess(null);
+
+    // Client-side validations
+    if (brandLogoUrl.trim()) {
+      try {
+        const u = new URL(brandLogoUrl.trim());
+        if (u.protocol !== 'http:' && u.protocol !== 'https:') {
+          setBrandingError('Logo URL must be a valid http or https URL.');
+          return;
+        }
+      } catch {
+        setBrandingError('Logo URL must be a valid http or https URL.');
+        return;
+      }
+    }
+
+    if (
+      brandAccentColor.trim() &&
+      !/^#[0-9A-Fa-f]{6}$/.test(brandAccentColor.trim())
+    ) {
+      setBrandingError(
+        'Accent color must be a valid 6-character hex color code (e.g. #111827).'
+      );
+      return;
+    }
+
+    saveBrandingMutation.mutate({
+      brandDisplayName: brandDisplayName.trim(),
+      brandLogoUrl: brandLogoUrl.trim(),
+      brandAccentColor: brandAccentColor.trim(),
+    });
+  };
 
   const {
     data,
@@ -365,6 +457,141 @@ export default function SettingsPage() {
                 className="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
                 {changePasswordMutation.isPending ? 'Changing...' : 'Change Password'}
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+
+      {/* Branding Card */}
+      <div
+        className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden"
+        data-testid="branding-card"
+      >
+        <div className="p-5 border-b border-gray-200 flex items-center justify-between">
+          <div className="flex items-center space-x-3">
+            <Palette className="w-5 h-5 text-blue-600" aria-hidden="true" />
+            <div>
+              <h2 className="text-lg font-semibold text-gray-900">Workspace Branding</h2>
+              <p className="text-sm text-gray-500">
+                Customize agency branding for client-facing performance reports.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div className="p-5 space-y-4">
+          {brandingError && (
+            <div
+              className="p-3 bg-red-50 border border-red-200 rounded-md flex items-center space-x-2 text-sm text-red-700"
+              role="alert"
+            >
+              <AlertCircle className="w-4 h-4 text-red-500 flex-shrink-0" />
+              <span>{brandingError}</span>
+            </div>
+          )}
+
+          {brandingSuccess && (
+            <div
+              className="p-3 bg-green-50 border border-green-200 rounded-md flex items-center space-x-2 text-sm text-green-700"
+              role="status"
+            >
+              <CheckCircle2 className="w-4 h-4 text-green-500 flex-shrink-0" />
+              <span>{brandingSuccess}</span>
+            </div>
+          )}
+
+          <form onSubmit={handleSaveBranding} noValidate className="space-y-4">
+            <div>
+              <label
+                htmlFor="brandDisplayName"
+                className="block text-sm font-medium text-gray-700"
+              >
+                Brand Display Name
+              </label>
+              <input
+                id="brandDisplayName"
+                name="brandDisplayName"
+                type="text"
+                maxLength={120}
+                placeholder="e.g. Acme Marketing Agency"
+                value={brandDisplayName}
+                onChange={(e) => setCustomDisplayName(e.target.value)}
+                disabled={saveBrandingMutation.isPending || brandingQuery.isLoading}
+                className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-gray-900 placeholder-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 sm:text-sm disabled:opacity-50 disabled:bg-gray-50"
+              />
+              <p className="text-xs text-gray-500 mt-1">
+                Name displayed prominently on client PDF reports. Leave blank to use workspace name.
+              </p>
+            </div>
+
+            <div>
+              <label
+                htmlFor="brandLogoUrl"
+                className="block text-sm font-medium text-gray-700"
+              >
+                Brand Logo URL
+              </label>
+              <input
+                id="brandLogoUrl"
+                name="brandLogoUrl"
+                type="url"
+                maxLength={2048}
+                placeholder="https://example.com/logo.png"
+                value={brandLogoUrl}
+                onChange={(e) => setCustomLogoUrl(e.target.value)}
+                disabled={saveBrandingMutation.isPending || brandingQuery.isLoading}
+                className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-gray-900 placeholder-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 sm:text-sm disabled:opacity-50 disabled:bg-gray-50"
+              />
+              <p className="text-xs text-gray-500 mt-1">
+                Direct URL to a PNG or JPEG logo (recommended square or landscape, at least 80x80px).
+              </p>
+            </div>
+
+            <div>
+              <label
+                htmlFor="brandAccentColor"
+                className="block text-sm font-medium text-gray-700"
+              >
+                Accent Color
+              </label>
+              <div className="mt-1 flex items-center space-x-3">
+                <input
+                  type="color"
+                  value={
+                    brandAccentColor.startsWith('#') && brandAccentColor.length === 7
+                      ? brandAccentColor
+                      : '#111827'
+                  }
+                  onChange={(e) => setCustomAccentColor(e.target.value)}
+                  disabled={saveBrandingMutation.isPending || brandingQuery.isLoading}
+                  className="h-9 w-9 rounded border border-gray-300 p-0.5 cursor-pointer disabled:opacity-50"
+                  aria-label="Color picker"
+                />
+                <input
+                  id="brandAccentColor"
+                  name="brandAccentColor"
+                  type="text"
+                  placeholder="#111827"
+                  maxLength={7}
+                  value={brandAccentColor}
+                  onChange={(e) => setCustomAccentColor(e.target.value)}
+                  disabled={saveBrandingMutation.isPending || brandingQuery.isLoading}
+                  className="block w-40 rounded-md border border-gray-300 px-3 py-2 text-gray-900 placeholder-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 sm:text-sm disabled:opacity-50 disabled:bg-gray-50"
+                />
+              </div>
+              <p className="text-xs text-gray-500 mt-1">
+                Hex color used for headers and accent bands in PDF reports (e.g. #111827).
+              </p>
+            </div>
+
+            <div className="pt-2">
+              <button
+                type="submit"
+                disabled={saveBrandingMutation.isPending || brandingQuery.isLoading}
+                className="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                {saveBrandingMutation.isPending ? 'Saving...' : 'Save Branding'}
               </button>
             </div>
           </form>
