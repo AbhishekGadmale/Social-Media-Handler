@@ -57,18 +57,22 @@ vi.mock('../../lib/api/client', () => ({
   },
 }));
 
-const renderDashboard = () => {
-  const queryClient = new QueryClient({
-    defaultOptions: {
-      queries: { retry: false, gcTime: 0 },
-    },
-  });
+const renderDashboard = (customQueryClient?: QueryClient) => {
+  const queryClient =
+    customQueryClient ||
+    new QueryClient({
+      defaultOptions: {
+        queries: { retry: false, gcTime: 0 },
+      },
+    });
 
-  return render(
+  const renderResult = render(
     <QueryClientProvider client={queryClient}>
       <Dashboard />
     </QueryClientProvider>,
   );
+
+  return { ...renderResult, queryClient };
 };
 
 describe('Dashboard Page', () => {
@@ -260,5 +264,40 @@ describe('Dashboard Page', () => {
         screen.getByText('Something went wrong. Please try again.'),
       ).toBeInTheDocument();
     });
+  });
+
+  it('calls auth/logout, clears query cache, and navigates to /login on Sign out click', async () => {
+    mockApiGet.mockResolvedValueOnce({
+      user: {
+        id: 'user-1',
+        email: 'verified@example.com',
+        name: 'Verified User',
+        emailVerified: true,
+      },
+      memberships: [],
+    });
+    mockApiPost.mockResolvedValueOnce({ message: 'Logged out successfully' });
+
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false, gcTime: 0 },
+      },
+    });
+    const clearSpy = vi.spyOn(queryClient, 'clear');
+
+    renderDashboard(queryClient);
+
+    const signOutBtn = await screen.findByRole('button', { name: /sign out/i });
+    fireEvent.click(signOutBtn);
+
+    await waitFor(() => {
+      expect(mockApiPost).toHaveBeenCalledWith('auth/logout');
+      expect(clearSpy).toHaveBeenCalledTimes(1);
+      expect(mockPush).toHaveBeenCalledWith('/login');
+    });
+
+    expect(clearSpy.mock.invocationCallOrder[0]).toBeLessThan(
+      mockPush.mock.invocationCallOrder[0],
+    );
   });
 });
