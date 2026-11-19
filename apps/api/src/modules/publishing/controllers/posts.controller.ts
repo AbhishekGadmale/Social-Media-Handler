@@ -11,7 +11,11 @@ import {
   HttpCode,
 } from '@nestjs/common';
 import { PublishingApplicationService } from '../services/publishing-application.service';
-import { CreatePostDto, UpdatePostDto } from '../dto/post.dto';
+import {
+  CreatePostDto,
+  UpdatePostDto,
+  RequestChangesDto,
+} from '../dto/post.dto';
 import { RequirePermission } from '../../auth/decorators/permission.decorator';
 import { AuthGuard } from '../../auth/guards/auth.guard';
 import { WorkspaceGuard } from '../../auth/guards/workspace.guard';
@@ -88,5 +92,47 @@ export class PostsController {
     @Param('postId') postId: string,
   ) {
     return this.publishingService.deletePost(workspaceId, user.id, postId);
+  }
+
+  @Post(':postId/request-approval')
+  @UseGuards(WorkspaceWritableGuard)
+  @RequirePermission('posts.update')
+  @HttpCode(200)
+  async requestApproval(
+    @Param('workspaceId') workspaceId: string,
+    @CurrentUser() user: any,
+    @Param('postId') postId: string,
+  ) {
+    return this.publishingService.requestApproval(workspaceId, user.id, postId);
+  }
+
+  @Post(':postId/approve')
+  @UseGuards(WorkspaceWritableGuard)
+  @RequirePermission('posts.approve')
+  @HttpCode(200)
+  async approvePost(
+    @Param('workspaceId') workspaceId: string,
+    @CurrentUser() user: any,
+    @Param('postId') postId: string,
+  ) {
+    return this.publishingService.approvePost(workspaceId, user.id, postId);
+  }
+
+  @Post(':postId/request-changes')
+  @UseGuards(WorkspaceWritableGuard)
+  @RequirePermission('posts.approve')
+  @HttpCode(200)
+  async requestChanges(
+    @Param('workspaceId') workspaceId: string,
+    @CurrentUser() user: any,
+    @Param('postId') postId: string,
+    @Body() dto: RequestChangesDto,
+  ) {
+    return this.publishingService.requestChanges(
+      workspaceId,
+      user.id,
+      postId,
+      dto.comment,
+    );
   }
 }

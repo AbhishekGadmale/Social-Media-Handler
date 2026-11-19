@@ -3,7 +3,7 @@
 
 import { useParams, useRouter } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
-import { publishingQueries, PostStatus } from '../../../lib/query/publishing';
+import { publishingQueries, PostStatus, ApprovalStatus } from '../../../lib/query/publishing';
 import { Button } from '../../../components/ui/button';
 import { Plus, Clock, CheckCircle2, AlertCircle, FileText, Send, Loader2 } from 'lucide-react';
 import Link from 'next/link';
@@ -25,6 +25,32 @@ function StatusBadge({ status }: { status: PostStatus }) {
     case 'DRAFT':
     default:
       return <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800"><FileText className="w-3 h-3 mr-1" /> Draft</span>;
+  }
+}
+
+function ApprovalBadge({ status }: { status?: ApprovalStatus }) {
+  if (!status || status === 'NOT_SUBMITTED') return null;
+  switch (status) {
+    case 'PENDING':
+      return (
+        <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-yellow-100 text-yellow-800 border border-yellow-200">
+          Pending Approval
+        </span>
+      );
+    case 'APPROVED':
+      return (
+        <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800 border border-green-200">
+          Approved
+        </span>
+      );
+    case 'CHANGES_REQUESTED':
+      return (
+        <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-800 border border-red-200">
+          Changes Requested
+        </span>
+      );
+    default:
+      return null;
   }
 }
 
@@ -106,7 +132,8 @@ export default function PublishingPage() {
                       <div className="min-w-0 flex-1 flex flex-col">
                         <div className="flex items-center justify-between mb-1">
                           <p className="text-sm font-medium text-blue-600 truncate">{title}</p>
-                          <div className="ml-2 flex-shrink-0 flex">
+                          <div className="ml-2 flex-shrink-0 flex items-center gap-2">
+                            <ApprovalBadge status={post.approvalStatus} />
                             <StatusBadge status={displayStatus} />
                           </div>
                         </div>

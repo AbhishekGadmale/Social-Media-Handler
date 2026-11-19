@@ -247,9 +247,7 @@ describe('Publishing API (e2e)', () => {
         .set('x-csrf-token', session1.csrfToken)
         .send({ content: 'Valid content for publishing' });
 
-      console.error('CREATERES', createRes.status, createRes.body);
       expect(createRes.status).toBe(201);
-      console.error('CREATERES', createRes.status, createRes.body);
       post1Id = createRes.body.id;
       expect(createRes.body.status).toBe(PostStatus.DRAFT);
       expect(createRes.body.content).toBe('Valid content for publishing');
@@ -2170,6 +2168,150 @@ describe('Publishing API (e2e)', () => {
       expect(errorMessage).toBe(
         'Trial expired. Workspace is in read-only mode. Please subscribe to a plan to continue.',
       );
+    });
+  });
+
+  describe('Client Approvals End-to-End Workflow', () => {
+    let approvalPostId: string;
+    let approvalVariantId: string;
+
+    beforeAll(async () => {
+      const post = await prisma.post.create({
+        data: {
+          id: generateId(),
+          workspaceId: ws1,
+          authorId: testUser3.id,
+          content: 'E2E Post for approval flow',
+          status: PostStatus.DRAFT,
+          variants: {
+            create: {
+              id: generateId(),
+              workspaceId: ws1,
+              socialAccountId: account1,
+              status: PostStatus.DRAFT,
+              content: 'E2E Post variant for approval flow',
+            },
+          },
+        },
+        include: { variants: true },
+      });
+      approvalPostId = post.id;
+      approvalVariantId = post.variants[0].id;
+    });
+
+    afterAll(async () => {
+      await prisma.publicationAttempt.deleteMany({
+        where: { variant: { postId: approvalPostId } },
+      });
+      await prisma.postPlatformVariant.deleteMany({
+        where: { postId: approvalPostId },
+      });
+      await prisma.post.deleteMany({
+        where: { id: approvalPostId },
+      });
+    });
+
+    it('allows EDITOR to submit draft post for approval', async () => {
+      const res = await request(app.getHttpServer())
+        .post(`/api/v1/workspaces/${ws1}/posts/${approvalPostId}/request-approval`)
+        .set('Cookie', session3.combinedCookie)
+        .set('x-csrf-token', session3.csrfToken)
+        .expect(200);
+
+      expect(res.body.approvalStatus).toBe('PENDING');
+      expect(res.body.approvalRequestedById).toBe(testUser3.id);
+    });
+
+    it('rejects duplicate request-approval with 409 Conflict', async () => {
+      const res = await request(app.getHttpServer())
+        .post(`/api/v1/workspaces/${ws1}/posts/${approvalPostId}/request-approval`)
+        .set('Cookie', session3.combinedCookie)
+        .set('x-csrf-token', session3.csrfToken)
+        .expect(409);
+
+      const message = res.body.error?.message || res.body.message;
+      expect(message).toBe('Post is already pending approval.');
+    });
+
+    it('forbids EDITOR from approving post (403 Forbidden without posts.approve)', async () => {
+      await request(app.getHttpServer())
+        .post(`/api/v1/workspaces/${ws1}/posts/${approvalPostId}/approve`)
+        .set('Cookie', session3.combinedCookie)
+        .set('x-csrf-token', session3.csrfToken)
+        .expect(403);
+    });
+
+    it('blocks publication while post is PENDING approval (409 Conflict)', async () => {
+      const res = await request(app.getHttpServer())
+        .post(`/api/v1/workspaces/${ws1}/publications/${approvalVariantId}/publish`)
+        .set('Cookie', session1.combinedCookie)
+        .set('x-csrf-token', session1.csrfToken)
+        .expect(409);
+
+      const message = res.body.error?.message || res.body.message;
+      expect(message).toBe('Post is pending approval and cannot be published yet.');
+    });
+
+    it('allows OWNER to request changes with required comment', async () => {
+      const res = await request(app.getHttpServer())
+        .post(`/api/v1/workspaces/${ws1}/posts/${approvalPostId}/request-changes`)
+        .set('Cookie', session1.combinedCookie)
+        .set('x-csrf-token', session1.csrfToken)
+        .send({ comment: 'Please adjust phrasing before we publish.' })
+        .expect(200);
+
+      expect(res.body.approvalStatus).toBe('CHANGES_REQUESTED');
+      expect(res.body.approvalComment).toBe('Please adjust phrasing before we publish.');
+      expect(res.body.approvalDecidedById).toBe(testUser.id);
+    });
+
+    it('blocks publication while post is in CHANGES_REQUESTED (409 Conflict)', async () => {
+      const res = await request(app.getHttpServer())
+        .post(`/api/v1/workspaces/${ws1}/publications/${approvalVariantId}/publish`)
+        .set('Cookie', session1.combinedCookie)
+        .set('x-csrf-token', session1.csrfToken)
+        .expect(409);
+
+      const message = res.body.error?.message || res.body.message;
+      expect(message).toBe(
+        'Changes were requested for this post. Edit it and resubmit for approval before publishing.',
+      );
+    });
+
+    it('allows OWNER to approve post once resubmitted', async () => {
+      // Re-submit for approval
+      await request(app.getHttpServer())
+        .post(`/api/v1/workspaces/${ws1}/posts/${approvalPostId}/request-approval`)
+        .set('Cookie', session3.combinedCookie)
+        .set('x-csrf-token', session3.csrfToken)
+        .expect(200);
+
+      // Approve
+      const res = await request(app.getHttpServer())
+        .post(`/api/v1/workspaces/${ws1}/posts/${approvalPostId}/approve`)
+        .set('Cookie', session1.combinedCookie)
+        .set('x-csrf-token', session1.csrfToken)
+        .expect(200);
+
+      expect(res.body.approvalStatus).toBe('APPROVED');
+      expect(res.body.approvalDecidedById).toBe(testUser.id);
+      expect(res.body.approvalComment).toBeNull();
+    });
+
+    it('invalidates approval when draft content is edited after approval', async () => {
+      await request(app.getHttpServer())
+        .patch(`/api/v1/workspaces/${ws1}/posts/${approvalPostId}`)
+        .set('Cookie', session3.combinedCookie)
+        .set('x-csrf-token', session3.csrfToken)
+        .send({ content: 'Post revised after approval' })
+        .expect(200);
+
+      const post = await prisma.post.findUnique({
+        where: { id: approvalPostId },
+      });
+      expect(post?.approvalStatus).toBe('NOT_SUBMITTED');
+      expect(post?.approvalDecidedById).toBeNull();
+      expect(post?.approvalDecidedAt).toBeNull();
     });
   });
 });

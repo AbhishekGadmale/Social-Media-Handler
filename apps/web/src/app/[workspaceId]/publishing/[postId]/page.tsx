@@ -180,6 +180,8 @@ export default function PostDetailPage() {
       </div>
 
       <div className="w-full md:w-96 space-y-6">
+        <ApprovalCard post={post} workspaceId={workspaceId} />
+
         <div className="bg-white shadow sm:rounded-lg p-6 border border-gray-200">
           <h2 className="text-lg font-bold text-gray-900 mb-4">Destinations</h2>
 
@@ -221,6 +223,194 @@ export default function PostDetailPage() {
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+function ApprovalCard({ post, workspaceId }: { post: Post; workspaceId: string }) {
+  const queryClient = useQueryClient();
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [showChangesInput, setShowChangesInput] = useState(false);
+  const [comment, setComment] = useState('');
+
+  const status = post.approvalStatus || 'NOT_SUBMITTED';
+
+  const handleRequestApproval = async () => {
+    try {
+      setIsSubmitting(true);
+      setError(null);
+      await api.post(`workspaces/${workspaceId}/posts/${post.id}/request-approval`, {});
+      queryClient.invalidateQueries({ queryKey: ['workspaces', workspaceId, 'posts'] });
+    } catch (err: unknown) {
+      const errorObj = err instanceof Error ? err : new Error('Unknown error');
+      setError(errorObj.message || 'Failed to submit post for approval');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleApprove = async () => {
+    try {
+      setIsSubmitting(true);
+      setError(null);
+      await api.post(`workspaces/${workspaceId}/posts/${post.id}/approve`, {});
+      queryClient.invalidateQueries({ queryKey: ['workspaces', workspaceId, 'posts'] });
+    } catch (err: unknown) {
+      const errorObj = err instanceof Error ? err : new Error('Unknown error');
+      setError(errorObj.message || 'Failed to approve post');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleRequestChanges = async () => {
+    if (!comment.trim()) return;
+    try {
+      setIsSubmitting(true);
+      setError(null);
+      await api.post(`workspaces/${workspaceId}/posts/${post.id}/request-changes`, {
+        comment: comment.trim(),
+      });
+      setShowChangesInput(false);
+      setComment('');
+      queryClient.invalidateQueries({ queryKey: ['workspaces', workspaceId, 'posts'] });
+    } catch (err: unknown) {
+      const errorObj = err instanceof Error ? err : new Error('Unknown error');
+      setError(errorObj.message || 'Failed to request changes');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="bg-white shadow sm:rounded-lg p-6 border border-gray-200" data-testid="approval-card">
+      <h2 className="text-lg font-bold text-gray-900 mb-3">Client Approval</h2>
+
+      <div className="mb-4 flex items-center justify-between">
+        <span className="text-sm text-gray-500">Status</span>
+        {status === 'NOT_SUBMITTED' && (
+          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800" data-testid="approval-status-badge">
+            Not Submitted
+          </span>
+        )}
+        {status === 'PENDING' && (
+          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800 border border-yellow-200" data-testid="approval-status-badge">
+            Pending Approval
+          </span>
+        )}
+        {status === 'APPROVED' && (
+          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800 border border-green-200" data-testid="approval-status-badge">
+            Approved
+          </span>
+        )}
+        {status === 'CHANGES_REQUESTED' && (
+          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800 border border-red-200" data-testid="approval-status-badge">
+            Changes Requested
+          </span>
+        )}
+      </div>
+
+      {status === 'CHANGES_REQUESTED' && post.approvalComment && (
+        <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-md text-sm text-red-800" data-testid="approval-comment-box">
+          <p className="font-semibold text-xs text-red-900 mb-1">Feedback from Reviewer:</p>
+          <p className="whitespace-pre-wrap">{post.approvalComment}</p>
+        </div>
+      )}
+
+      {error && (
+        <div className="mb-4 p-2 bg-red-50 border border-red-200 text-red-700 text-xs rounded">
+          {error}
+        </div>
+      )}
+
+      {(status === 'NOT_SUBMITTED' || status === 'CHANGES_REQUESTED') && (
+        <div className="pt-2">
+          <Button
+            onClick={handleRequestApproval}
+            disabled={isSubmitting}
+            className="w-full bg-blue-600 hover:bg-blue-700 text-white"
+            data-testid="request-approval-button"
+          >
+            {isSubmitting ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
+            Send for Approval
+          </Button>
+          <p className="text-xs text-gray-500 mt-2 text-center">
+            Notifies workspace approvers to review this post.
+          </p>
+        </div>
+      )}
+
+      {status === 'PENDING' && !showChangesInput && (
+        <div className="pt-2 space-y-2">
+          <Button
+            onClick={handleApprove}
+            disabled={isSubmitting}
+            className="w-full bg-green-600 hover:bg-green-700 text-white"
+            data-testid="approve-post-button"
+          >
+            {isSubmitting ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
+            Approve Post
+          </Button>
+          <Button
+            onClick={() => setShowChangesInput(true)}
+            disabled={isSubmitting}
+            variant="outline"
+            className="w-full border-red-300 text-red-700 hover:bg-red-50"
+            data-testid="request-changes-toggle-button"
+          >
+            Request Changes
+          </Button>
+        </div>
+      )}
+
+      {status === 'PENDING' && showChangesInput && (
+        <div className="pt-2 space-y-2" data-testid="request-changes-form">
+          <label className="block text-xs font-medium text-gray-700">
+            Change Request Feedback (required)
+          </label>
+          <textarea
+            rows={3}
+            className="w-full rounded-md border border-gray-300 shadow-sm p-2 text-xs focus:border-red-500 focus:ring-red-500"
+            placeholder="Explain what changes are needed..."
+            value={comment}
+            onChange={(e) => setComment(e.target.value)}
+            maxLength={1000}
+            data-testid="request-changes-comment-input"
+          />
+          <div className="flex gap-2">
+            <Button
+              size="sm"
+              onClick={handleRequestChanges}
+              disabled={isSubmitting || !comment.trim()}
+              className="flex-1 bg-red-600 hover:bg-red-700 text-white"
+              data-testid="submit-request-changes-button"
+            >
+              {isSubmitting ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : null}
+              Submit Changes
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                setShowChangesInput(false);
+                setComment('');
+              }}
+              disabled={isSubmitting}
+            >
+              Cancel
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {status === 'APPROVED' && (
+        <div className="pt-2">
+          <p className="text-xs text-green-700 bg-green-50 p-2 rounded border border-green-200 text-center">
+            This post has been approved and is ready to publish or schedule.
+          </p>
+        </div>
+      )}
     </div>
   );
 }
@@ -474,9 +664,21 @@ function TargetCard({ variant, workspaceId, post }: { variant: PostPlatformVaria
         </div>
       )}
 
+      {(post.approvalStatus === 'PENDING' || post.approvalStatus === 'CHANGES_REQUESTED') && (
+        <div className="mt-3 p-2 bg-yellow-50 text-yellow-800 text-xs rounded border border-yellow-200" data-testid="approval-gate-notice">
+          {post.approvalStatus === 'PENDING'
+            ? 'Post is pending approval. It cannot be published or scheduled until approved.'
+            : 'Changes were requested. Edit and resubmit for approval before publishing.'}
+        </div>
+      )}
+
       <div className="flex flex-wrap gap-2 mt-4 pt-3 border-t border-gray-200">
         {(variant.status === 'DRAFT' || variant.status === 'FAILED' || variant.status === 'SCHEDULED') ? (
-          <Button size="sm" onClick={() => setIsPublishing(true)} disabled={isActioning || !!validationError}>
+          <Button
+            size="sm"
+            onClick={() => setIsPublishing(true)}
+            disabled={isActioning || !!validationError || post.approvalStatus === 'PENDING' || post.approvalStatus === 'CHANGES_REQUESTED'}
+          >
             <Play className="w-3 h-3 mr-1" /> {variant.status === 'FAILED' ? 'Retry' : (variant.status === 'SCHEDULED' ? 'Publish Now' : 'Publish')}
           </Button>
         ) : null}
@@ -484,7 +686,12 @@ function TargetCard({ variant, workspaceId, post }: { variant: PostPlatformVaria
         {(variant.status === 'DRAFT' || variant.status === 'FAILED') ? (
           <div className="flex items-center gap-1">
             <input type="datetime-local" className="text-xs border p-1 rounded" value={scheduleDate} onChange={e => setScheduleDate(e.target.value)} />
-            <Button variant="outline" size="sm" onClick={() => handleAction('schedule', { scheduledAt: new Date(scheduleDate).toISOString() })} disabled={!scheduleDate || isActioning || !!validationError}>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => handleAction('schedule', { scheduledAt: new Date(scheduleDate).toISOString() })}
+              disabled={!scheduleDate || isActioning || !!validationError || post.approvalStatus === 'PENDING' || post.approvalStatus === 'CHANGES_REQUESTED'}
+            >
               <Calendar className="w-3 h-3 mr-1" /> Schedule
             </Button>
           </div>
@@ -493,7 +700,12 @@ function TargetCard({ variant, workspaceId, post }: { variant: PostPlatformVaria
         {variant.status === 'SCHEDULED' && (
           <div className="flex items-center gap-1">
             <input type="datetime-local" className="text-xs border p-1 rounded" value={scheduleDate} onChange={e => setScheduleDate(e.target.value)} />
-            <Button variant="outline" size="sm" onClick={() => handleAction('reschedule', { scheduledAt: new Date(scheduleDate).toISOString() })} disabled={!scheduleDate || isActioning}>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => handleAction('reschedule', { scheduledAt: new Date(scheduleDate).toISOString() })}
+              disabled={!scheduleDate || isActioning || post.approvalStatus === 'PENDING' || post.approvalStatus === 'CHANGES_REQUESTED'}
+            >
               <Calendar className="w-3 h-3 mr-1" /> Reschedule
             </Button>
             <Button variant="outline" size="sm" onClick={() => handleAction('unschedule')} disabled={isActioning}>

@@ -1,6 +1,7 @@
 /* eslint-disable */
 import {
   Injectable,
+  Inject,
   NotFoundException,
   ConflictException,
   UnprocessableEntityException,
@@ -12,7 +13,11 @@ import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { PrismaClient } from '@agency-os/database';
 import { AuditService } from '../../core/audit.service';
 import { PublishabilityValidator } from '../domain/PublishabilityValidator';
-import { PublishingRepository, AuditAction } from '@agency-os/database';
+import {
+  PublishingRepository,
+  AuditAction,
+  ApprovalStatus,
+} from '@agency-os/database';
 import { generateId } from '@agency-os/database';
 import { PostStatus, Prisma } from '@agency-os/database';
 import { ExecutionMetadata, ExecutionPhase } from '@agency-os/shared';
@@ -22,6 +27,10 @@ import {
   UpdatePublicationTargetDto,
   SchedulePublicationDto,
 } from '../dto/publication.dto';
+import {
+  EMAIL_DELIVERY_SERVICE,
+  type EmailDeliveryService,
+} from '../../auth/email-delivery.service';
 
 @Injectable()
 export class PublishingApplicationService {
@@ -29,12 +38,67 @@ export class PublishingApplicationService {
     private readonly prisma: PrismaClient,
     private readonly audit: AuditService,
     private readonly validator: PublishabilityValidator,
+    @Inject(EMAIL_DELIVERY_SERVICE)
+    private readonly emailDeliveryService: EmailDeliveryService,
     @InjectPinoLogger(PublishingApplicationService.name)
     private readonly logger: PinoLogger,
   ) {}
 
   private getRepo(workspaceId: string) {
     return new PublishingRepository(this.prisma, workspaceId);
+  }
+
+  private async invalidateApprovalIfActive(
+    workspaceId: string,
+    authorId: string,
+    postId: string,
+    reason: string,
+  ): Promise<boolean> {
+    const repo = this.getRepo(workspaceId);
+    const post = (await repo.posts.findById(postId)) as any;
+    if (
+      post &&
+      (post.approvalStatus === ApprovalStatus.PENDING ||
+        post.approvalStatus === ApprovalStatus.APPROVED)
+    ) {
+      await repo.posts.update({
+        where: { id: postId },
+        data: {
+          approvalStatus: ApprovalStatus.NOT_SUBMITTED,
+          approvalDecidedById: null,
+          approvalDecidedAt: null,
+          approvalComment: null,
+        },
+      });
+      await this.audit.logAction({
+        workspaceId,
+        actorId: authorId,
+        action: AuditAction.POST_APPROVAL_INVALIDATED,
+        targetType: 'POST',
+        targetId: postId,
+        metadata: { postId, reason },
+      });
+      return true;
+    }
+    return false;
+  }
+
+  private async assertPostCanPublish(
+    repo: PublishingRepository,
+    postId: string,
+  ) {
+    const post = (await repo.posts.findById(postId)) as any;
+    if (!post) throw new NotFoundException('Post not found');
+    if (post.approvalStatus === ApprovalStatus.PENDING) {
+      throw new ConflictException(
+        'Post is pending approval and cannot be published yet.',
+      );
+    }
+    if (post.approvalStatus === ApprovalStatus.CHANGES_REQUESTED) {
+      throw new ConflictException(
+        'Changes were requested for this post. Edit it and resubmit for approval before publishing.',
+      );
+    }
   }
 
   // --- DRAFTS --- //
@@ -155,6 +219,11 @@ export class PublishingApplicationService {
         );
       }
 
+      const post = await tx.post.findUnique({
+        where: { id: postId, workspaceId },
+      });
+      if (!post) throw new NotFoundException('Post not found');
+
       const data: any = {};
       if (dto.content !== undefined) data.content = dto.content;
 
@@ -169,6 +238,18 @@ export class PublishingApplicationService {
         };
       }
 
+      let invalidated = false;
+      if (
+        post.approvalStatus === ApprovalStatus.PENDING ||
+        post.approvalStatus === ApprovalStatus.APPROVED
+      ) {
+        data.approvalStatus = ApprovalStatus.NOT_SUBMITTED;
+        data.approvalDecidedById = null;
+        data.approvalDecidedAt = null;
+        data.approvalComment = null;
+        invalidated = true;
+      }
+
       const res = await tx.post.update({
         where: { id: postId, workspaceId },
         data,
@@ -177,6 +258,20 @@ export class PublishingApplicationService {
           variants: { include: { socialAccount: true } },
         },
       });
+
+      if (invalidated) {
+        await this.audit.logAction(
+          {
+            workspaceId,
+            actorId: authorId,
+            action: AuditAction.POST_APPROVAL_INVALIDATED,
+            targetType: 'POST',
+            targetId: postId,
+            metadata: { postId, reason: 'draft_updated' },
+          },
+          tx,
+        );
+      }
 
       await this.audit.logAction(
         {
@@ -291,6 +386,12 @@ export class PublishingApplicationService {
         socialAccountId: dto.socialAccountId,
       },
     });
+    await this.invalidateApprovalIfActive(
+      workspaceId,
+      authorId,
+      postId,
+      'target_added',
+    );
     return repo.variants.findById(variant.id, {
       include: { socialAccount: true },
     });
@@ -339,6 +440,12 @@ export class PublishingApplicationService {
       targetId: variantId,
       metadata: { postId: variant.postId, variantId },
     });
+    await this.invalidateApprovalIfActive(
+      workspaceId,
+      authorId,
+      variant.postId,
+      'target_updated',
+    );
     return repo.variants.findById(variantId, {
       include: { socialAccount: true },
     });
@@ -363,6 +470,12 @@ export class PublishingApplicationService {
       );
     }
 
+    await this.invalidateApprovalIfActive(
+      workspaceId,
+      authorId,
+      variant.postId,
+      'target_removed',
+    );
     await repo.variants.delete({ where: { id: variantId } });
     await this.audit.logAction({
       workspaceId,
@@ -396,6 +509,10 @@ export class PublishingApplicationService {
     variantId: string,
   ) {
     const repo = this.getRepo(workspaceId);
+    const variant = (await repo.variants.findById(variantId)) as any;
+    if (!variant) throw new NotFoundException('Publication not found');
+
+    await this.assertPostCanPublish(repo, variant.postId);
 
     const validation = await this.validateTarget(workspaceId, variantId);
     if (!validation.valid) {
@@ -465,6 +582,10 @@ export class PublishingApplicationService {
 
   async requestRetry(workspaceId: string, authorId: string, variantId: string) {
     const repo = this.getRepo(workspaceId);
+    const variant = (await repo.variants.findById(variantId)) as any;
+    if (!variant) throw new NotFoundException('Publication not found');
+
+    await this.assertPostCanPublish(repo, variant.postId);
 
     const validation = await this.validateTarget(workspaceId, variantId, true);
     if (!validation.valid) {
@@ -518,6 +639,8 @@ export class PublishingApplicationService {
     if (!variant || variant.status !== PostStatus.DRAFT) {
       throw new ConflictException('Only DRAFT can be scheduled directly');
     }
+
+    await this.assertPostCanPublish(repo, variant.postId);
 
     const success = await repo.transitionVariantState(
       variantId,
@@ -574,6 +697,8 @@ export class PublishingApplicationService {
     if (!variant || variant.status !== PostStatus.SCHEDULED) {
       throw new ConflictException('Target is not SCHEDULED');
     }
+
+    await this.assertPostCanPublish(repo, variant.postId);
 
     const success = await repo.transitionVariantState(
       variantId,
@@ -778,6 +903,202 @@ export class PublishingApplicationService {
 
     return repo.variants.findById(variantId, {
       include: { socialAccount: true },
+    });
+  }
+
+  // --- APPROVALS --- //
+
+  async requestApproval(workspaceId: string, userId: string, postId: string) {
+    const repo = this.getRepo(workspaceId);
+    const post = (await repo.posts.findById(postId, {
+      include: { variants: true },
+    })) as any;
+    if (!post) throw new NotFoundException('Post not found');
+
+    if (post.approvalStatus === ApprovalStatus.PENDING) {
+      throw new ConflictException('Post is already pending approval.');
+    }
+    if (post.approvalStatus === ApprovalStatus.APPROVED) {
+      throw new ConflictException('Post is already approved.');
+    }
+
+    if (post.variants?.some((v: any) => v.status !== PostStatus.DRAFT)) {
+      throw new ConflictException(
+        'Only a draft post can be sent for approval.',
+      );
+    }
+
+    const now = new Date();
+    await repo.posts.update({
+      where: { id: postId },
+      data: {
+        approvalStatus: ApprovalStatus.PENDING,
+        approvalRequestedById: userId,
+        approvalRequestedAt: now,
+        approvalDecidedById: null,
+        approvalDecidedAt: null,
+        approvalComment: null,
+      },
+    });
+
+    await this.audit.logAction({
+      workspaceId,
+      actorId: userId,
+      action: AuditAction.POST_APPROVAL_REQUESTED,
+      targetType: 'POST',
+      targetId: postId,
+      metadata: { postId },
+    });
+
+    // Email dispatch to approvers (fire-and-forget)
+    const approvers = await this.prisma.workspaceMember.findMany({
+      where: {
+        workspaceId,
+        role: { in: ['OWNER', 'MANAGER', 'CLIENT_APPROVER'] },
+        userId: { not: userId },
+      },
+      include: { user: true },
+    });
+
+    const contentPreview = (post.content || '').slice(0, 140);
+    for (const member of approvers) {
+      if (member.user?.email) {
+        this.emailDeliveryService
+          .sendApprovalRequestedEmail(member.user.email, contentPreview)
+          .catch((err) => {
+            this.logger.warn(
+              { err, toEmail: member.user.email, postId },
+              'Failed to dispatch approval requested email notification',
+            );
+          });
+      }
+    }
+
+    return repo.posts.findById(postId, {
+      include: {
+        media: { orderBy: { sortOrder: 'asc' }, include: { media: true } },
+        variants: { include: { socialAccount: true } },
+      },
+    });
+  }
+
+  async approvePost(workspaceId: string, userId: string, postId: string) {
+    const repo = this.getRepo(workspaceId);
+    const post = (await repo.posts.findById(postId)) as any;
+    if (!post) throw new NotFoundException('Post not found');
+
+    if (post.approvalStatus !== ApprovalStatus.PENDING) {
+      throw new ConflictException('Post is not pending approval.');
+    }
+
+    const now = new Date();
+    await repo.posts.update({
+      where: { id: postId },
+      data: {
+        approvalStatus: ApprovalStatus.APPROVED,
+        approvalDecidedById: userId,
+        approvalDecidedAt: now,
+        approvalComment: null,
+      },
+    });
+
+    await this.audit.logAction({
+      workspaceId,
+      actorId: userId,
+      action: AuditAction.POST_APPROVAL_APPROVED,
+      targetType: 'POST',
+      targetId: postId,
+      metadata: { postId },
+    });
+
+    // Email dispatch to author if exists and not approver (fire-and-forget)
+    if (post.authorId && post.authorId !== userId) {
+      const author = await this.prisma.user.findUnique({
+        where: { id: post.authorId },
+      });
+      if (author?.email) {
+        const contentPreview = (post.content || '').slice(0, 140);
+        this.emailDeliveryService
+          .sendApprovalDecisionEmail(author.email, contentPreview, 'APPROVED')
+          .catch((err) => {
+            this.logger.warn(
+              { err, toEmail: author.email, postId },
+              'Failed to dispatch approval decision email notification',
+            );
+          });
+      }
+    }
+
+    return repo.posts.findById(postId, {
+      include: {
+        media: { orderBy: { sortOrder: 'asc' }, include: { media: true } },
+        variants: { include: { socialAccount: true } },
+      },
+    });
+  }
+
+  async requestChanges(
+    workspaceId: string,
+    userId: string,
+    postId: string,
+    comment: string,
+  ) {
+    const repo = this.getRepo(workspaceId);
+    const post = (await repo.posts.findById(postId)) as any;
+    if (!post) throw new NotFoundException('Post not found');
+
+    if (post.approvalStatus !== ApprovalStatus.PENDING) {
+      throw new ConflictException('Post is not pending approval.');
+    }
+
+    const now = new Date();
+    await repo.posts.update({
+      where: { id: postId },
+      data: {
+        approvalStatus: ApprovalStatus.CHANGES_REQUESTED,
+        approvalDecidedById: userId,
+        approvalDecidedAt: now,
+        approvalComment: comment,
+      },
+    });
+
+    await this.audit.logAction({
+      workspaceId,
+      actorId: userId,
+      action: AuditAction.POST_APPROVAL_CHANGES_REQUESTED,
+      targetType: 'POST',
+      targetId: postId,
+      metadata: { postId, comment },
+    });
+
+    // Email dispatch to author if exists and not reviewer (fire-and-forget)
+    if (post.authorId && post.authorId !== userId) {
+      const author = await this.prisma.user.findUnique({
+        where: { id: post.authorId },
+      });
+      if (author?.email) {
+        const contentPreview = (post.content || '').slice(0, 140);
+        this.emailDeliveryService
+          .sendApprovalDecisionEmail(
+            author.email,
+            contentPreview,
+            'CHANGES_REQUESTED',
+            comment,
+          )
+          .catch((err) => {
+            this.logger.warn(
+              { err, toEmail: author.email, postId },
+              'Failed to dispatch approval decision email notification',
+            );
+          });
+      }
+    }
+
+    return repo.posts.findById(postId, {
+      include: {
+        media: { orderBy: { sortOrder: 'asc' }, include: { media: true } },
+        variants: { include: { socialAccount: true } },
+      },
     });
   }
 }

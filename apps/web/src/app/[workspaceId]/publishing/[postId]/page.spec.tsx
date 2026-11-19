@@ -1,5 +1,5 @@
 import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react';
-import { expect, test, vi, beforeEach } from 'vitest';
+import { expect, test, vi, beforeEach, describe } from 'vitest';
 import PostDetailPage from './page';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { api, ApiError } from '../../../../lib/api/client';
@@ -792,6 +792,129 @@ test('changing privacy select option stores lowercase value', async () => {
         })
       })
     );
+  });
+});
+
+describe('Client Approvals UI', () => {
+  const renderWithApproval = (
+    approvalStatus: string = 'NOT_SUBMITTED',
+    approvalComment: string | null = null,
+    variantStatus: string = 'DRAFT',
+  ) => {
+    queryClient.setQueryData(['workspaces', 'ws-1', 'posts', 'post-1'], {
+      id: 'post-1',
+      workspaceId: 'ws-1',
+      content: 'Approval post content',
+      status: variantStatus,
+      approvalStatus,
+      approvalComment,
+      media: [],
+      variants: [
+        {
+          id: 'var-1',
+          postId: 'post-1',
+          socialAccountId: 'acc-1',
+          status: variantStatus,
+          externalPostId: null,
+          canonicalUrl: null,
+          socialAccount: { name: 'My LinkedIn', provider: 'LINKEDIN' },
+        },
+      ],
+    });
+
+    return render(
+      <QueryClientProvider client={queryClient}>
+        <PostDetailPage />
+      </QueryClientProvider>
+    );
+  };
+
+  test('renders Not Submitted badge and Send for Approval button', async () => {
+    renderWithApproval('NOT_SUBMITTED');
+
+    expect(await screen.findByText('Not Submitted')).toBeInTheDocument();
+    expect(screen.getByTestId('request-approval-button')).toBeInTheDocument();
+  });
+
+  test('clicking Send for Approval calls request-approval endpoint', async () => {
+    (api.post as ReturnType<typeof vi.fn>).mockResolvedValueOnce({});
+    renderWithApproval('NOT_SUBMITTED');
+
+    const btn = await screen.findByTestId('request-approval-button');
+    fireEvent.click(btn);
+
+    await waitFor(() => {
+      expect(api.post).toHaveBeenCalledWith(
+        'workspaces/ws-1/posts/post-1/request-approval',
+        {},
+      );
+    });
+  });
+
+  test('renders Pending Approval badge, Approve button, and Request Changes button', async () => {
+    renderWithApproval('PENDING');
+
+    expect(await screen.findByText('Pending Approval')).toBeInTheDocument();
+    expect(screen.getByTestId('approve-post-button')).toBeInTheDocument();
+    expect(
+      screen.getByTestId('request-changes-toggle-button'),
+    ).toBeInTheDocument();
+  });
+
+  test('clicking Approve Post calls approve endpoint', async () => {
+    (api.post as ReturnType<typeof vi.fn>).mockResolvedValueOnce({});
+    renderWithApproval('PENDING');
+
+    const btn = await screen.findByTestId('approve-post-button');
+    fireEvent.click(btn);
+
+    await waitFor(() => {
+      expect(api.post).toHaveBeenCalledWith(
+        'workspaces/ws-1/posts/post-1/approve',
+        {},
+      );
+    });
+  });
+
+  test('requesting changes toggles textarea and submits feedback', async () => {
+    (api.post as ReturnType<typeof vi.fn>).mockResolvedValueOnce({});
+    renderWithApproval('PENDING');
+
+    const toggleBtn = await screen.findByTestId(
+      'request-changes-toggle-button',
+    );
+    fireEvent.click(toggleBtn);
+
+    const textarea = screen.getByTestId('request-changes-comment-input');
+    fireEvent.change(textarea, { target: { value: 'Tone needs to be more formal' } });
+
+    const submitBtn = screen.getByTestId('submit-request-changes-button');
+    fireEvent.click(submitBtn);
+
+    await waitFor(() => {
+      expect(api.post).toHaveBeenCalledWith(
+        'workspaces/ws-1/posts/post-1/request-changes',
+        { comment: 'Tone needs to be more formal' },
+      );
+    });
+  });
+
+  test('renders Changes Requested badge and feedback comment box', async () => {
+    renderWithApproval('CHANGES_REQUESTED', 'Please add hashtags and fix grammar.');
+
+    expect(await screen.findByText('Changes Requested')).toBeInTheDocument();
+    expect(
+      screen.getByText('Please add hashtags and fix grammar.'),
+    ).toBeInTheDocument();
+    expect(screen.getByTestId('request-approval-button')).toBeInTheDocument();
+  });
+
+  test('disables Publish button when post is PENDING or CHANGES_REQUESTED', async () => {
+    renderWithApproval('PENDING', null, 'DRAFT');
+
+    const publishBtn = await screen.findByRole('button', { name: /Publish/i });
+    expect(publishBtn).toBeDisabled();
+    expect(screen.getByTestId('approval-gate-notice')).toBeInTheDocument();
   });
 });
 

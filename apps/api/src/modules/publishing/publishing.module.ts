@@ -5,10 +5,11 @@ import { PublishingApplicationService } from './services/publishing-application.
 import { PublishabilityValidator } from './domain/PublishabilityValidator';
 import { CoreModule } from '../core/core.module';
 import { BillingModule } from '../billing/billing.module';
+import { AuthModule } from '../auth/auth.module';
 import { PrismaClient } from '@agency-os/database';
 
 @Module({
-  imports: [CoreModule, BillingModule],
+  imports: [CoreModule, BillingModule, AuthModule],
   controllers: [PostsController, PublicationsController],
   providers: [
     PublishingApplicationService,

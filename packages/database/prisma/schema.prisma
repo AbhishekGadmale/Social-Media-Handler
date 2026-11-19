@@ -43,6 +43,13 @@ enum PostStatus {
   DELETED
 }
 
+enum ApprovalStatus {
+  NOT_SUBMITTED
+  PENDING
+  APPROVED
+  CHANGES_REQUESTED
+}
+
 enum FailureCategory {
   TRANSIENT
   RATE_LIMITED
@@ -215,13 +222,19 @@ model SocialConnection {
 }
 
 model Post {
-  id          String     @id @db.Uuid
-  workspaceId String     @db.Uuid
-  authorId    String?    @db.Uuid
-  content     String
-  status      PostStatus
-  createdAt   DateTime   @default(now())
-  updatedAt   DateTime   @updatedAt
+  id                    String         @id @db.Uuid
+  workspaceId           String         @db.Uuid
+  authorId              String?        @db.Uuid
+  content               String
+  status                PostStatus
+  approvalStatus        ApprovalStatus @default(NOT_SUBMITTED)
+  approvalRequestedById String?        @db.Uuid
+  approvalRequestedAt   DateTime?
+  approvalDecidedById   String?        @db.Uuid
+  approvalDecidedAt     DateTime?
+  approvalComment       String?
+  createdAt             DateTime       @default(now())
+  updatedAt             DateTime       @updatedAt
 
   workspace Workspace             @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   author    User?                 @relation("PostAuthor", fields: [authorId], references: [id], onDelete: SetNull)
