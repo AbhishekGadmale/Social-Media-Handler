@@ -5436,7 +5436,7 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
 
 ### 1. Summary & Motivation
 
-- **Status**: implemented on branch `feat/white-label-reports`; PR #88 to be opened against `main`
+- **Status**: implemented on branch `feat/white-label-reports`; PR #88 open against main at reviewed head `f632cccfdbc5cf20a99ee028b6c2a74ce65749d0`
 - **Origin & Requirements**:
   - Allows workspaces to store agency branding (`brandDisplayName`, `brandLogoUrl`, `brandAccentColor`) and generate branded PDF performance reports for a specified date range.
   - Strict data-reality constraint: report aggregates only real product data (`followers` and `engagement` from `AccountMetricDaily`, and publishing counts from `PostPlatformVariant` with status `PUBLISHED` and `publishedAt` inside the period). Zero invented metrics (no reach, impressions, or clicks exist anywhere in the product schema).
@@ -5531,10 +5531,9 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
 ### 4. Release Gate & Next Steps
 
 1. **CI Quality Gates**:
-   - Verification pending branch push and GitHub Actions execution for PR #88 on branch `feat/white-label-reports`.
+   - CI on the reviewed head `f632cccf` is 6/6 green (all 2026-11-19): GitGuardian Security Checks 09:49:05Z, Application Builds 09:49:55Z, Code Quality (Lint & Typecheck) 09:50:19Z, API E2E Tests 09:50:30Z, Tests 09:50:47Z, Docker Build & Smoke Test 09:57:17Z. Note: CI re-runs on the docs-fix head and must be re-verified 6/6 green there before merge.
 2. **Release Gate**:
    - **Live Deployment**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending external infrastructure provisioning, live email delivery verification, live payment credentials, and disaster recovery rehearsals G18/G19).
 3. **Next Steps**:
-   - Push branch `feat/white-label-reports` and open PR #88 against `main`.
-   - Re-verify CI 6/6 green on the pushed PR head.
+   - PR #88 is open against main at reviewed head `f632cccfdbc5cf20a99ee028b6c2a74ce65749d0`; CI is 6/6 green on the reviewed head; next step is the docs-fix re-review, then merge by the owner.
    - Do NOT merge on this prompt alone. Live deployment remains STRICT NO-GO.
