@@ -5746,7 +5746,7 @@ A comprehensive sweep of `apps/web/src` for `auth/logout` and sign-out actions w
 
 ### 1. Summary & Motivation
 
-- **Status**: implemented on branch `feat/plan-social-account-caps`; pending PR against `main` at base `fc4f75f0f10e90ab91113d1478872ec414f623b1`
+- **Status**: implemented on branch `feat/plan-social-account-caps`; PR #91 open against `main` at reviewed head `e84339f66255ff67931d99c01410ed1613415d04`
 - **Scope & Objectives**:
   - Enforce per-plan limits on connected social accounts across Agency OS subscriptions.
   - Canonical plan configuration in `billing.config.ts` (`PLANS`) defines limits:
@@ -5814,9 +5814,10 @@ A comprehensive sweep of `apps/web/src` for `auth/logout` and sign-out actions w
 
 ### 4. Release Gate & Next Steps
 
-1. **Release Gate**:
+1. **CI Quality Gates**:
+   - CI on the reviewed head `e84339f` is 6/6 green (all 2026-11-19): GitGuardian Security Checks 15:39:49Z, Application Builds 15:40:45Z, Tests 15:41:15Z, Code Quality (Lint & Typecheck) 15:41:23Z, API E2E Tests 15:41:38Z, Docker Build & Smoke Test 15:48:25Z. Note: CI re-runs on the docs-fix head and must be re-verified 6/6 green there before merge.
+2. **Release Gate**:
    - **Live Deployment**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending external infrastructure provisioning, live email delivery verification, live payment credentials, and disaster recovery rehearsals G18/G19).
-2. **Next Steps**:
-   - Open Pull Request against `main`.
-   - Monitor GitHub Actions CI until 6/6 green.
+3. **Next Steps**:
+   - PR #91 is open against main at reviewed head `e84339f66255ff67931d99c01410ed1613415d04`; CI is 6/6 green on the reviewed head; next step is the docs-fix re-review, then merge by the owner.
    - Do NOT merge on this prompt alone. Live deployment remains STRICT NO-GO.
