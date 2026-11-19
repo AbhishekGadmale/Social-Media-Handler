@@ -15,6 +15,8 @@ export interface CreateUserWithTenantInput {
   organizationName?: string;
   workspaceName?: string;
   termsAcceptedAt?: Date | null;
+  emailVerified?: boolean;
+  emailVerifiedAt?: Date | null;
   verificationToken?: {
     tokenHash: string;
     expiresAt: Date;
@@ -101,6 +103,16 @@ export class UserRepository {
     });
   }
 
+  async markEmailVerified(id: string, verifiedAt = new Date()): Promise<User> {
+    return this.prisma.user.update({
+      where: { id },
+      data: {
+        emailVerified: true,
+        emailVerifiedAt: verifiedAt,
+      },
+    });
+  }
+
   /**
    * Atomically provisions a new User, Organization, Workspace, and OWNER WorkspaceMember.
    * If any step fails or an email uniqueness conflict occurs, rolls back the entire transaction.
@@ -120,8 +132,10 @@ export class UserRepository {
           name: input.name.trim(),
           email: input.email.trim().toLowerCase(),
           hashedPassword: input.hashedPassword,
-          emailVerified: false,
-          emailVerifiedAt: null,
+          emailVerified: input.emailVerified ?? false,
+          emailVerifiedAt:
+            input.emailVerifiedAt ??
+            (input.emailVerified ? new Date() : null),
           securityEpoch: 1,
           ...(input.termsAcceptedAt !== undefined && {
             termsAcceptedAt: input.termsAcceptedAt,

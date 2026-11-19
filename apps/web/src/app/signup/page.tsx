@@ -1,8 +1,36 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { api, ApiError } from '../../lib/api/client';
+import { getValidRedirect } from '../../lib/redirect';
+import type { AuthMeResponse } from '../../lib/query/auth';
+
+interface GoogleAccountsId {
+  initialize: (config: {
+    client_id: string;
+    callback: (response: { credential: string }) => void;
+  }) => void;
+  renderButton: (
+    parent: HTMLElement,
+    options: {
+      theme?: string;
+      size?: string;
+      width?: string | number;
+      text?: string;
+    },
+  ) => void;
+  prompt: () => void;
+}
+
+interface WindowWithGoogle {
+  google?: {
+    accounts?: {
+      id?: GoogleAccountsId;
+    };
+  };
+}
 
 interface TurnstileInstance {
   render: (
@@ -23,6 +51,9 @@ const getTurnstile = (): TurnstileInstance | undefined => {
 };
 
 export default function SignupPage() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -35,6 +66,14 @@ export default function SignupPage() {
   const turnstileContainerRef = useRef<HTMLDivElement>(null);
   const turnstileSiteKey = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY;
 
+  const googleButtonRef = useRef<HTMLDivElement>(null);
+  const googleClientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
+  const termsAcceptedRef = useRef(termsAccepted);
+
+  useEffect(() => {
+    termsAcceptedRef.current = termsAccepted;
+  }, [termsAccepted]);
+
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitted, setIsSubmitted] = useState(false);
@@ -44,6 +83,106 @@ export default function SignupPage() {
   const [resendLoading, setResendLoading] = useState(false);
   const [resendNotice, setResendNotice] = useState<string | null>(null);
   const [resendError, setResendError] = useState<string | null>(null);
+
+  const handleGoogleSignIn = useCallback(
+    async (credential: string) => {
+      setLoading(true);
+      setError(null);
+
+      try {
+        await api.post('auth/google', {
+          credential,
+          termsAccepted: termsAcceptedRef.current,
+        });
+
+        const authData = await api.get<AuthMeResponse>('auth/me');
+
+        if (!authData.user.emailVerified) {
+          router.push('/dashboard');
+        } else {
+          const redirectTo = searchParams?.get('redirect');
+          const validRedirect = getValidRedirect(redirectTo);
+          if (validRedirect) {
+            router.push(validRedirect);
+          } else if (authData.memberships.length > 0) {
+            router.push(`/${authData.memberships[0].workspaceId}/analytics`);
+          } else {
+            router.push('/dashboard');
+          }
+        }
+      } catch (err: unknown) {
+        if (err instanceof ApiError) {
+          setError(err.message || 'Google sign-in failed. Please try again.');
+        } else if (err instanceof Error) {
+          setError(err.message);
+        } else {
+          setError('Unable to reach the server. Please try again.');
+        }
+      } finally {
+        setLoading(false);
+      }
+    },
+    [router, searchParams],
+  );
+
+  useEffect(() => {
+    if (!googleClientId) return;
+
+    let isCancelled = false;
+
+    const initGoogle = () => {
+      const google = (window as unknown as WindowWithGoogle)?.google;
+      if (isCancelled || !google?.accounts?.id) return;
+
+      try {
+        google.accounts.id.initialize({
+          client_id: googleClientId,
+          callback: (response: { credential: string }) => {
+            if (!isCancelled && response?.credential) {
+              handleGoogleSignIn(response.credential);
+            }
+          },
+        });
+
+        if (googleButtonRef.current) {
+          google.accounts.id.renderButton(googleButtonRef.current, {
+            theme: 'outline',
+            size: 'large',
+            width: '100%',
+            text: 'signup_with',
+          });
+        }
+
+        google.accounts.id.prompt();
+      } catch {
+        // Safe catch for GIS errors
+      }
+    };
+
+    const google = (window as unknown as WindowWithGoogle)?.google;
+    if (google?.accounts?.id) {
+      initGoogle();
+    } else {
+      const existingScript = document.getElementById(
+        'google-gsi-client',
+      ) as HTMLScriptElement | null;
+      if (!existingScript) {
+        const script = document.createElement('script');
+        script.id = 'google-gsi-client';
+        script.src = 'https://accounts.google.com/gsi/client';
+        script.async = true;
+        script.defer = true;
+        script.onload = () => initGoogle();
+        document.head.appendChild(script);
+      } else {
+        existingScript.addEventListener('load', initGoogle);
+      }
+    }
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [googleClientId, handleGoogleSignIn]);
 
   useEffect(() => {
     if (!turnstileSiteKey || !turnstileContainerRef.current) {
@@ -329,6 +468,21 @@ export default function SignupPage() {
         </div>
 
         <form className="mt-8 space-y-6" onSubmit={handleSubmit} noValidate>
+          {Boolean(googleClientId) && (
+            <div
+              data-testid="google-button-container"
+              aria-disabled={!termsAccepted}
+              className={termsAccepted ? 'space-y-4' : 'hidden'}
+            >
+              <div ref={googleButtonRef} className="flex justify-center" />
+              <div className="relative flex items-center justify-center">
+                <div className="w-full border-t border-gray-300" />
+                <span className="bg-white px-2 text-xs text-gray-500 uppercase">
+                  Or sign up with email
+                </span>
+              </div>
+            </div>
+          )}
           <div className="space-y-4">
             <div>
               <label

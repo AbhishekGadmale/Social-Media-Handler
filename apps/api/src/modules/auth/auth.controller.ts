@@ -32,12 +32,14 @@ import { VerifyEmailDto } from './dto/verify-email.dto';
 import { ResendVerificationDto } from './dto/resend-verification.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
+import { GoogleSignInDto } from './dto/google-sign-in.dto';
 
 import { RateLimitPolicies } from '../core/rate-limit.policies';
 
 import { AuditAction } from '@agency-os/database';
 import { AuditService } from '../core/audit.service';
 import { TurnstileService } from './turnstile.service';
+import { GoogleTokenVerifierService } from './google-token-verifier.service';
 
 @Controller('v1/auth')
 export class AuthController {
@@ -46,6 +48,7 @@ export class AuthController {
     private readonly memberRepo: WorkspaceMemberRepository,
     private readonly auditService: AuditService,
     private readonly turnstileService: TurnstileService,
+    private readonly googleTokenVerifierService: GoogleTokenVerifierService,
   ) {}
 
   @Throttle({ default: RateLimitPolicies.auth })
@@ -269,6 +272,60 @@ export class AuthController {
 
     // Set cookies
     res.cookie('session', sessionId, {
+      httpOnly: true,
+      secure: secureCookie,
+      sameSite: 'lax',
+      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+    });
+
+    res.cookie('csrfToken', csrfToken, {
+      httpOnly: false,
+      secure: secureCookie,
+      sameSite: 'lax',
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+    });
+
+    return { message: 'Logged in successfully' };
+  }
+
+  @Throttle({ default: RateLimitPolicies.auth })
+  @Post('google')
+  @UsePipes(new ValidationPipe({ whitelist: true, transform: true }))
+  @HttpCode(HttpStatus.OK)
+  async googleSignIn(
+    @Body() body: GoogleSignInDto,
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const isProduction = process.env.NODE_ENV === 'production';
+    const isSecureRequest = Boolean(req.secure);
+    const allowInsecureHttp = process.env.ALLOW_INSECURE_HTTP_AUTH === 'true';
+
+    if (isProduction && !isSecureRequest && !allowInsecureHttp) {
+      throw new BadRequestException(
+        'HTTPS is required for authentication in production environments. Please configure TLS on your reverse proxy or custom domain.',
+      );
+    }
+
+    const verifiedUser = await this.googleTokenVerifierService.verify(
+      body.credential,
+    );
+
+    const requestId = (req as any).id;
+    const ipAddress = req.ip;
+    const userAgent = req.headers?.['user-agent'];
+
+    const result = await this.authService.googleSignIn(
+      verifiedUser,
+      body.termsAccepted,
+      { ipAddress, userAgent },
+      requestId,
+    );
+
+    const csrfToken = crypto.randomBytes(32).toString('hex');
+    const secureCookie = isSecureRequest;
+
+    res.cookie('session', result.sessionId, {
       httpOnly: true,
       secure: secureCookie,
       sameSite: 'lax',

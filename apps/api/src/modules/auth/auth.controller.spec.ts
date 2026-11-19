@@ -1,9 +1,14 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { Test, TestingModule } from '@nestjs/testing';
-import { BadRequestException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ServiceUnavailableException,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { AuthController } from './auth.controller';
 import { AuthService, InvalidCredentialsException } from './auth.service';
 import { TurnstileService } from './turnstile.service';
+import { GoogleTokenVerifierService } from './google-token-verifier.service';
 import { WorkspaceMemberRepository, AuditAction } from '@agency-os/database';
 import { AuditService } from '../core/audit.service';
 import { AuthGuard } from './guards/auth.guard';
@@ -15,6 +20,7 @@ describe('AuthController', () => {
   let memberRepoMock: any;
   let auditServiceMock: any;
   let turnstileServiceMock: any;
+  let googleTokenVerifierServiceMock: any;
   let reqMock: any;
   let resMock: any;
 
@@ -31,6 +37,7 @@ describe('AuthController', () => {
       revokeAllUserSessions: vi.fn(),
       listSessions: vi.fn(),
       revokeSession: vi.fn(),
+      googleSignIn: vi.fn(),
     };
 
     memberRepoMock = {
@@ -44,6 +51,10 @@ describe('AuthController', () => {
 
     turnstileServiceMock = {
       verify: vi.fn().mockResolvedValue(true),
+    };
+
+    googleTokenVerifierServiceMock = {
+      verify: vi.fn(),
     };
 
     resMock = {
@@ -64,6 +75,10 @@ describe('AuthController', () => {
         { provide: WorkspaceMemberRepository, useValue: memberRepoMock },
         { provide: AuditService, useValue: auditServiceMock },
         { provide: TurnstileService, useValue: turnstileServiceMock },
+        {
+          provide: GoogleTokenVerifierService,
+          useValue: googleTokenVerifierServiceMock,
+        },
       ],
     })
       .overrideGuard(AuthGuard)
@@ -1202,6 +1217,118 @@ describe('AuthController', () => {
         ),
       ).rejects.toThrow(NotFoundException);
       expect(resMock.clearCookie).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('googleSignIn', () => {
+    it('throws ServiceUnavailableException (503) when GOOGLE_CLIENT_ID is unset', async () => {
+      googleTokenVerifierServiceMock.verify.mockRejectedValueOnce(
+        new ServiceUnavailableException('Google sign-in is not configured.'),
+      );
+
+      await expect(
+        controller.googleSignIn(
+          { credential: 'some-token' },
+          reqMock as Request,
+          resMock as Response,
+        ),
+      ).rejects.toThrow(ServiceUnavailableException);
+    });
+
+    it('propagates UnauthorizedException (401) when verifier fails', async () => {
+      googleTokenVerifierServiceMock.verify.mockRejectedValueOnce(
+        new UnauthorizedException('Google sign-in failed. Please try again.'),
+      );
+
+      await expect(
+        controller.googleSignIn(
+          { credential: 'invalid-token' },
+          reqMock as Request,
+          resMock as Response,
+        ),
+      ).rejects.toThrow(UnauthorizedException);
+    });
+
+    it('rejects unencrypted HTTP requests in production environment', async () => {
+      const origEnv = process.env.NODE_ENV;
+      const origInsecure = process.env.ALLOW_INSECURE_HTTP_AUTH;
+      process.env.NODE_ENV = 'production';
+      delete process.env.ALLOW_INSECURE_HTTP_AUTH;
+
+      const insecureReq = {
+        ...reqMock,
+        secure: false,
+      };
+
+      try {
+        await expect(
+          controller.googleSignIn(
+            { credential: 'valid-token' },
+            insecureReq as Request,
+            resMock as Response,
+          ),
+        ).rejects.toThrow(BadRequestException);
+      } finally {
+        process.env.NODE_ENV = origEnv;
+        if (origInsecure !== undefined) {
+          process.env.ALLOW_INSECURE_HTTP_AUTH = origInsecure;
+        } else {
+          delete process.env.ALLOW_INSECURE_HTTP_AUTH;
+        }
+      }
+    });
+
+    it('on success sets the same cookies login sets and returns message', async () => {
+      const verifiedProfile = {
+        email: 'user@example.com',
+        name: 'User Example',
+      };
+      googleTokenVerifierServiceMock.verify.mockResolvedValueOnce(
+        verifiedProfile,
+      );
+
+      authServiceMock.googleSignIn.mockResolvedValueOnce({
+        sessionId: 'sess-google-controller-1',
+        user: { id: 'user-google-1', email: 'user@example.com' },
+      });
+
+      const res = await controller.googleSignIn(
+        { credential: 'valid-google-credential', termsAccepted: true },
+        reqMock as Request,
+        resMock as Response,
+      );
+
+      expect(googleTokenVerifierServiceMock.verify).toHaveBeenCalledWith(
+        'valid-google-credential',
+      );
+      expect(authServiceMock.googleSignIn).toHaveBeenCalledWith(
+        verifiedProfile,
+        true,
+        expect.any(Object),
+        'req-auth-123',
+      );
+
+      expect(resMock.cookie).toHaveBeenCalledWith(
+        'session',
+        'sess-google-controller-1',
+        expect.objectContaining({
+          httpOnly: true,
+          sameSite: 'lax',
+          maxAge: 7 * 24 * 60 * 60 * 1000,
+        }),
+      );
+
+      expect(resMock.cookie).toHaveBeenCalledWith(
+        'csrfToken',
+        expect.any(String),
+        expect.objectContaining({
+          httpOnly: false,
+          sameSite: 'lax',
+          maxAge: 7 * 24 * 60 * 60 * 1000,
+        }),
+      );
+
+      expect(res).toEqual({ message: 'Logged in successfully' });
     });
   });
 });

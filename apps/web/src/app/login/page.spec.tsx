@@ -1,7 +1,7 @@
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import LoginPage from './page';
-import { vi, describe, it, expect, beforeEach } from 'vitest';
+import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
 
 const mockPush = vi.fn();
 let currentSearchParamRedirect: string | null = null;
@@ -333,6 +333,146 @@ describe('LoginPage post-login redirects', () => {
 
       await waitFor(() => {
         expect(screen.getByRole('alert')).toHaveTextContent('Unable to reach the server. Please try again.');
+      });
+    });
+  });
+
+  describe('Google Identity Services (Sign in with Google)', () => {
+    interface TestWindowWithGoogle {
+      google?: {
+        accounts?: {
+          id?: {
+            initialize: ReturnType<typeof vi.fn>;
+            renderButton: ReturnType<typeof vi.fn>;
+            prompt: ReturnType<typeof vi.fn>;
+          };
+        };
+      };
+    }
+
+    const originalGoogleClientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
+
+    afterEach(() => {
+      if (originalGoogleClientId === undefined) {
+        delete process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
+      } else {
+        process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID = originalGoogleClientId;
+      }
+      delete (window as unknown as TestWindowWithGoogle).google;
+    });
+
+    it('renders nothing when NEXT_PUBLIC_GOOGLE_CLIENT_ID is unset', () => {
+      delete process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
+      renderLogin();
+
+      expect(
+        screen.queryByTestId('google-button-container'),
+      ).not.toBeInTheDocument();
+    });
+
+    it('renders GIS button and invokes prompt when env key is set', async () => {
+      process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID = 'test-client-id.apps.google.com';
+
+      const initializeMock = vi.fn();
+      const renderButtonMock = vi.fn();
+      const promptMock = vi.fn();
+
+      (window as unknown as TestWindowWithGoogle).google = {
+        accounts: {
+          id: {
+            initialize: initializeMock,
+            renderButton: renderButtonMock,
+            prompt: promptMock,
+          },
+        },
+      };
+
+      renderLogin();
+
+      expect(
+        screen.getByTestId('google-button-container'),
+      ).toBeInTheDocument();
+      expect(initializeMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          client_id: 'test-client-id.apps.google.com',
+        }),
+      );
+      expect(renderButtonMock).toHaveBeenCalledWith(
+        expect.any(HTMLElement),
+        expect.objectContaining({
+          text: 'signin_with',
+        }),
+      );
+      expect(promptMock).toHaveBeenCalled();
+    });
+
+    it('posts credential on GIS callback and navigates on success', async () => {
+      process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID = 'test-client-id.apps.google.com';
+
+      let capturedCallback: ((res: { credential: string }) => void) | null = null;
+      (window as unknown as TestWindowWithGoogle).google = {
+        accounts: {
+          id: {
+            initialize: vi.fn(({ callback }) => {
+              capturedCallback = callback;
+            }),
+            renderButton: vi.fn(),
+            prompt: vi.fn(),
+          },
+        },
+      };
+
+      mockApiPost.mockResolvedValueOnce({ message: 'Logged in successfully' });
+      mockApiGet.mockResolvedValueOnce({
+        user: { id: 'u1', email: 'alice@example.com', emailVerified: true },
+        memberships: [{ workspaceId: 'ws-google-1' }],
+      });
+
+      renderLogin();
+      expect(capturedCallback).not.toBeNull();
+
+      // Trigger the Google callback
+      await capturedCallback!({ credential: 'valid-google-cred-123' });
+
+      expect(mockApiPost).toHaveBeenCalledWith('auth/google', {
+        credential: 'valid-google-cred-123',
+        termsAccepted: false,
+      });
+
+      await waitFor(() => {
+        expect(mockPush).toHaveBeenCalledWith('/ws-google-1/analytics');
+      });
+    });
+
+    it('surfaces error in banner when Google sign-in fails', async () => {
+      process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID = 'test-client-id.apps.google.com';
+
+      const { ApiError } = await import('../../lib/api/client');
+      let capturedCallback: ((res: { credential: string }) => void) | null = null;
+      (window as unknown as TestWindowWithGoogle).google = {
+        accounts: {
+          id: {
+            initialize: vi.fn(({ callback }) => {
+              capturedCallback = callback;
+            }),
+            renderButton: vi.fn(),
+            prompt: vi.fn(),
+          },
+        },
+      };
+
+      mockApiPost.mockRejectedValueOnce(
+        new ApiError(401, {}, 'Google sign-in failed. Please try again.'),
+      );
+
+      renderLogin();
+
+      await capturedCallback!({ credential: 'invalid-token' });
+
+      await waitFor(() => {
+        expect(screen.getByRole('alert')).toHaveTextContent(
+          'Google sign-in failed. Please try again.',
+        );
       });
     });
   });

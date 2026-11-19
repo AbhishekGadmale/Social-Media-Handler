@@ -10,6 +10,7 @@ import {
 import { PasswordPolicyService } from './password-policy.service';
 import { PwnedPasswordService } from './pwned-password.service';
 import { TurnstileService } from './turnstile.service';
+import { GoogleTokenVerifierService } from './google-token-verifier.service';
 
 @Module({
   controllers: [AuthController, WorkspaceTestController],
@@ -18,6 +19,7 @@ import { TurnstileService } from './turnstile.service';
     PwnedPasswordService,
     PasswordPolicyService,
     TurnstileService,
+    GoogleTokenVerifierService,
     {
       provide: EMAIL_DELIVERY_SERVICE,
       useFactory: () => {
@@ -31,6 +33,6 @@ import { TurnstileService } from './turnstile.service';
       },
     },
   ],
-  exports: [AuthService, EMAIL_DELIVERY_SERVICE],
+  exports: [AuthService, EMAIL_DELIVERY_SERVICE, GoogleTokenVerifierService],
 })
 export class AuthModule {}
