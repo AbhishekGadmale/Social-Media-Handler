@@ -1,9 +1,14 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { OAuthController } from './oauth.controller';
 import { OAuthService } from './oauth.service';
-import { ExecutionContext, ForbiddenException } from '@nestjs/common';
+import {
+  ExecutionContext,
+  ForbiddenException,
+  ValidationPipe,
+} from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { vi } from 'vitest';
+import { OAuthCallbackQueryDto } from './dto/oauth-callback-query.dto';
 
 import { AuthGuard } from '../auth/guards/auth.guard';
 import { WorkspaceGuard } from '../auth/guards/workspace.guard';
@@ -530,6 +535,76 @@ describe('OAuthController', () => {
           metadata: {
             provider: SocialProvider.YOUTUBE,
             reason: 'OAUTH_PROVIDER_DENIED',
+          },
+        }),
+      );
+    });
+
+    it('handles provider-denied callback with error and error_description, carrying errorDescription in audit metadata', async () => {
+      await controller.callbackProvider(
+        SocialProvider.LINKEDIN,
+        {
+          error: 'user_cancelled_authorize',
+          error_description: 'The user cancelled the authorization request.',
+          state: 'test-state',
+        },
+        mockReq as Request,
+        mockRes as Response,
+      );
+
+      expect(mockRes.redirect).toHaveBeenCalledWith(
+        'http://localhost:3000/dashboard?error=oauth_failed',
+      );
+      expect(mockAuditService.logActionBestEffort).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: 'OAUTH_CONNECTION_FAILED',
+          metadata: {
+            provider: SocialProvider.LINKEDIN,
+            reason: 'OAUTH_PROVIDER_DENIED',
+            errorDescription: 'The user cancelled the authorization request.',
+          },
+        }),
+      );
+    });
+
+    it('validates callback query with error and error_description through ValidationPipe without 400 and reaches provider-denied handling', async () => {
+      const pipe = new ValidationPipe({
+        whitelist: true,
+        forbidNonWhitelisted: true,
+        transform: true,
+      });
+
+      const transformed = await pipe.transform(
+        {
+          error: 'user_cancelled_authorize',
+          error_description: 'The user cancelled the authorization request.',
+          state: 'test-state',
+        },
+        { type: 'query', metatype: OAuthCallbackQueryDto },
+      );
+
+      expect(transformed.error).toBe('user_cancelled_authorize');
+      expect(transformed.error_description).toBe(
+        'The user cancelled the authorization request.',
+      );
+
+      await controller.callbackProvider(
+        SocialProvider.LINKEDIN,
+        transformed,
+        mockReq as Request,
+        mockRes as Response,
+      );
+
+      expect(mockRes.redirect).toHaveBeenCalledWith(
+        'http://localhost:3000/dashboard?error=oauth_failed',
+      );
+      expect(mockAuditService.logActionBestEffort).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: 'OAUTH_CONNECTION_FAILED',
+          metadata: {
+            provider: SocialProvider.LINKEDIN,
+            reason: 'OAUTH_PROVIDER_DENIED',
+            errorDescription: 'The user cancelled the authorization request.',
           },
         }),
       );
