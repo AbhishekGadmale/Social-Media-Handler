@@ -5537,3 +5537,140 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
 3. **Next Steps**:
    - PR #88 is open against main at reviewed head `f632cccfdbc5cf20a99ee028b6c2a74ce65749d0`; CI is 6/6 green on the reviewed head; next step is the docs-fix re-review, then merge by the owner.
    - Do NOT merge on this prompt alone. Live deployment remains STRICT NO-GO.
+
+---
+
+## 76. Sign in with Google (Google Identity Services & One Tap)
+
+### 1. Summary & Motivation
+
+- **Status**: implemented on branch `feat/google-sign-in`; PR #89 open against main at reviewed head `da6e1bf41c53730807098ab2aed17f9b88abbf60`
+- **Origin & Requirements**:
+  - Implements official Google Identity Services (GIS) Sign in with Google: rendered button + One Tap prompt on `/login` and `/signup`.
+  - Auth is a high-risk surface: adheres strictly to existing session, cookie, audit, and provisioning architectures.
+  - Zero schema migrations & non-null invariant: `User.hashedPassword` is a required database column. It is never made nullable. For new Google users, an Argon2 hash of a 32-byte cryptographically secure random secret is generated, ensuring schema compliance, unguessable password login, and seamless future password setup via the existing forgot-password flow.
+  - Account-creation terms rule:
+    - On `/login`, Google sign-in requires an existing account. If unknown email, rejects with HTTP 400 Bad Request (`No account exists for this email. Please sign up first.`).
+    - On `/signup`, Google sign-in container is gated until the user accepts the terms of service and privacy policy checkbox. Passing `termsAccepted: true` provisions new user, tenant, workspace, trial, and owner membership via `UserRepository.createWithTenantTransaction`. Passing `termsAccepted: false` or omitting it rejects new emails with HTTP 400 Bad Request (`No account exists for this email. Please sign up first.`).
+    - For existing users signing in via `/signup` or `/login`, `termsAccepted` is ignored, and login succeeds immediately (terms were already agreed to upon account creation).
+  - Email verification: Google OIDC tokens certify `email_verified`. For new Google users, `emailVerified: true` and `emailVerifiedAt: new Date()` are recorded upon creation. For existing users whose email was previously unverified, Google sign-in automatically promotes their status to verified via `UserRepository.markEmailVerified()`.
+  - Password lockout non-interaction: Account lockout guards password brute-force guessing. Google sign-in bypasses password verification; it neither checks `lockedUntil` nor increments `failedLoginAttempts`.
+  - Native verification over heavy dependency: Follows the Ponytail minimal-diff philosophy by verifying Google OIDC ID tokens via Google's official `https://oauth2.googleapis.com/tokeninfo` endpoint using native `fetch` with a 3000ms `AbortController` timeout instead of bundling the 5MB `google-auth-library`.
+  - Audit logging: Records `AUTH_LOGIN_SUCCEEDED` (for existing accounts) or `AUTH_SIGNUP_SUCCEEDED` (for newly provisioned accounts) with metadata `{ provider: 'GOOGLE' }`.
+- **Scope & Exclusions**:
+  - OUT OF SCOPE:
+    - Google account linking/unlinking UI in user settings.
+    - Reusing the YouTube publishing OAuth client for sign-in (Sign in with Google uses its own dedicated `GOOGLE_CLIENT_ID`).
+    - Any changes to password-based signup or login flows.
+    - Sign in with Apple / Microsoft.
+
+### 2. Technical Architecture & Modifications
+
+#### A. Database Layer (`packages/database`)
+- **UserRepository (`packages/database/src/repositories/UserRepository.ts`)**:
+  - Extended `CreateUserWithTenantInput` with optional `emailVerified?: boolean` and `emailVerifiedAt?: Date | null` (defaults to `false` and `null` to preserve existing password signup behavior).
+  - Updated `createWithTenantTransaction` to assign `input.emailVerified ?? false` and `input.emailVerifiedAt ?? (input.emailVerified ? new Date() : null)`.
+  - Implemented `markEmailVerified(id: string, verifiedAt = new Date()): Promise<User>` to flip `emailVerified: true` and record `emailVerifiedAt` for existing accounts.
+- **Build**: Built `@agency-os/database` cleanly via `pnpm --filter @agency-os/database build`.
+
+#### B. API Auth Module (`apps/api/src/modules/auth/`)
+- **DTO (`apps/api/src/modules/auth/dto/google-sign-in.dto.ts`)**:
+  - `GoogleSignInDto`: `credential` (`@IsString() @IsNotEmpty()`) and `termsAccepted` (`@IsOptional() @IsBoolean()`).
+- **Google Token Verifier (`apps/api/src/modules/auth/google-token-verifier.service.ts`)**:
+  - Checks presence of `process.env.GOOGLE_CLIENT_ID`; if unset or empty, throws `ServiceUnavailableException('Google sign-in is not configured.')`.
+  - Validates credential string format (throws `UnauthorizedException('Google sign-in failed. Please try again.')` if invalid).
+  - Queries Google tokeninfo endpoint (`process.env.GOOGLE_TOKENINFO_URL || 'https://oauth2.googleapis.com/tokeninfo'`) with POST body `id_token=${encodeURIComponent(credential)}` and 3000ms timeout.
+  - Enforces OIDC security invariants:
+    - `aud === process.env.GOOGLE_CLIENT_ID` (client ID match).
+    - `iss` is either `'accounts.google.com'` or `'https://accounts.google.com'`.
+    - `exp > Math.floor(Date.now() / 1000)` (token not expired).
+    - `email_verified === 'true' || email_verified === true` (email verified by Google).
+    - `email` is present and non-empty.
+  - Returns `{ email: data.email, name: data.name || null }`.
+  - Strictly redacts raw credentials from all logs and wraps all failures in generic `UnauthorizedException('Google sign-in failed. Please try again.')`.
+- **Auth Service (`apps/api/src/modules/auth/auth.service.ts`)**:
+  - Implemented `googleSignIn(profile, termsAccepted?, requestContext?, requestId?)`:
+    - Normalizes email (`trim().toLowerCase()`).
+    - If user exists: promotes unverified email via `markEmailVerified`, creates session via `SessionManager.createSession`, and logs `AUTH_LOGIN_SUCCEEDED` with `{ provider: 'GOOGLE' }`.
+    - If user does not exist:
+      - Enforces `termsAccepted === true`; otherwise throws `BadRequestException('No account exists for this email. Please sign up first.')`.
+      - Generates 32 random bytes, hashes with Argon2, resolves display name (`profile.name` or email prefix).
+      - Provisions organization, workspace with active trial, and user via `userRepository.createWithTenantTransaction` (`emailVerified: true`).
+      - Creates session via `SessionManager.createSession`, and logs `AUTH_SIGNUP_SUCCEEDED` with `{ provider: 'GOOGLE' }`.
+- **Auth Controller (`apps/api/src/modules/auth/auth.controller.ts`)**:
+  - Added `POST /api/v1/auth/google` endpoint:
+    - Throttled under `RateLimitPolicies.auth`.
+    - Enforces production HTTPS check (bypassed locally by `ALLOW_INSECURE_HTTP_AUTH === 'true'`).
+    - Verifies token via `GoogleTokenVerifierService`.
+    - Invokes `AuthService.googleSignIn` with client IP and User-Agent.
+    - Sets `httpOnly` `session` cookie and `csrfToken` cookie matching standard `login` endpoint conventions.
+- **Module Registration (`apps/api/src/modules/auth/auth.module.ts`)**:
+  - Registered `GoogleTokenVerifierService` as an injectable provider in `AuthModule`.
+
+#### C. Web UI (`apps/web`)
+- **Login Page (`apps/web/src/app/login/page.tsx`)**:
+  - Checks `process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID`; renders nothing if unset.
+  - Injects `https://accounts.google.com/gsi/client` script asynchronously with deduplication.
+  - Initializes GIS and renders official button into container with `theme: 'outline'`, `size: 'large'`, `width: '100%'`, `text: 'signin_with'`, separated by an 'Or continue with email' divider.
+  - Invokes One Tap prompt via `google.accounts.id.prompt()`.
+  - Submits credential to `auth/google` (`termsAccepted: false`), invalidates `authQueries.me()`, and routes to valid redirect or first workspace analytics dashboard.
+- **Signup Page (`apps/web/src/app/signup/page.tsx`)**:
+  - Checks `process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID`; renders nothing if unset.
+  - Injects GIS script asynchronously and initializes button with `text: 'signup_with'`.
+  - Terms gating: Google UI container has `className="hidden"` until the terms checkbox is checked. Helper text informs user to accept terms to enable Sign in with Google.
+  - Submits credential with current `termsAccepted` state, invalidates auth query, and routes to valid redirect or first workspace dashboard.
+
+### 3. Verification & Evidence
+
+- **Backend Unit Tests (`apps/api`)**:
+  - 45/45 test files PASS, 625/625 tests PASS.
+  - `google-token-verifier.service.spec.ts`: 11/11 tests PASS (valid token resolution, 503 when client ID unset, empty credential rejection, Google API 400 error, network timeout/abort, aud mismatch, iss mismatch, expired token, unverified email, missing email, name fallback).
+  - `auth.service.spec.ts`: 65/65 tests PASS (+4 new tests covering existing user login, emailVerified promotion, new user signup with random Argon2 hash, termsAccepted requirement).
+  - `auth.controller.spec.ts`: 44/44 tests PASS (+4 new tests covering HTTPS guard, cookie issuance, IP/User-Agent forwarding, 400 validation error propagation).
+- **API E2E Tests (`apps/api/test/google-sign-in.e2e-spec.ts`)**:
+  - 1/1 test suite PASS, 4/4 tests PASS:
+    - Valid token for new email with `termsAccepted: true` provisions user, workspace with trial, and sets session/csrf cookies.
+    - Same email logs in successfully without creating duplicate user.
+    - Valid token without `termsAccepted` returns HTTP 400 (`No account exists for this email. Please sign up first.`).
+    - Invalid token returns HTTP 401 (`Google sign-in failed. Please try again.`).
+- **Web Unit Tests (`apps/web`)**:
+  - 24/24 test files PASS, 276/276 tests PASS.
+  - `apps/web/src/app/login/page.spec.tsx`: 29/29 tests PASS (+4 new tests: hidden when env unset, GIS initialization and prompt, credential submit and navigation, error surfacing).
+  - `apps/web/src/app/signup/page.spec.tsx`: 20/20 tests PASS (+4 new tests: hidden when env unset, terms gating visibility toggle, credential submit with termsAccepted, error surfacing).
+- **Static Quality & Build Gates**:
+  - `packages/database`: build, lint (0 errors), typecheck clean exit 0.
+  - `apps/api`: build, lint (0 errors), typecheck clean exit 0.
+  - `apps/web`: build, lint (0 errors), typecheck clean exit 0.
+
+### 4. Operator Setup Instructions
+
+To enable Sign in with Google in an environment:
+1. **Google Cloud Console Configuration**:
+   - Create or open a project in Google Cloud Console.
+   - Go to **APIs & Services** > **Credentials**.
+   - Create an **OAuth 2.0 Client ID** of application type **Web application**.
+   - Under **Authorized JavaScript origins**, add:
+     - Development: `http://localhost:3000`
+     - Production: `https://app.yourdomain.com` (your production web domain)
+   - Do NOT add redirect URIs (Google Identity Services uses JavaScript callbacks and tokeninfo verification rather than redirect flows).
+2. **Environment Variables**:
+   - In `apps/api/.env`:
+     ```env
+     GOOGLE_CLIENT_ID="<your-client-id>.apps.googleusercontent.com"
+     ```
+   - In `apps/web/.env.local`:
+     ```env
+     NEXT_PUBLIC_GOOGLE_CLIENT_ID="<your-client-id>.apps.googleusercontent.com"
+     ```
+3. **Graceful Degradation**:
+   - If `GOOGLE_CLIENT_ID` / `NEXT_PUBLIC_GOOGLE_CLIENT_ID` is omitted or empty, the application runs normally without Google buttons or One Tap prompts, and any direct API calls to `/v1/auth/google` receive HTTP 503 (`Google sign-in is not configured.`).
+
+### 5. Release Gate & Next Steps
+
+1. **CI Quality Gates**:
+   - CI on the reviewed head `da6e1bf4` is 6/6 green (all 2026-11-19): GitGuardian Security Checks 13:01:55Z, Application Builds 13:02:49Z, API E2E Tests 13:03:27Z, Tests 13:03:28Z, Code Quality (Lint & Typecheck) 13:03:33Z, Docker Build & Smoke Test 13:10:40Z. Note: CI re-runs on the docs-fix head and must be re-verified 6/6 green there before merge.
+2. **Release Gate**:
+   - **Live Deployment**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending external infrastructure provisioning, live email delivery verification, live payment credentials, and disaster recovery rehearsals G18/G19).
+3. **Next Steps**:
+   - PR #89 is open against main at reviewed head `da6e1bf41c53730807098ab2aed17f9b88abbf60`; CI is 6/6 green on the reviewed head; next step is the docs-fix re-review, then merge by the owner.
+   - Do NOT merge on this prompt alone. Live deployment remains STRICT NO-GO.

@@ -2,6 +2,17 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import SignupPage from './page';
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
 
+const mockPush = vi.fn();
+const currentSearchParamRedirect: string | null = null;
+
+vi.mock('next/navigation', () => ({
+  useRouter: () => ({ push: mockPush }),
+  useSearchParams: () => ({
+    get: (param: string) =>
+      param === 'redirect' ? currentSearchParamRedirect : null,
+  }),
+}));
+
 interface TurnstileStub {
   render: (
     container: HTMLElement,
@@ -25,10 +36,12 @@ const setTurnstileOnWindow = (stub?: TurnstileStub) => {
 };
 
 const mockApiPost = vi.fn();
+const mockApiGet = vi.fn();
 
 vi.mock('../../lib/api/client', () => ({
   api: {
     post: (...args: unknown[]) => mockApiPost(...args),
+    get: (...args: unknown[]) => mockApiGet(...args),
   },
   ApiError: class ApiError extends Error {
     public headers: Record<string, string>;
@@ -583,6 +596,159 @@ describe('SignupPage', () => {
           termsAccepted: true,
           turnstileToken: 'test-token-123',
         });
+      });
+    });
+  });
+
+  describe('Google Identity Services (Sign in with Google on signup)', () => {
+    interface TestWindowWithGoogle {
+      google?: {
+        accounts?: {
+          id?: {
+            initialize: ReturnType<typeof vi.fn>;
+            renderButton: ReturnType<typeof vi.fn>;
+            prompt: ReturnType<typeof vi.fn>;
+          };
+        };
+      };
+    }
+
+    const originalGoogleClientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
+
+    beforeEach(() => {
+      mockPush.mockReset();
+      mockApiPost.mockReset();
+      mockApiGet.mockReset();
+    });
+
+    afterEach(() => {
+      if (originalGoogleClientId === undefined) {
+        delete process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
+      } else {
+        process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID = originalGoogleClientId;
+      }
+      delete (window as unknown as TestWindowWithGoogle).google;
+    });
+
+    it('renders nothing when NEXT_PUBLIC_GOOGLE_CLIENT_ID is unset', () => {
+      delete process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
+      render(<SignupPage />);
+
+      expect(
+        screen.queryByTestId('google-button-container'),
+      ).not.toBeInTheDocument();
+    });
+
+    it('gates Google UI with hidden class until terms are accepted', () => {
+      process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID = 'test-client-id.apps.google.com';
+
+      const initializeMock = vi.fn();
+      const renderButtonMock = vi.fn();
+      const promptMock = vi.fn();
+
+      (window as unknown as TestWindowWithGoogle).google = {
+        accounts: {
+          id: {
+            initialize: initializeMock,
+            renderButton: renderButtonMock,
+            prompt: promptMock,
+          },
+        },
+      };
+
+      render(<SignupPage />);
+
+      const googleContainer = screen.getByTestId('google-button-container');
+      expect(googleContainer).toBeInTheDocument();
+      // Initially hidden because terms are not accepted
+      expect(googleContainer).toHaveClass('hidden');
+
+      // Accept terms
+      const checkbox = screen.getByRole('checkbox', {
+        name: /terms of service and privacy policy/i,
+      });
+      fireEvent.click(checkbox);
+
+      // Now visible
+      expect(googleContainer).not.toHaveClass('hidden');
+
+      // Uncheck terms
+      fireEvent.click(checkbox);
+      expect(googleContainer).toHaveClass('hidden');
+    });
+
+    it('posts credential and termsAccepted on GIS callback and navigates on success', async () => {
+      process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID = 'test-client-id.apps.google.com';
+
+      let capturedCallback: ((res: { credential: string }) => void) | null = null;
+      (window as unknown as TestWindowWithGoogle).google = {
+        accounts: {
+          id: {
+            initialize: vi.fn(({ callback }) => {
+              capturedCallback = callback;
+            }),
+            renderButton: vi.fn(),
+            prompt: vi.fn(),
+          },
+        },
+      };
+
+      mockApiPost.mockResolvedValueOnce({ message: 'Logged in successfully' });
+      mockApiGet.mockResolvedValueOnce({
+        user: { id: 'u1', email: 'alice@example.com', emailVerified: true },
+        memberships: [{ workspaceId: 'ws-signup-google-1' }],
+      });
+
+      render(<SignupPage />);
+
+      // Accept terms first
+      const checkbox = screen.getByRole('checkbox', {
+        name: /terms of service and privacy policy/i,
+      });
+      fireEvent.click(checkbox);
+
+      expect(capturedCallback).not.toBeNull();
+      await capturedCallback!({ credential: 'valid-signup-google-token' });
+
+      expect(mockApiPost).toHaveBeenCalledWith('auth/google', {
+        credential: 'valid-signup-google-token',
+        termsAccepted: true,
+      });
+
+      await waitFor(() => {
+        expect(mockPush).toHaveBeenCalledWith('/ws-signup-google-1/analytics');
+      });
+    });
+
+    it('surfaces error message when Google sign-in fails', async () => {
+      process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID = 'test-client-id.apps.google.com';
+
+      const { ApiError } = await import('../../lib/api/client');
+      let capturedCallback: ((res: { credential: string }) => void) | null = null;
+      (window as unknown as TestWindowWithGoogle).google = {
+        accounts: {
+          id: {
+            initialize: vi.fn(({ callback }) => {
+              capturedCallback = callback;
+            }),
+            renderButton: vi.fn(),
+            prompt: vi.fn(),
+          },
+        },
+      };
+
+      mockApiPost.mockRejectedValueOnce(
+        new ApiError(400, {}, 'No account exists for this email. Please sign up first.'),
+      );
+
+      render(<SignupPage />);
+
+      await capturedCallback!({ credential: 'token-without-account' });
+
+      await waitFor(() => {
+        expect(screen.getByRole('alert')).toHaveTextContent(
+          'No account exists for this email. Please sign up first.',
+        );
       });
     });
   });

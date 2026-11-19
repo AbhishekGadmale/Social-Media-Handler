@@ -16,6 +16,7 @@ import {
 } from '@agency-os/database';
 import { SessionManager } from '@agency-os/session';
 import * as argon2 from '@node-rs/argon2';
+import * as crypto from 'crypto';
 import { SignupDto } from './dto/signup.dto';
 import { AuditService } from '../core/audit.service';
 import {
@@ -534,6 +535,91 @@ export class AuthService {
     }
 
     return { sessionId, user: freshUser };
+  }
+
+  async googleSignIn(
+    profile: { email: string; name: string | null },
+    termsAccepted?: boolean,
+    requestContext?: { ipAddress?: string; userAgent?: string },
+    requestId?: string,
+  ): Promise<{ sessionId: string; user: any }> {
+    const normalizedEmail = profile.email.trim().toLowerCase();
+    let user = await this.userRepository.findByEmail(normalizedEmail);
+
+    if (user) {
+      if (!user.emailVerified) {
+        user = await this.userRepository.markEmailVerified(user.id);
+      }
+
+      const sessionId = requestContext
+        ? await this.sessionManager.createSession(user.id, user.securityEpoch, {
+            ipAddress: requestContext.ipAddress,
+            userAgent: requestContext.userAgent,
+          })
+        : await this.sessionManager.createSession(user.id, user.securityEpoch);
+
+      if (this.auditService) {
+        this.auditService.logActionBestEffort({
+          action: AuditAction.AUTH_LOGIN_SUCCEEDED,
+          actorId: user.id,
+          targetType: 'User',
+          targetId: user.id,
+          requestId,
+          ipAddress: requestContext?.ipAddress,
+          userAgent: requestContext?.userAgent,
+          metadata: { provider: 'GOOGLE' },
+        });
+      }
+
+      return { sessionId, user };
+    }
+
+    if (termsAccepted !== true) {
+      throw new BadRequestException(
+        'No account exists for this email. Please sign up first.',
+      );
+    }
+
+    const randomSecret = crypto.randomBytes(32).toString('hex');
+    const hashedPassword = await argon2.hash(randomSecret);
+
+    const displayName =
+      profile.name && profile.name.trim() !== ''
+        ? profile.name.trim()
+        : normalizedEmail.split('@')[0] || 'User';
+
+    const tenantResult = await this.userRepository.createWithTenantTransaction({
+      name: displayName,
+      email: normalizedEmail,
+      hashedPassword,
+      termsAcceptedAt: new Date(),
+      emailVerified: true,
+      emailVerifiedAt: new Date(),
+    });
+
+    user = tenantResult.user;
+
+    const sessionId = requestContext
+      ? await this.sessionManager.createSession(user.id, user.securityEpoch, {
+          ipAddress: requestContext.ipAddress,
+          userAgent: requestContext.userAgent,
+        })
+      : await this.sessionManager.createSession(user.id, user.securityEpoch);
+
+    if (this.auditService) {
+      this.auditService.logActionBestEffort({
+        action: AuditAction.AUTH_SIGNUP_SUCCEEDED,
+        actorId: user.id,
+        targetType: 'User',
+        targetId: user.id,
+        requestId,
+        ipAddress: requestContext?.ipAddress,
+        userAgent: requestContext?.userAgent,
+        metadata: { provider: 'GOOGLE' },
+      });
+    }
+
+    return { sessionId, user };
   }
 
   async logout(sessionId: string): Promise<void> {

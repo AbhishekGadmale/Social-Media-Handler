@@ -40,6 +40,7 @@ describe('AuthService', () => {
     incrementFailedLoginAttempts: any;
     lockUserAccount: any;
     clearFailedLoginAttempts: any;
+    markEmailVerified: any;
   };
   let sessionManagerMock: {
     createSession: any;
@@ -97,6 +98,7 @@ describe('AuthService', () => {
       clearFailedLoginAttempts: vi
         .fn()
         .mockResolvedValue({ failedLoginAttempts: 0, lockedUntil: null }),
+      markEmailVerified: vi.fn(),
     };
 
     sessionManagerMock = {
@@ -1799,6 +1801,175 @@ describe('AuthService', () => {
       ).rejects.toThrow(NotFoundException);
 
       expect(sessionManagerMock.destroySession).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('googleSignIn', () => {
+    it('existing user gets a session and flips verified flag when unverified', async () => {
+      const existingUser = {
+        id: 'user-google-1',
+        email: 'alice@example.com',
+        emailVerified: false,
+        securityEpoch: 2,
+        failedLoginAttempts: 0,
+        lockedUntil: null,
+      };
+      const verifiedUser = {
+        id: 'user-google-1',
+        email: 'alice@example.com',
+        emailVerified: true,
+        securityEpoch: 2,
+        failedLoginAttempts: 0,
+        lockedUntil: null,
+      };
+
+      userRepoMock.findByEmail.mockResolvedValueOnce(existingUser);
+      userRepoMock.markEmailVerified.mockResolvedValueOnce(verifiedUser);
+      sessionManagerMock.createSession.mockResolvedValueOnce('sess-google-1');
+
+      const result = await service.googleSignIn(
+        { email: 'Alice@Example.com', name: 'Alice' },
+        false,
+        { ipAddress: '1.2.3.4', userAgent: 'TestAgent' },
+        'req-1',
+      );
+
+      expect(userRepoMock.findByEmail).toHaveBeenCalledWith(
+        'alice@example.com',
+      );
+      expect(userRepoMock.markEmailVerified).toHaveBeenCalledWith(
+        'user-google-1',
+      );
+      expect(sessionManagerMock.createSession).toHaveBeenCalledWith(
+        'user-google-1',
+        2,
+        { ipAddress: '1.2.3.4', userAgent: 'TestAgent' },
+      );
+      expect(auditServiceMock.logActionBestEffort).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: AuditAction.AUTH_LOGIN_SUCCEEDED,
+          actorId: 'user-google-1',
+          metadata: { provider: 'GOOGLE' },
+        }),
+      );
+      expect(result).toEqual({
+        sessionId: 'sess-google-1',
+        user: verifiedUser,
+      });
+    });
+
+    it('existing verified user gets a session without re-updating emailVerified', async () => {
+      const existingUser = {
+        id: 'user-google-2',
+        email: 'bob@example.com',
+        emailVerified: true,
+        securityEpoch: 1,
+        failedLoginAttempts: 0,
+        lockedUntil: null,
+      };
+
+      userRepoMock.findByEmail.mockResolvedValueOnce(existingUser);
+      sessionManagerMock.createSession.mockResolvedValueOnce('sess-google-2');
+
+      const result = await service.googleSignIn(
+        { email: 'bob@example.com', name: 'Bob' },
+        false,
+      );
+
+      expect(userRepoMock.markEmailVerified).not.toHaveBeenCalled();
+      expect(sessionManagerMock.createSession).toHaveBeenCalledWith(
+        'user-google-2',
+        1,
+      );
+      expect(result).toEqual({
+        sessionId: 'sess-google-2',
+        user: existingUser,
+      });
+    });
+
+    it('unknown email without termsAccepted throws exact BadRequestException', async () => {
+      userRepoMock.findByEmail.mockResolvedValueOnce(null);
+
+      await expect(
+        service.googleSignIn(
+          { email: 'newuser@example.com', name: 'New User' },
+          false,
+        ),
+      ).rejects.toThrow(
+        new BadRequestException(
+          'No account exists for this email. Please sign up first.',
+        ),
+      );
+      await expect(
+        service.googleSignIn(
+          { email: 'newuser@example.com', name: 'New User' },
+          undefined,
+        ),
+      ).rejects.toThrow(
+        new BadRequestException(
+          'No account exists for this email. Please sign up first.',
+        ),
+      );
+
+      expect(userRepoMock.createWithTenantTransaction).not.toHaveBeenCalled();
+    });
+
+    it('unknown email with termsAccepted provisions via createWithTenantTransaction and returns a session', async () => {
+      vi.mocked(argon2.hash).mockResolvedValueOnce(
+        '$argon2id$randomGoogleHash',
+      );
+      userRepoMock.findByEmail.mockResolvedValueOnce(null);
+      const provisionedUser = {
+        id: 'user-google-new',
+        email: 'newuser@example.com',
+        name: 'New User',
+        emailVerified: true,
+        securityEpoch: 1,
+      };
+      userRepoMock.createWithTenantTransaction.mockResolvedValueOnce({
+        user: provisionedUser,
+        organization: { id: 'org-1' },
+        workspace: { id: 'ws-1' },
+        membership: { id: 'mem-1' },
+      });
+      sessionManagerMock.createSession.mockResolvedValueOnce('sess-google-new');
+
+      const result = await service.googleSignIn(
+        { email: 'NewUser@example.com', name: 'New User' },
+        true,
+        { ipAddress: '5.6.7.8', userAgent: 'Chrome' },
+        'req-signup-1',
+      );
+
+      expect(userRepoMock.createWithTenantTransaction).toHaveBeenCalledTimes(1);
+      const tenantCallArg =
+        userRepoMock.createWithTenantTransaction.mock.calls[0][0];
+      expect(tenantCallArg.email).toBe('newuser@example.com');
+      expect(tenantCallArg.name).toBe('New User');
+      expect(tenantCallArg.emailVerified).toBe(true);
+      expect(tenantCallArg.emailVerifiedAt).toBeInstanceOf(Date);
+      expect(tenantCallArg.termsAcceptedAt).toBeInstanceOf(Date);
+      expect(typeof tenantCallArg.hashedPassword).toBe('string');
+      // Assert it was called with a hash that is not the raw token
+      expect(tenantCallArg.hashedPassword).not.toBe('valid-google-token');
+      expect(tenantCallArg.hashedPassword.length).toBeGreaterThan(0);
+
+      expect(sessionManagerMock.createSession).toHaveBeenCalledWith(
+        'user-google-new',
+        1,
+        { ipAddress: '5.6.7.8', userAgent: 'Chrome' },
+      );
+      expect(auditServiceMock.logActionBestEffort).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: AuditAction.AUTH_SIGNUP_SUCCEEDED,
+          actorId: 'user-google-new',
+          metadata: { provider: 'GOOGLE' },
+        }),
+      );
+      expect(result).toEqual({
+        sessionId: 'sess-google-new',
+        user: provisionedUser,
+      });
     });
   });
 });
