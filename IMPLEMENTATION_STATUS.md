@@ -5674,3 +5674,68 @@ To enable Sign in with Google in an environment:
 3. **Next Steps**:
    - PR #89 is open against main at reviewed head `da6e1bf41c53730807098ab2aed17f9b88abbf60`; CI is 6/6 green on the reviewed head; next step is the docs-fix re-review, then merge by the owner.
    - Do NOT merge on this prompt alone. Live deployment remains STRICT NO-GO.
+
+---
+
+## 77. Standalone Dashboard Sign-Out Query Cache Clear
+
+### 1. Summary & Root Cause
+
+- **Status**: implemented on branch `fix/dashboard-logout-cache`; pending PR against `main`
+- **Issue & Symptom**: Clicking "Sign out" on the standalone dashboard (`/dashboard`) appeared to do nothing. Live logs confirmed `POST /api/v1/auth/logout` returned HTTP 200 with the session destroyed and session/csrf cookies cleared.
+- **Root Cause**:
+  - `apps/web/src/app/dashboard/page.tsx`'s `handleLogout` called `await api.post('auth/logout')` followed immediately by `router.push('/login')` without evicting TanStack Query's cache.
+  - Root layout `AuthGuard` (`apps/web/src/components/auth-guard.tsx`) evaluates `useQuery(authQueries.me())` (`['auth', 'me']`).
+  - Upon navigating to `/login`, `AuthGuard` checked the still-cached user session in the TanStack Query store, considered the user actively authenticated, and triggered `router.replace('/dashboard')` (the unverified-user routing branch), bouncing the user right back to where they started.
+- **Contrast with Shell**:
+  - `apps/web/src/components/dashboard-shell.tsx` already handled logout correctly by invoking `queryClient.clear()` immediately after `api.post('auth/logout')` and prior to `router.push('/login')`. The dashboard page was missing this cache invalidation step.
+
+### 2. Sign-Out Call Site Sweep
+
+A comprehensive sweep of `apps/web/src` for `auth/logout` and sign-out actions was executed:
+1. `apps/web/src/components/dashboard-shell.tsx` (line 43):
+   - Invokes `await api.post('auth/logout')`, followed by `queryClient.clear()`, then `router.push('/login')`.
+   - Verified correct and functioning as expected. Left unmodified.
+2. `apps/web/src/app/dashboard/page.tsx` (line 20):
+   - Previously called `await api.post('auth/logout')` and `router.push('/login')` without clearing cache.
+   - Fixed to mirror `dashboard-shell.tsx` exactly.
+- Zero other sign-out call sites exist across `apps/web/src`.
+
+### 3. Technical Changes
+
+- **Dashboard Page (`apps/web/src/app/dashboard/page.tsx`)**:
+  - Imported `useQueryClient` from `@tanstack/react-query`.
+  - Instantiated `const queryClient = useQueryClient();`.
+  - Updated `handleLogout` to call `queryClient.clear()` after successful `api.post('auth/logout')` and before `router.push('/login')`.
+  - Preserved existing `try / catch` structure and `console.error('Logout failed', e)` behavior.
+- **Scope Discipline**:
+  - Strictly 3 lines changed in `apps/web/src/app/dashboard/page.tsx`.
+  - No changes to API routes or controllers.
+  - No changes to `auth-guard.tsx` or `lib/query/auth.ts`.
+  - No changes to `dashboard-shell.tsx`.
+
+### 4. Verification & Test Evidence
+
+- **Dashboard Page Unit Tests (`apps/web/src/app/dashboard/page.spec.tsx`)**:
+  - 1/1 test file PASS, **7/7 tests PASS** (+1 new test, previously 6/6).
+  - Added unit test: `calls auth/logout, clears query cache, and navigates to /login on Sign out click`.
+  - Verified assertions:
+    - `api.post('auth/logout')` called exactly once.
+    - `queryClient.clear()` called exactly once.
+    - `router.push('/login')` called exactly once.
+    - Call order strictly verified: `clearSpy.mock.invocationCallOrder[0] < mockPush.mock.invocationCallOrder[0]`.
+- **Web Test Suite (`apps/web`)**:
+  - 24/24 test files PASS, **277/277 tests PASS**.
+- **Static Quality Gates**:
+  - `apps/web` ESLint: 0 errors.
+  - `apps/web` Next.js production build: clean exit 0.
+
+### 5. Release Gate & Next Steps
+
+1. **Release Gate**:
+   - **Live Deployment**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending external infrastructure provisioning, live email delivery verification, live payment credentials, and disaster recovery rehearsals G18/G19).
+2. **Next Steps**:
+   - Commit changes to branch `fix/dashboard-logout-cache`.
+   - Push branch to remote and open Pull Request against `main`.
+   - Monitor GitHub Actions CI until 6/6 green.
+   - Do NOT merge on this prompt alone. Live deployment remains STRICT NO-GO.

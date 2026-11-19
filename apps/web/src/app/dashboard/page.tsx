@@ -1,12 +1,13 @@
 'use client';
 
 import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { authQueries } from '../../lib/query/auth';
 import { api, ApiError } from '../../lib/api/client';
 import { useRouter } from 'next/navigation';
 
 export default function Dashboard() {
+  const queryClient = useQueryClient();
   const { data: authData } = useQuery(authQueries.me());
   const router = useRouter();
 
@@ -18,6 +19,7 @@ export default function Dashboard() {
   const handleLogout = async () => {
     try {
       await api.post('auth/logout');
+      queryClient.clear();
       router.push('/login');
     } catch (e) {
       console.error('Logout failed', e);
