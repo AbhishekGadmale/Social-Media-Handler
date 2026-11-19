@@ -5681,7 +5681,7 @@ To enable Sign in with Google in an environment:
 
 ### 1. Summary & Root Cause
 
-- **Status**: implemented on branch `fix/dashboard-logout-cache`; pending PR against `main`
+- **Status**: implemented on branch `fix/dashboard-logout-cache`; PR #90 open against `main` at reviewed head `2c4709ee1dbfebdafcfe8f4760d7e80cb8556cce`
 - **Issue & Symptom**: Clicking "Sign out" on the standalone dashboard (`/dashboard`) appeared to do nothing. Live logs confirmed `POST /api/v1/auth/logout` returned HTTP 200 with the session destroyed and session/csrf cookies cleared.
 - **Root Cause**:
   - `apps/web/src/app/dashboard/page.tsx`'s `handleLogout` called `await api.post('auth/logout')` followed immediately by `router.push('/login')` without evicting TanStack Query's cache.
@@ -5732,10 +5732,10 @@ A comprehensive sweep of `apps/web/src` for `auth/logout` and sign-out actions w
 
 ### 5. Release Gate & Next Steps
 
-1. **Release Gate**:
+1. **CI Quality Gates**:
+   - CI on the reviewed head `2c4709ee` is 6/6 green (all 2026-11-19): GitGuardian Security Checks 14:13:38Z, Application Builds 14:14:34Z, Code Quality (Lint & Typecheck) 14:15:06Z, API E2E Tests 14:15:18Z, Tests 14:15:34Z, Docker Build & Smoke Test 14:22:22Z. Note: CI re-runs on the docs-fix head and must be re-verified 6/6 green there before merge.
+2. **Release Gate**:
    - **Live Deployment**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending external infrastructure provisioning, live email delivery verification, live payment credentials, and disaster recovery rehearsals G18/G19).
-2. **Next Steps**:
-   - Commit changes to branch `fix/dashboard-logout-cache`.
-   - Push branch to remote and open Pull Request against `main`.
-   - Monitor GitHub Actions CI until 6/6 green.
+3. **Next Steps**:
+   - PR #90 is open against main at reviewed head `2c4709ee1dbfebdafcfe8f4760d7e80cb8556cce`; CI is 6/6 green on the reviewed head; next step is the docs-fix re-review, then merge by the owner.
    - Do NOT merge on this prompt alone. Live deployment remains STRICT NO-GO.
