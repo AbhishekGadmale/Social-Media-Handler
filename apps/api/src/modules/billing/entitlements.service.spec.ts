@@ -16,6 +16,9 @@ describe('EntitlementsService', () => {
       workspaceMember: {
         count: vi.fn(),
       },
+      socialAccount: {
+        count: vi.fn(),
+      },
     };
 
     service = new EntitlementsService(prismaMock);
@@ -234,6 +237,128 @@ describe('EntitlementsService', () => {
 
       await expect(service.assertSeatLimit(mockWorkspaceId, 1)).rejects.toThrow(
         ForbiddenException,
+      );
+    });
+  });
+
+  describe('Social Account Limits Enforcement', () => {
+    it('resolves 5/15/30/30 for SOLO/STUDIO/AGENCY/AGENCY_FOUNDING subscriptions', async () => {
+      const plans = [
+        { code: 'SOLO', expectedLimit: 5 },
+        { code: 'STUDIO', expectedLimit: 15 },
+        { code: 'AGENCY', expectedLimit: 30 },
+        { code: 'AGENCY_FOUNDING', expectedLimit: 30 },
+      ];
+
+      for (const { code, expectedLimit } of plans) {
+        prismaMock.workspace.findUnique.mockResolvedValue({
+          id: mockWorkspaceId,
+          subscription: {
+            status: SubscriptionStatus.ACTIVE,
+            currentPeriodEnd: new Date('2026-12-01T00:00:00Z'),
+            plan: { code, seats: 10 },
+          },
+        });
+
+        const entitlements =
+          await service.getWorkspaceEntitlements(mockWorkspaceId);
+        expect(entitlements.socialAccountLimit).toBe(expectedLimit);
+      }
+    });
+
+    it('resolves 30 for trial and expired-trial workspaces', async () => {
+      // Active trial
+      prismaMock.workspace.findUnique.mockResolvedValue({
+        id: mockWorkspaceId,
+        trialEndsAt: new Date(Date.now() + 86400000),
+        subscription: null,
+      });
+
+      const activeTrial =
+        await service.getWorkspaceEntitlements(mockWorkspaceId);
+      expect(activeTrial.socialAccountLimit).toBe(30);
+
+      // Expired trial
+      prismaMock.workspace.findUnique.mockResolvedValue({
+        id: mockWorkspaceId,
+        trialEndsAt: new Date(Date.now() - 86400000),
+        subscription: null,
+      });
+
+      const expiredTrial =
+        await service.getWorkspaceEntitlements(mockWorkspaceId);
+      expect(expiredTrial.socialAccountLimit).toBe(30);
+    });
+
+    it('assertSocialAccountLimit passes under the cap', async () => {
+      prismaMock.workspace.findUnique.mockResolvedValue({
+        id: mockWorkspaceId,
+        subscription: {
+          status: SubscriptionStatus.ACTIVE,
+          currentPeriodEnd: new Date('2026-12-01T00:00:00Z'),
+          plan: { code: 'SOLO', seats: 1 },
+        },
+      });
+      prismaMock.socialAccount.count.mockResolvedValue(3); // limit is 5, 3 + 1 = 4 <= 5
+
+      await expect(
+        service.assertSocialAccountLimit(mockWorkspaceId, 1),
+      ).resolves.not.toThrow();
+    });
+
+    it('assertSocialAccountLimit passes when count + additional == limit', async () => {
+      prismaMock.workspace.findUnique.mockResolvedValue({
+        id: mockWorkspaceId,
+        subscription: {
+          status: SubscriptionStatus.ACTIVE,
+          currentPeriodEnd: new Date('2026-12-01T00:00:00Z'),
+          plan: { code: 'SOLO', seats: 1 },
+        },
+      });
+      prismaMock.socialAccount.count.mockResolvedValue(4); // limit is 5, 4 + 1 = 5 == 5
+
+      await expect(
+        service.assertSocialAccountLimit(mockWorkspaceId, 1),
+      ).resolves.not.toThrow();
+    });
+
+    it('assertSocialAccountLimit throws the exact message at limit + 1', async () => {
+      prismaMock.workspace.findUnique.mockResolvedValue({
+        id: mockWorkspaceId,
+        subscription: {
+          status: SubscriptionStatus.ACTIVE,
+          currentPeriodEnd: new Date('2026-12-01T00:00:00Z'),
+          plan: { code: 'SOLO', seats: 1 },
+        },
+      });
+      prismaMock.socialAccount.count.mockResolvedValue(5); // limit is 5, 5 + 1 = 6 > 5
+
+      await expect(
+        service.assertSocialAccountLimit(mockWorkspaceId, 1),
+      ).rejects.toThrow(
+        new ForbiddenException(
+          'Social account limit exceeded for SOLO. Current accounts: 5, max allowed: 5. Please upgrade your plan.',
+        ),
+      );
+    });
+
+    it('assertSocialAccountLimit honors additionalAccounts > 1', async () => {
+      prismaMock.workspace.findUnique.mockResolvedValue({
+        id: mockWorkspaceId,
+        subscription: {
+          status: SubscriptionStatus.ACTIVE,
+          currentPeriodEnd: new Date('2026-12-01T00:00:00Z'),
+          plan: { code: 'STUDIO', seats: 3 },
+        },
+      });
+      prismaMock.socialAccount.count.mockResolvedValue(14); // limit is 15, 14 + 2 = 16 > 15
+
+      await expect(
+        service.assertSocialAccountLimit(mockWorkspaceId, 2),
+      ).rejects.toThrow(
+        new ForbiddenException(
+          'Social account limit exceeded for STUDIO. Current accounts: 14, max allowed: 15. Please upgrade your plan.',
+        ),
       );
     });
   });

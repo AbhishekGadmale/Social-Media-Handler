@@ -152,6 +152,20 @@ export class SocialAccountRepository {
       return results;
     });
   }
+
+  async findByProviderAndExternalId(
+    provider: SocialProvider,
+    externalId: string,
+  ): Promise<SocialAccount | null> {
+    return this.prisma.socialAccount.findUnique({
+      where: {
+        provider_externalId: {
+          provider,
+          externalId,
+        },
+      },
+    });
+  }
   async getDecryptedCredentials(socialAccountId: string): Promise<{
     accessToken: string;
     refreshToken?: string | null;

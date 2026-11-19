@@ -21,6 +21,7 @@ export interface PlanConfig {
   monthlyPricePaise: number;
   annualPricePaise: number;
   seats: number;
+  socialAccountLimit: number;
   isFounding: boolean;
 }
 
@@ -31,6 +32,7 @@ export const PLANS: Record<string, PlanConfig> = {
     monthlyPricePaise: 49900,
     annualPricePaise: 499000,
     seats: 1,
+    socialAccountLimit: 5,
     isFounding: false,
   },
   STUDIO: {
@@ -39,6 +41,7 @@ export const PLANS: Record<string, PlanConfig> = {
     monthlyPricePaise: 99900,
     annualPricePaise: 999000,
     seats: 3,
+    socialAccountLimit: 15,
     isFounding: false,
   },
   AGENCY: {
@@ -47,6 +50,7 @@ export const PLANS: Record<string, PlanConfig> = {
     monthlyPricePaise: 399900,
     annualPricePaise: 3999000,
     seats: 10,
+    socialAccountLimit: 30,
     isFounding: false,
   },
   AGENCY_FOUNDING: {
@@ -55,6 +59,7 @@ export const PLANS: Record<string, PlanConfig> = {
     monthlyPricePaise: 299900,
     annualPricePaise: 2999000,
     seats: 10,
+    socialAccountLimit: 30,
     isFounding: true,
   },
 };

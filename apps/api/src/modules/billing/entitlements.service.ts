@@ -4,16 +4,24 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaClient, SubscriptionStatus } from '@agency-os/database';
-import { getTrialGraceDays } from './billing.config';
+import { getTrialGraceDays, PLANS } from './billing.config';
 
 export interface WorkspaceEntitlements {
   isReadOnly: boolean;
   readOnlyReason?: string;
   planCode: string;
   seats: number;
+  socialAccountLimit: number;
   isTrial: boolean;
   trialEndsAt: Date | null;
   subscriptionStatus: SubscriptionStatus | null;
+}
+
+function resolveSocialAccountLimit(planCode: string): number {
+  if (planCode in PLANS) {
+    return PLANS[planCode].socialAccountLimit;
+  }
+  return PLANS.AGENCY.socialAccountLimit;
 }
 
 @Injectable()
@@ -51,39 +59,47 @@ export class EntitlementsService {
       const periodEnd = subscription.currentPeriodEnd;
 
       switch (subscription.status) {
-        case SubscriptionStatus.ACTIVE:
+        case SubscriptionStatus.ACTIVE: {
+          const planCode = plan?.code || 'CUSTOM';
           return {
             isReadOnly: false,
-            planCode: plan?.code || 'CUSTOM',
+            planCode,
             seats: plan?.seats || 1,
+            socialAccountLimit: resolveSocialAccountLimit(planCode),
             isTrial: false,
             trialEndsAt: workspace.trialEndsAt,
             subscriptionStatus: subscription.status,
           };
+        }
 
-        case SubscriptionStatus.HALTED:
+        case SubscriptionStatus.HALTED: {
+          const planCode = plan?.code || 'CUSTOM';
           return {
             isReadOnly: true,
             readOnlyReason:
               'Workspace subscription is halted by payment provider. Please renew or update your payment method.',
-            planCode: plan?.code || 'CUSTOM',
+            planCode,
             seats: plan?.seats || 1,
+            socialAccountLimit: resolveSocialAccountLimit(planCode),
             isTrial: false,
             trialEndsAt: workspace.trialEndsAt,
             subscriptionStatus: subscription.status,
           };
+        }
 
         case SubscriptionStatus.PAST_DUE: {
           const isPastPeriodEnd = periodEnd
             ? now.getTime() > periodEnd.getTime()
             : true;
+          const planCode = plan?.code || 'CUSTOM';
           return {
             isReadOnly: isPastPeriodEnd,
             readOnlyReason: isPastPeriodEnd
               ? 'Subscription payment past due and billing period has expired. Workspace is in read-only mode.'
               : undefined,
-            planCode: plan?.code || 'CUSTOM',
+            planCode,
             seats: plan?.seats || 1,
+            socialAccountLimit: resolveSocialAccountLimit(planCode),
             isTrial: false,
             trialEndsAt: workspace.trialEndsAt,
             subscriptionStatus: subscription.status,
@@ -95,13 +111,15 @@ export class EntitlementsService {
           const isPastPeriodEnd = periodEnd
             ? now.getTime() > periodEnd.getTime()
             : true;
+          const planCode = plan?.code || 'CUSTOM';
           return {
             isReadOnly: isPastPeriodEnd,
             readOnlyReason: isPastPeriodEnd
               ? 'Subscription is expired or cancelled. Workspace is in read-only mode.'
               : undefined,
-            planCode: plan?.code || 'CUSTOM',
+            planCode,
             seats: plan?.seats || 1,
+            socialAccountLimit: resolveSocialAccountLimit(planCode),
             isTrial: false,
             trialEndsAt: workspace.trialEndsAt,
             subscriptionStatus: subscription.status,
@@ -126,6 +144,7 @@ export class EntitlementsService {
           isReadOnly: false,
           planCode: 'AGENCY_TRIAL',
           seats: 10, // Full Agency entitlements during trial
+          socialAccountLimit: PLANS.AGENCY.socialAccountLimit,
           isTrial: true,
           trialEndsAt,
           subscriptionStatus: subscription?.status || null,
@@ -138,6 +157,7 @@ export class EntitlementsService {
           'Trial expired. Workspace is in read-only mode. Please subscribe to a plan to continue.',
         planCode: 'EXPIRED_TRIAL',
         seats: 10,
+        socialAccountLimit: PLANS.AGENCY.socialAccountLimit,
         isTrial: true,
         trialEndsAt,
         subscriptionStatus: subscription?.status || null,
@@ -149,6 +169,7 @@ export class EntitlementsService {
       isReadOnly: false,
       planCode: 'AGENCY_TRIAL',
       seats: 10,
+      socialAccountLimit: PLANS.AGENCY.socialAccountLimit,
       isTrial: true,
       trialEndsAt: null,
       subscriptionStatus: null,
@@ -193,6 +214,25 @@ export class EntitlementsService {
     if (currentMemberCount + additionalSeats > entitlements.seats) {
       throw new ForbiddenException(
         `Seat limit exceeded for ${entitlements.planCode}. Current seats: ${currentMemberCount}, max allowed: ${entitlements.seats}. Please upgrade your plan.`,
+      );
+    }
+  }
+
+  /**
+   * Asserts that adding additional social accounts will not exceed the plan social account limit.
+   */
+  async assertSocialAccountLimit(
+    workspaceId: string,
+    additionalAccounts = 1,
+  ): Promise<void> {
+    const entitlements = await this.getWorkspaceEntitlements(workspaceId);
+    const count = await this.prisma.socialAccount.count({
+      where: { workspaceId },
+    });
+
+    if (count + additionalAccounts > entitlements.socialAccountLimit) {
+      throw new ForbiddenException(
+        `Social account limit exceeded for ${entitlements.planCode}. Current accounts: ${count}, max allowed: ${entitlements.socialAccountLimit}. Please upgrade your plan.`,
       );
     }
   }
