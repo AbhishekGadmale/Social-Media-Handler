@@ -62,7 +62,7 @@ export default function TermsPage() {
         <section className="space-y-3">
           <h2 className="text-xl font-bold text-gray-900">3. Plans, trial and payment</h2>
           <p>
-            3.1 <strong>Plans and prices (INR, GST-inclusive).</strong> Solo ₹499/month, Studio ₹999/month, Agency ₹3,999/month; annual billing is 2 months free (Solo ₹4,999/year, Studio ₹9,999/year, Agency ₹39,999/year). <strong>Founding lock:</strong> the first 50 paying Agency customers pay ₹2,999/month (₹29,999/year) for as long as their subscription remains continuously active without lapse, downgrade or plan change. The lock does not survive cancellation and re-subscription or a change of plan. [LAWYER TO CONFIRM: exact lock duration and lapse wording — a vague &quot;locked forever&quot; is a contractual liability.]
+            3.1 <strong>Plans and prices (INR, GST-inclusive).</strong> Solo ₹499/month, Studio ₹999/month, Agency ₹3,999/month; annual billing is 2 months free (Solo ₹4,990/year, Studio ₹9,990/year, Agency ₹39,990/year). <strong>Founding lock:</strong> the first 50 paying Agency customers pay ₹2,999/month (₹29,990/year) for as long as their subscription remains continuously active without lapse, downgrade or plan change. The lock does not survive cancellation and re-subscription or a change of plan. [LAWYER TO CONFIRM: exact lock duration and lapse wording — a vague &quot;locked forever&quot; is a contractual liability.]
           </p>
           <p>
             3.2 Prices shown are GST-inclusive at 18% GST (9% CGST + 9% SGST for Maharashtra buyers; 18% IGST for buyers outside Maharashtra). Every invoice breaks out the taxable value and the GST separately and states the SAC code (998314 — [CA TO CONFIRM: 998314 vs 997331]).

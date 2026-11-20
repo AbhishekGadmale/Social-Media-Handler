@@ -8,7 +8,7 @@
 
 export const ENTERPRISE_DETAILS = {
   name: 'Gadmale Technologies',
-  tradeName: 'Kyosys Agency OS',
+  tradeName: 'Gadmale Technologies',
   state: 'Maharashtra',
   stateCode: '27',
 };
