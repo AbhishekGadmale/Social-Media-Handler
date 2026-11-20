@@ -5969,4 +5969,125 @@ A repository-wide search was performed for strings `'4,999'`, `'9,999'`, `'39,99
    - PR #94 is open against main at reviewed head `81773cbe7924e3b2aa18c14f00a308b0e901a19a` with CI 6/6 green; next step is the docs-fix re-review, then merge by the owner.
    - Do NOT merge on this prompt alone. Live deployment remains STRICT NO-GO.
 
+## 81. Workspace Member Management: Email Invitations, Roles, and Team UI
+
+### 1. Summary & Motivation
+
+- **Status**: implemented on branch `feat/workspace-members`; PR pending against `main` (base `7c05687ad1fd23cf42e1b36e5fd44896341a69e1`)
+- **Scope & Objectives**:
+  - Build workspace member management end-to-end: email invitations, role-based member list, pending invitations list, revoke/resend invitations, member role updates, and member removal.
+  - Build invitation acceptance flow via token link with expiration, email verification, account matching checks, and authentication routing.
+  - Enforce role hierarchies (a manager cannot invite or promote to owner, cannot edit or remove owner), seat limits via `EntitlementsService.assertSeatLimit` (counting current members + live pending invitations + 1), and workspace writable guard (mutations blocked on read-only/expired trial/halted subscription workspaces).
+  - Add dashboard navigation item 'Team' (`UserCheck` icon) under settings linking to `/${workspaceId}/team`.
+  - Maintain audit trail: `MEMBER_INVITED`, `MEMBER_INVITATION_REVOKED`, `MEMBER_INVITATION_RESENT`, `MEMBER_INVITATION_ACCEPTED`, `MEMBER_ROLE_UPDATED`, `MEMBER_REMOVED`.
+- **Out of Scope**:
+  - Leaving a workspace (self-removal) - deferred to user settings or future PR.
+  - Transferring ownership as a dedicated atomic handover flow.
+  - External / guest magic links or public invitation links.
+  - Modifying `PermissionMatrix` ('members.manage' already mapped to `['OWNER', 'MANAGER']`), seat counts, or plan definitions.
+  - Web navigation hiding by role beyond Team page controls.
+
+### 2. Architecture & Implementation Details
+
+#### A. Database Schema & Migration (`packages/database/prisma/schema.prisma`)
+- Added `WorkspaceInvitation` model:
+  - `id`: UUID primary key.
+  - `workspaceId`: FK Workspace (onDelete: Cascade).
+  - `email`: VarChar(255) normalized email.
+  - `role`: `WorkspaceRole` enum (`OWNER`, `MANAGER`, `EDITOR`, `CLIENT_APPROVER`, `VIEWER`).
+  - `invitedByUserId`: FK User (onDelete: Cascade).
+  - `tokenHash`: VarChar(64) unique index (SHA-256 hash of random 32-byte hex token).
+  - `expiresAt`: DateTime (indexed, default 7 days).
+  - `consumedAt`: DateTime? (nullable, set upon acceptance).
+  - `revokedAt`: DateTime? (nullable, set upon revocation or resend).
+  - `createdAt`, `updatedAt`: DateTime.
+  - Indexes: `[workspaceId]`, `[expiresAt]`, unique `[tokenHash]`.
+- Relations:
+  - `Workspace.invitations`: `WorkspaceInvitation[]`
+  - `User.sentInvitations`: `WorkspaceInvitation[]`
+- Migration:
+  - `packages/database/prisma/migrations/20261120000000_add_workspace_invitations/migration.sql` created table and indexes cleanly.
+- Audit Actions:
+  - Added 6 new actions to `AuditLogRepository.ts`: `MEMBER_INVITED`, `MEMBER_INVITATION_REVOKED`, `MEMBER_INVITATION_RESENT`, `MEMBER_INVITATION_ACCEPTED`, `MEMBER_ROLE_UPDATED`, `MEMBER_REMOVED`.
+
+#### B. Email Delivery Service (`apps/api/src/modules/auth/email-delivery.service.ts`)
+- Added `sendWorkspaceInvitationEmail({ email, workspaceName, inviterName, role, inviteUrl })` to:
+  - `EmailDeliveryService` interface.
+  - `MockEmailDeliveryService`: records sent invitation emails in in-memory array for assertions.
+  - `NoopEmailDeliveryService`: safe no-op for testing/dev environments.
+  - `ResendEmailDeliveryService`: sends branded transactional invitation email containing invite URL and role context via Resend SDK.
+- Unit tests added to `email-delivery.service.spec.ts` (all 23/23 tests pass).
+
+#### C. Workspaces Module API (`apps/api/src/modules/workspaces/`)
+- Module structure:
+  - `dto/create-invitation.dto.ts`: `@IsEmail()` with `@Transform` lowercase trim; `@IsEnum(WorkspaceRole)`.
+  - `dto/update-member-role.dto.ts`: `@IsEnum(WorkspaceRole)`.
+  - `dto/accept-invitation.dto.ts`: `@IsString()`, `@IsNotEmpty()`.
+  - `services/workspaces.service.ts`:
+    - `inviteMember`: checks `members.manage` permission and role hierarchy; checks existing membership; checks pending invitation (disallowing duplicates); checks seat limit via `entitlementsService.assertSeatLimit(workspaceId, livePendingCount + 1)`; creates invitation with SHA-256 token hash (7-day expiry); triggers transactional email; logs `MEMBER_INVITED`.
+    - `listMembers`: returns workspace members with user details and roles.
+    - `listInvitations`: returns pending, non-consumed, non-revoked, unexpired invitations with inviter details.
+    - `revokeInvitation`: verifies invitation belongs to workspace and is still pending; sets `revokedAt`; logs `MEMBER_INVITATION_REVOKED`.
+    - `resendInvitation`: revokes old invitation; creates fresh token and invitation with reset 7-day expiry; re-sends invitation email; logs `MEMBER_INVITATION_RESENT`.
+    - `updateMemberRole`: checks actor hierarchy vs target and new role; prevents demoting the last `OWNER`; updates role; logs `MEMBER_ROLE_UPDATED`.
+    - `removeMember`: checks actor hierarchy; prevents removing oneself; prevents removing the last `OWNER`; deletes `WorkspaceMember`; logs `MEMBER_REMOVED`.
+    - `getInvitationInfo`: public endpoint returning `{ email, role, workspaceName, inviterName, isExpired, isConsumed, isRevoked }`.
+    - `acceptInvitation`: verifies token validity; enforces user email matches invitation email; creates `WorkspaceMember`; marks invitation consumed; logs `MEMBER_INVITATION_ACCEPTED`.
+  - `controllers/workspace-members.controller.ts`:
+    - `@Controller('workspaces/:workspaceId/members')` guarded by `AuthGuard`, `WorkspaceGuard`, `PermissionGuard`, and `WorkspaceWritableGuard` on mutations.
+    - Endpoints: `POST /invitations`, `GET /`, `GET /invitations`, `DELETE /invitations/:invitationId`, `POST /invitations/:invitationId/resend`, `PATCH /:memberId/role`, `DELETE /:memberId`.
+  - `controllers/invitations.controller.ts`:
+    - `@Controller('invitations')`
+    - `GET /info?token=...`: public token lookup for accept-invite UI.
+    - `POST /accept`: guarded by `AuthGuard` (session required).
+  - `workspaces.module.ts`: registered in `apps/api/src/app.module.ts`.
+
+#### D. Web Frontend & UI (`apps/web/`)
+- **Dashboard Navigation (`apps/web/src/components/dashboard-shell.tsx`)**:
+  - Added `Team` item with `UserCheck` icon linking to `/${currentWorkspaceId}/team` in secondary nav.
+- **Query Options (`apps/web/src/lib/query/members.ts`)**:
+  - Standardized query definitions for `workspaceMembersQueryOptions(workspaceId)` and `invitationInfoQueryOptions(token)`.
+- **Team Management Page (`apps/web/src/app/[workspaceId]/team/page.tsx`)**:
+  - Displays current members table with user name, email, role badge, joined date.
+  - Member actions: Role selection dropdown (disabled for self, last owner, or for managers editing owners) and Remove button with confirmation modal.
+  - Invite form: Email input, role dropdown with helper text (specifically explaining `Client Approver` can only view and approve posts), submit button with loading state.
+  - Pending invitations list: Displays email, role, sent date, expires date, and Resend / Revoke buttons.
+  - Responsive, accessible, adhering to Tailwind design tokens.
+- **Accept Invite Page (`apps/web/src/app/accept-invite/page.tsx`)**:
+  - Suspense boundary wrapping `useSearchParams()`.
+  - Reads `token` query param and fetches invitation info.
+  - Handles invalid/expired/revoked states with clear feedback and CTA to request a new invite.
+  - Handles unauthenticated users: displays workspace name, inviter, and role preview with Sign In / Sign Up buttons preserving return URL (`/accept-invite?token=...`).
+  - Handles authenticated account mismatch: warns user they are logged in as `user.email` whereas invite is for `invite.email`, providing a "Sign Out & Switch Account" action.
+  - Handles authenticated matching user: prominent "Accept Invitation" CTA calling `POST /invitations/accept` and redirecting directly to `/${workspaceId}/dashboard`.
+
+### 3. Verification & Test Evidence
+
+- **API Workspaces Tests**:
+  - `apps/api/src/modules/workspaces/services/workspaces.service.spec.ts`: **25/25 tests PASS**.
+  - `apps/api/src/modules/workspaces/controllers/workspace-members.controller.spec.ts`: **6/6 tests PASS**.
+  - `apps/api/src/modules/workspaces/controllers/invitations.controller.spec.ts`: **2/2 tests PASS**.
+  - Total Workspaces module tests: **33/33 PASS**.
+- **API Email Delivery Tests**:
+  - `apps/api/src/modules/auth/email-delivery.service.spec.ts`: **23/23 tests PASS**.
+- **Web Unit Tests**:
+  - `apps/web/src/app/[workspaceId]/team/page.spec.tsx`: **3/3 tests PASS**.
+  - `apps/web/src/app/accept-invite/page.spec.tsx`: **5/5 tests PASS**.
+  - Web package full suite: **26/26 test files PASS, 289/289 tests PASS** (previously 24 files, 281 tests; +2 files, +8 tests).
+- **Monorepo Quality Gates**:
+  - `apps/api` typecheck (`tsc --noEmit`): **0 errors**.
+  - `apps/web` typecheck (`tsc --noEmit`): **0 errors**.
+  - `apps/api` ESLint on workspaces module: **0 errors, 0 warnings**.
+  - `apps/web` ESLint on modified web files: **0 errors, 0 warnings**.
+
+### 4. Release Gate & Next Steps
+
+1. **CI Quality Gates**:
+   - To be verified 6/6 green on the PR head.
+2. **Release Gate**:
+   - **Live Deployment**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending external infrastructure provisioning, live email delivery verification, live payment credentials, and disaster recovery rehearsals G18/G19).
+3. **Next Steps**:
+   - PR open against `main`. Do NOT merge on this prompt alone. Live deployment remains STRICT NO-GO.
+
+
 

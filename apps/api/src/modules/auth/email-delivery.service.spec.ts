@@ -190,6 +190,44 @@ describe('EmailDeliveryService (Safety & Environment Controls)', () => {
 
       expect(service.sentApprovalDecisionEmails).toHaveLength(0);
     });
+
+    it('throws error if sendWorkspaceInvitationEmail is called in production', async () => {
+      process.env.NODE_ENV = 'production';
+      const service = new MockEmailDeliveryService();
+
+      await expect(
+        service.sendWorkspaceInvitationEmail('victim@example.com', {
+          workspaceName: 'Acme Agency',
+          role: 'Editor',
+          rawToken: 'token123',
+        }),
+      ).rejects.toThrow(
+        'MockEmailDeliveryService must NEVER be used in production.',
+      );
+
+      expect(service.sentWorkspaceInvitationEmails).toHaveLength(0);
+    });
+
+    it('records simulated workspace invitation email in memory during test/development', async () => {
+      process.env.NODE_ENV = 'test';
+      const service = new MockEmailDeliveryService();
+
+      await service.sendWorkspaceInvitationEmail('invitee@example.com', {
+        workspaceName: 'Acme Agency',
+        role: 'Editor',
+        rawToken: 'token123',
+      });
+
+      expect(service.sentWorkspaceInvitationEmails).toHaveLength(1);
+      expect(service.sentWorkspaceInvitationEmails[0]).toEqual({
+        toEmail: 'invitee@example.com',
+        details: {
+          workspaceName: 'Acme Agency',
+          role: 'Editor',
+          rawToken: 'token123',
+        },
+      });
+    });
   });
 
   describe('NoopEmailDeliveryService', () => {
@@ -218,6 +256,13 @@ describe('EmailDeliveryService (Safety & Environment Controls)', () => {
           'preview',
           'APPROVED',
         ),
+      ).resolves.toBeUndefined();
+      await expect(
+        service.sendWorkspaceInvitationEmail('prod@example.com', {
+          workspaceName: 'Acme',
+          role: 'Editor',
+          rawToken: 'token',
+        }),
       ).resolves.toBeUndefined();
     });
   });
@@ -500,6 +545,43 @@ describe('EmailDeliveryService (Safety & Environment Controls)', () => {
       );
       expect(body.html).toContain(
         'Please replace image with higher resolution',
+      );
+    });
+
+    it('successfully sends workspace invitation email via Resend API', async () => {
+      process.env.RESEND_API_KEY = 'mock-resend-api-key-test';
+      process.env.EMAIL_FROM = 'Test App <auth@example.com>';
+      process.env.FRONTEND_URL = 'https://app.example.com';
+
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        json: async () => ({ id: 'email-resend-invite-id' }),
+      });
+      vi.stubGlobal('fetch', fetchMock);
+
+      const service = new ResendEmailDeliveryService();
+      await service.sendWorkspaceInvitationEmail('newmember@example.com', {
+        workspaceName: 'Rocket Agency',
+        role: 'Client Approver',
+        rawToken: 'raw-invite-token-xyz',
+      });
+
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      const [, options] = fetchMock.mock.calls[0];
+      const body = JSON.parse(options.body);
+      expect(body.to).toEqual(['newmember@example.com']);
+      expect(body.subject).toBe(
+        "You've been invited to join Rocket Agency on Agency OS",
+      );
+      expect(body.text).toContain('Rocket Agency');
+      expect(body.text).toContain('Client Approver');
+      expect(body.text).toContain(
+        'https://app.example.com/accept-invite?token=raw-invite-token-xyz',
+      );
+      expect(body.html).toContain(
+        'https://app.example.com/accept-invite?token=raw-invite-token-xyz',
       );
     });
   });
