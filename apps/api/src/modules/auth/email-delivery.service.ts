@@ -21,6 +21,14 @@ export interface EmailDeliveryService {
     decision: 'APPROVED' | 'CHANGES_REQUESTED',
     comment?: string,
   ): Promise<void>;
+  sendWorkspaceInvitationEmail(
+    toEmail: string,
+    details: {
+      workspaceName: string;
+      role: string;
+      rawToken: string;
+    },
+  ): Promise<void>;
 }
 
 @Injectable()
@@ -46,6 +54,14 @@ export class MockEmailDeliveryService implements EmailDeliveryService {
     contentPreview: string;
     decision: 'APPROVED' | 'CHANGES_REQUESTED';
     comment?: string;
+  }> = [];
+  public sentWorkspaceInvitationEmails: Array<{
+    toEmail: string;
+    details: {
+      workspaceName: string;
+      role: string;
+      rawToken: string;
+    };
   }> = [];
 
   async sendVerificationEmail(
@@ -160,6 +176,26 @@ export class MockEmailDeliveryService implements EmailDeliveryService {
       `[MockEmailDeliveryService] Approval decision (${decision}) email simulated for ${toEmail}`,
     );
   }
+
+  async sendWorkspaceInvitationEmail(
+    toEmail: string,
+    details: {
+      workspaceName: string;
+      role: string;
+      rawToken: string;
+    },
+  ): Promise<void> {
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error(
+        'MockEmailDeliveryService must NEVER be used in production.',
+      );
+    }
+
+    this.sentWorkspaceInvitationEmails.push({ toEmail, details });
+    this.logger.debug(
+      `[MockEmailDeliveryService] Workspace invitation email simulated for ${toEmail} (raw token redacted)`,
+    );
+  }
 }
 
 @Injectable()
@@ -222,6 +258,19 @@ export class NoopEmailDeliveryService implements EmailDeliveryService {
   ): Promise<void> {
     this.logger.warn(
       `[NoopEmailDeliveryService] Approval decision (${decision}) email delivery skipped for ${toEmail}: no email provider configured.`,
+    );
+  }
+
+  async sendWorkspaceInvitationEmail(
+    toEmail: string,
+    _details: {
+      workspaceName: string;
+      role: string;
+      rawToken: string;
+    },
+  ): Promise<void> {
+    this.logger.warn(
+      `[NoopEmailDeliveryService] Workspace invitation email delivery skipped for ${toEmail}: no email provider configured.`,
     );
   }
 }
@@ -541,6 +590,56 @@ export class ResendEmailDeliveryService implements EmailDeliveryService {
 
     this.logger.log(
       `[ResendEmailDeliveryService] Approval decision email successfully sent to ${toEmail}`,
+    );
+  }
+
+  async sendWorkspaceInvitationEmail(
+    toEmail: string,
+    details: {
+      workspaceName: string;
+      role: string;
+      rawToken: string;
+    },
+  ): Promise<void> {
+    if (!this.apiKey) {
+      throw new Error(
+        'Resend API key is not configured (RESEND_API_KEY environment variable missing)',
+      );
+    }
+
+    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+    const acceptUrl = `${frontendUrl}/accept-invite?token=${encodeURIComponent(details.rawToken)}`;
+
+    const text = `You have been invited to join ${details.workspaceName} as ${details.role} on Agency OS.\n\nPlease accept your invitation using this link:\n${acceptUrl}\n\nThis invitation link expires in 7 days.\n`;
+    const html = `<p>You have been invited to join <strong>${details.workspaceName}</strong> as <strong>${details.role}</strong> on Agency OS.</p><p>Please accept your invitation by clicking <a href="${acceptUrl}">here</a>.</p><p>Or paste this link into your browser: ${acceptUrl}</p><p>This invitation link expires in 7 days.</p>`;
+
+    const response = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${this.apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        from: this.fromEmail,
+        to: [toEmail],
+        subject: `You've been invited to join ${details.workspaceName} on Agency OS`,
+        html,
+        text,
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => '');
+      this.logger.error(
+        `[ResendEmailDeliveryService] Failed to send workspace invitation email to ${toEmail}: ${response.status} ${response.statusText} - ${errorText}`,
+      );
+      throw new Error(
+        `Failed to send workspace invitation email via Resend (${response.status})`,
+      );
+    }
+
+    this.logger.log(
+      `[ResendEmailDeliveryService] Workspace invitation email successfully sent to ${toEmail} (raw token redacted)`,
     );
   }
 }

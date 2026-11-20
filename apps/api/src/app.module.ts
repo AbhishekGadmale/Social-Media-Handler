@@ -14,6 +14,7 @@ import { HealthModule } from './modules/health/health.module';
 import { PublishingModule } from './modules/publishing/publishing.module';
 import { MediaModule } from './modules/media/media.module';
 import { BillingModule } from './modules/billing/billing.module';
+import { WorkspacesModule } from './modules/workspaces/workspaces.module';
 
 import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { ThrottlerGuard } from '@nestjs/throttler';
@@ -57,6 +58,7 @@ import { ExecutionMetadataInterceptor } from './modules/core/interceptors/execut
     PublishingModule,
     MediaModule,
     BillingModule,
+    WorkspacesModule,
   ],
   controllers: [AppController],
   providers: [

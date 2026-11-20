@@ -5,7 +5,7 @@ import { authQueries } from '../lib/query/auth';
 import { useParams, useRouter, usePathname } from 'next/navigation';
 import { api, ApiError } from '../lib/api/client';
 import React, { useEffect, useState } from 'react';
-import { Menu, BarChart, Users, LogOut, ChevronDown, Send, CreditCard, Settings } from 'lucide-react';
+import { Menu, BarChart, Users, LogOut, ChevronDown, Send, CreditCard, Settings, UserCheck } from 'lucide-react';
 import Link from 'next/link';
 
 export function DashboardShell({ children }: { children: React.ReactNode }) {
@@ -145,6 +145,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
     { name: 'Overview / Analytics', href: `/${currentWorkspaceId}/analytics`, icon: BarChart },
     { name: 'Accounts', href: `/${currentWorkspaceId}/accounts`, icon: Users },
     { name: 'Publishing', href: `/${currentWorkspaceId}/publishing`, icon: Send },
+    { name: 'Team', href: `/${currentWorkspaceId}/team`, icon: UserCheck },
     { name: 'Billing', href: `/${currentWorkspaceId}/billing`, icon: CreditCard },
     { name: 'Settings', href: `/${currentWorkspaceId}/settings`, icon: Settings },
   ];
