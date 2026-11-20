@@ -21,6 +21,7 @@ describe('Billing Configuration (billing.config)', () => {
   describe('Enterprise Details & Plan Definitions', () => {
     it('defines enterprise details for Gadmale Technologies, Maharashtra', () => {
       expect(ENTERPRISE_DETAILS.name).toBe('Gadmale Technologies');
+      expect(ENTERPRISE_DETAILS.tradeName).toBe('Gadmale Technologies');
       expect(ENTERPRISE_DETAILS.state).toBe('Maharashtra');
       expect(ENTERPRISE_DETAILS.stateCode).toBe('27');
     });

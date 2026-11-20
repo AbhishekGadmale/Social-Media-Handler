@@ -5821,3 +5821,69 @@ A comprehensive sweep of `apps/web/src` for `auth/logout` and sign-out actions w
 3. **Next Steps**:
    - PR #91 is open against main at reviewed head `e84339f66255ff67931d99c01410ed1613415d04`; CI is 6/6 green on the reviewed head; next step is the docs-fix re-review, then merge by the owner.
    - Do NOT merge on this prompt alone. Live deployment remains STRICT NO-GO.
+
+## 79. Correctness Fixes: Terms Annual Prices and Billing Trade Name
+
+### 1. Summary & Motivation
+
+- **Status**: implemented on branch `fix/legal-prices-and-tradename`; pending PR against `main` at base `ac1501c7d74fba0408774d4ec22f32e5ffdcb6ec`
+- **Scope & Objectives**:
+  - Reconcile published Terms of Service annual pricing with canonical `billing.config.ts` plan configurations: annual prices are strictly 10x monthly prices (2 months free).
+  - Align filed enterprise trade name in `ENTERPRISE_DETAILS` to `'Gadmale Technologies'`.
+- **Out of Scope**:
+  - Any other legal-text changes (placeholders like court city, domain, hosting region remain intact).
+  - Price or plan changes in `billing.config.ts` (canonical config was already correct).
+  - Landing-page copy (deferred to separate follow-up PR).
+
+### 2. Changes & File Modifications
+
+#### A. Terms Annual Prices Alignment (Fix 1)
+- **`apps/web/src/content/legal/terms.md`** (§3.1):
+  - Updated annual figures from `Solo ₹4,999/year, Studio ₹9,999/year, Agency ₹39,999/year` and `(₹29,999/year)` to `Solo ₹4,990/year, Studio ₹9,990/year, Agency ₹39,990/year` and `(₹29,990/year)`.
+  - Sentence structure, monthly rates (`Solo ₹499/month, Studio ₹999/month, Agency ₹3,999/month`, founding lock `₹2,999/month`), and all other legal text kept strictly identical.
+- **`apps/web/src/app/terms/page.tsx`** (§3.1):
+  - Updated JSX rendering of §3.1 with exact identical figures: `Solo ₹4,990/year, Studio ₹9,990/year, Agency ₹39,990/year` and `(₹29,990/year)`.
+
+#### B. Repo-wide Sweep for Price Strings & Dispositions
+A repository-wide search was performed for strings `'4,999'`, `'9,999'`, `'39,999'`, `'29,999'` and raw sequences `'4999'`, `'9999'`, `'39999'`, `'29999'`:
+- `apps/web/src/content/legal/terms.md:34`: **Fixed** — Terms markdown text corrected to config values (`₹4,990`, `₹9,990`, `₹39,990`, `₹29,990`).
+- `apps/web/src/app/terms/page.tsx:65`: **Fixed** — Terms page JSX text corrected to config values (`₹4,990`, `₹9,990`, `₹39,990`, `₹29,990`).
+- `IMPLEMENTATION_STATUS.md:4424`: **Left alone** — Historical audit note in §61 documenting the previously unresolved discrepancy between legal terms and billing code.
+- `apps/api/src/modules/publishing/domain/PublishabilityValidator.spec.ts`: **Left alone** — Contains `byteSize: 999999999`; video byte-size limit test fixture, not a price.
+- `packages/providers/youtube/youtube.provider.spec.ts`: **Left alone** — Contains `categoryId: '99999'`; invalid YouTube category ID test fixture, not a price.
+
+#### C. Enterprise Trade Name Correction (Fix 2)
+- **`apps/api/src/modules/billing/billing.config.ts`**:
+  - Changed `ENTERPRISE_DETAILS.tradeName` from `'Kyosys Agency OS'` to `'Gadmale Technologies'` (filed trade name).
+  - All other fields (`name`, `state`, `stateCode`) remain unchanged.
+- **Consumer Audit for `tradeName` across Repo**:
+  - Codebase search for `tradeName` confirmed **0 consumer references** reading `ENTERPRISE_DETAILS.tradeName`.
+  - `apps/api/src/modules/billing/pdf-invoice.service.ts` was audited and verified to consume only `ENTERPRISE_DETAILS.name` (line 66) and `ENTERPRISE_DETAILS.state`/`stateCode` (line 69).
+
+#### D. Tests & Assertions
+- **`apps/api/src/modules/billing/billing.config.spec.ts`**:
+  - Added assertion `expect(ENTERPRISE_DETAILS.tradeName).toBe('Gadmale Technologies');` to the enterprise details test block.
+- **`apps/web/src/app/terms/page.spec.tsx`**:
+  - Added test case asserting the presence of `Solo ₹4,990/year`, `Studio ₹9,990/year`, `Agency ₹39,990/year`, and `₹29,990/year`.
+
+### 3. Verification & Test Evidence
+
+- **Billing Tests (`apps/api`)**:
+  - `apps/api/src/modules/billing/billing.config.spec.ts`: **15/15 tests PASS** (including `tradeName` assertion).
+  - All billing suites: **8/8 test files PASS, 93/93 tests PASS**.
+- **Web Tests (`apps/web`)**:
+  - `apps/web/src/app/terms/page.spec.tsx`: **4/4 tests PASS** (+1 new test).
+  - All web suites: **24/24 test files PASS, 278/278 tests PASS**.
+- **Monorepo Quality Gates**:
+  - `apps/api` typecheck (`tsc --noEmit`): **0 errors**.
+  - `apps/web` lint (`eslint`): **0 errors**.
+
+### 4. Release Gate & Next Steps
+
+1. **Release Gate**:
+   - **Live Deployment**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending external infrastructure provisioning, live email delivery verification, live payment credentials, and disaster recovery rehearsals G18/G19).
+2. **Next Steps**:
+   - Open Pull Request against `main`.
+   - Monitor GitHub Actions CI until 6/6 green.
+   - Do NOT merge on this prompt alone. Live deployment remains STRICT NO-GO.
+

@@ -26,4 +26,13 @@ describe('TermsPage', () => {
 
     expect(screen.getAllByText(/7 days/i).length).toBeGreaterThan(0);
   });
+
+  it('contains the correct annual subscription prices matching billing config', () => {
+    render(<TermsPage />);
+
+    expect(screen.getByText(/Solo ₹4,990\/year/i)).toBeInTheDocument();
+    expect(screen.getByText(/Studio ₹9,990\/year/i)).toBeInTheDocument();
+    expect(screen.getByText(/Agency ₹39,990\/year/i)).toBeInTheDocument();
+    expect(screen.getByText(/₹29,990\/year/i)).toBeInTheDocument();
+  });
 });
