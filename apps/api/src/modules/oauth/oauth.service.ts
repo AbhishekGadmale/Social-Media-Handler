@@ -227,6 +227,31 @@ export class OAuthService {
     }
 
     try {
+      // Check social account limit for genuinely new profiles (all-or-nothing)
+      let newCount = 0;
+      for (const entry of selectedProfiles) {
+        const p = entry.profile;
+        const profileProvider = p.provider
+          ? (p.provider.toUpperCase() as SocialProvider)
+          : session.provider;
+
+        const existing =
+          await this.socialAccountRepo.findByProviderAndExternalId(
+            profileProvider,
+            p.id,
+          );
+        if (!existing) {
+          newCount++;
+        }
+      }
+
+      if (newCount > 0) {
+        await this.entitlementsService.assertSocialAccountLimit(
+          workspaceId,
+          newCount,
+        );
+      }
+
       const results = await this.socialAccountRepo.upsertManyWithConnection(
         workspaceId,
         accountsToUpsert,
@@ -362,6 +387,15 @@ export class OAuthService {
     let encRefresh = null;
     if (credentials.refreshToken) {
       encRefresh = encrypt(credentials.refreshToken);
+    }
+
+    // Check social account limit ONLY for new accounts
+    const existing = await this.socialAccountRepo.findByProviderAndExternalId(
+      validProviderEnum,
+      profile.id,
+    );
+    if (!existing) {
+      await this.entitlementsService.assertSocialAccountLimit(workspaceId, 1);
     }
 
     // Save to DB

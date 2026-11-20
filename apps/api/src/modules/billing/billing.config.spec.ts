@@ -32,6 +32,7 @@ describe('Billing Configuration (billing.config)', () => {
         monthlyPricePaise: 49900,
         annualPricePaise: 499000,
         seats: 1,
+        socialAccountLimit: 5,
         isFounding: false,
       });
 
@@ -41,6 +42,7 @@ describe('Billing Configuration (billing.config)', () => {
         monthlyPricePaise: 99900,
         annualPricePaise: 999000,
         seats: 3,
+        socialAccountLimit: 15,
         isFounding: false,
       });
 
@@ -50,6 +52,7 @@ describe('Billing Configuration (billing.config)', () => {
         monthlyPricePaise: 399900,
         annualPricePaise: 3999000,
         seats: 10,
+        socialAccountLimit: 30,
         isFounding: false,
       });
 
@@ -59,6 +62,7 @@ describe('Billing Configuration (billing.config)', () => {
         monthlyPricePaise: 299900,
         annualPricePaise: 2999000,
         seats: 10,
+        socialAccountLimit: 30,
         isFounding: true,
       });
     });

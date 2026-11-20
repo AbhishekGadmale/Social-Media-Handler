@@ -5739,3 +5739,85 @@ A comprehensive sweep of `apps/web/src` for `auth/logout` and sign-out actions w
 3. **Next Steps**:
    - PR #90 is open against main at reviewed head `2c4709ee1dbfebdafcfe8f4760d7e80cb8556cce`; CI is 6/6 green on the reviewed head; next step is the docs-fix re-review, then merge by the owner.
    - Do NOT merge on this prompt alone. Live deployment remains STRICT NO-GO.
+
+---
+
+## 78. Per-Plan Social Account Caps & Enforced Entitlements
+
+### 1. Summary & Motivation
+
+- **Status**: implemented on branch `feat/plan-social-account-caps`; PR #91 open against `main` at reviewed head `e84339f66255ff67931d99c01410ed1613415d04`
+- **Scope & Objectives**:
+  - Enforce per-plan limits on connected social accounts across Agency OS subscriptions.
+  - Canonical plan configuration in `billing.config.ts` (`PLANS`) defines limits:
+    - **SOLO**: 5 social accounts
+    - **STUDIO**: 15 social accounts
+    - **AGENCY**: 30 social accounts
+    - **AGENCY_FOUNDING**: 30 social accounts
+  - `WorkspaceEntitlements` in `EntitlementsService` exposes `socialAccountLimit: number`, populated across all workspace states (trials and unmetered/test defaults receive full Agency entitlements of 30 accounts; unknown/custom plan codes conservatively fall back to 30).
+  - Enforce cap via `EntitlementsService.assertSocialAccountLimit(workspaceId, additionalAccounts = 1)`, counting `prisma.socialAccount.count({ where: { workspaceId } })` across all statuses (disconnected accounts retain their slot; only genuinely new accounts consume new slots).
+  - Gate OAuth connections in `OAuthService` at both creation entrypoints:
+    1. Direct single-profile callback path (`handleOAuthCallback`): if the account is new for `(provider, externalId)`, assert limit before `upsertWithConnection`. Existing accounts/reconnects/scope-upgrades bypass the check.
+    2. Multi-profile discovery selection path (`processDiscoverySelection`): count genuinely new profiles selected; if `newCount > 0`, assert limit for `newCount` before creating accounts (all-or-nothing semantics: if the selection exceeds the cap, zero accounts are created).
+- **Known v1 Limitation**:
+  - On the single-profile callback path (`GET /v1/oauth/:provider/callback`), a cap rejection (`ForbiddenException`) is caught by the existing controller error handler and redirected to `${frontendUrl}/dashboard?error=oauth_failed`.
+  - On the discovery selection path (`POST /v1/workspaces/:workspaceId/oauth/discoveries/:discoveryId/select`), the `ForbiddenException` propagates directly to the client as an HTTP 403 with the detailed limit message.
+
+### 2. Technical Architecture & Modifications
+
+#### A. Billing & Entitlements (`apps/api`)
+- **Plan Configuration (`apps/api/src/modules/billing/billing.config.ts`)**:
+  - Added `socialAccountLimit: number` to `PlanConfig` interface.
+  - Defined limits: SOLO (5), STUDIO (15), AGENCY (30), AGENCY_FOUNDING (30).
+- **Entitlements Service (`apps/api/src/modules/billing/entitlements.service.ts`)**:
+  - Added `socialAccountLimit: number` to `WorkspaceEntitlements` interface.
+  - Implemented `resolveSocialAccountLimit(planCode)` helper and populated `socialAccountLimit` in every return branch of `getWorkspaceEntitlements` (paid plans, active trials, expired trials, and fallback unmetered state).
+  - Added `assertSocialAccountLimit(workspaceId: string, additionalAccounts = 1): Promise<void>` mirroring `assertSeatLimit`:
+    - Queries total account count: `prisma.socialAccount.count({ where: { workspaceId } })`.
+    - Throws `ForbiddenException`: `Social account limit exceeded for ${entitlements.planCode}. Current accounts: ${count}, max allowed: ${entitlements.socialAccountLimit}. Please upgrade your plan.`
+
+#### B. Database Layer (`packages/database`)
+- **Social Account Repository (`packages/database/src/repositories/SocialAccountRepository.ts`)**:
+  - Added `findByProviderAndExternalId(provider: SocialProvider, externalId: string): Promise<SocialAccount | null>` using compound unique key `provider_externalId: { provider, externalId }`, matching the upsert lookup pattern without adding a second query pattern.
+
+#### C. OAuth Service (`apps/api`)
+- **OAuth Account Creation Gating (`apps/api/src/modules/oauth/oauth.service.ts`)**:
+  - `handleOAuthCallback`: looks up existing account via `socialAccountRepo.findByProviderAndExternalId(validProviderEnum, profile.id)`. If absent, calls `entitlementsService.assertSocialAccountLimit(workspaceId, 1)` prior to `upsertWithConnection`.
+  - `processDiscoverySelection`: counts new profiles among `selectedProfiles` by querying `findByProviderAndExternalId`. If `newCount > 0`, calls `entitlementsService.assertSocialAccountLimit(workspaceId, newCount)` before batch upsert.
+
+### 3. Verification & Test Evidence
+
+- **Billing Config Tests (`apps/api/src/modules/billing/billing.config.spec.ts`)**:
+  - 1/1 test file PASS, **15/15 tests PASS** (verified `socialAccountLimit` assertions on all 4 plan definitions).
+- **Entitlements Service Tests (`apps/api/src/modules/billing/entitlements.service.spec.ts`)**:
+  - 1/1 test file PASS, **15/15 tests PASS** (+6 new tests, previously 9/9):
+    - `socialAccountLimit resolves 5/15/30/30 for SOLO/STUDIO/AGENCY/AGENCY_FOUNDING subscriptions`.
+    - `resolves 30 for trial and expired-trial workspaces`.
+    - `assertSocialAccountLimit passes under the cap`.
+    - `assertSocialAccountLimit passes when count + additional == limit`.
+    - `assertSocialAccountLimit throws the exact message at limit + 1`.
+    - `assertSocialAccountLimit honors additionalAccounts > 1`.
+- **OAuth Service Tests (`apps/api/src/modules/oauth/oauth.service.spec.ts`)**:
+  - 1/1 test file PASS, **18/18 tests PASS** (+4 new tests, previously 14/14):
+    - `new account at cap -> ForbiddenException and upsertWithConnection NOT called`.
+    - `existing account at cap -> connect succeeds with no assertion failure`.
+    - `discovery selection of 2 new profiles at cap - 1 -> throws and creates none`.
+    - `discovery selection mixing 1 existing + 1 new under the cap -> succeeds`.
+- **OAuth Controller Tests (`apps/api/src/modules/oauth/oauth.controller.spec.ts`)**:
+  - 1/1 test file PASS, **20/20 tests PASS**.
+- **Monorepo Quality Gates**:
+  - `pnpm turbo run typecheck`: **10/10 tasks successful** (0 errors).
+  - `pnpm turbo run lint`: **9/9 packages successful** (0 errors).
+  - `pnpm turbo run build`: **7/7 tasks successful** (0 errors).
+- **E2E Testing Note**:
+  - No new E2E tests were added in this PR: OAuth callbacks require live external social provider mocking (OAuth consent redirects and token exchange endpoints) which does not exist in the current synthetic E2E test suites. Full end-to-end coverage is verified via unit and service integration tests.
+
+### 4. Release Gate & Next Steps
+
+1. **CI Quality Gates**:
+   - CI on the reviewed head `e84339f` is 6/6 green (all 2026-11-19): GitGuardian Security Checks 15:39:49Z, Application Builds 15:40:45Z, Tests 15:41:15Z, Code Quality (Lint & Typecheck) 15:41:23Z, API E2E Tests 15:41:38Z, Docker Build & Smoke Test 15:48:25Z. Note: CI re-runs on the docs-fix head and must be re-verified 6/6 green there before merge.
+2. **Release Gate**:
+   - **Live Deployment**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending external infrastructure provisioning, live email delivery verification, live payment credentials, and disaster recovery rehearsals G18/G19).
+3. **Next Steps**:
+   - PR #91 is open against main at reviewed head `e84339f66255ff67931d99c01410ed1613415d04`; CI is 6/6 green on the reviewed head; next step is the docs-fix re-review, then merge by the owner.
+   - Do NOT merge on this prompt alone. Live deployment remains STRICT NO-GO.

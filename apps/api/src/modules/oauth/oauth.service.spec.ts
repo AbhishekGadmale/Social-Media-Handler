@@ -40,14 +40,27 @@ describe('OAuthService', () => {
       del: vi.fn((key) => {
         delete store[key];
       }),
+      eval: vi.fn((script, numkeys, key, expected) => {
+        if (store[key] === expected) {
+          delete store[key];
+          return 1;
+        }
+        return 0;
+      }),
     };
 
     // Repo mock
     const mockUpsertWithConnection = vi
       .fn()
       .mockResolvedValue({ account: { id: 'account-123' }, isNew: true });
+    const mockUpsertManyWithConnection = vi
+      .fn()
+      .mockResolvedValue([{ account: { id: 'account-123' }, isNew: true }]);
+    const mockFindByProviderAndExternalId = vi.fn().mockResolvedValue(null);
     mockPrisma = {
       upsertWithConnection: mockUpsertWithConnection,
+      upsertManyWithConnection: mockUpsertManyWithConnection,
+      findByProviderAndExternalId: mockFindByProviderAndExternalId,
     };
 
     // Queue mock
@@ -57,6 +70,7 @@ describe('OAuthService', () => {
 
     mockEntitlementsService = {
       assertWorkspaceWritable: vi.fn().mockResolvedValue(undefined),
+      assertSocialAccountLimit: vi.fn().mockResolvedValue(undefined),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -577,6 +591,220 @@ describe('OAuthService', () => {
 
       exchangeSpy.mockRestore();
       profilesSpy.mockRestore();
+    });
+  });
+
+  describe('Social Account Limit Enforcement (Cap Checks)', () => {
+    const userId = 'b0e4c6c0-6f0a-47b8-80e9-74f4b4c730e2';
+    const workspaceId = 'f3e098a0-2f94-4d89-9e8c-5a9d82136e09';
+
+    it('new account at cap -> ForbiddenException and upsertWithConnection NOT called', async () => {
+      const url = await service.generateAuthUrl(
+        SocialProvider.LINKEDIN,
+        userId,
+        workspaceId,
+        'http://localhost/callback',
+      );
+      const parsedUrl = new URL(url);
+      const state = parsedUrl.searchParams.get('state')!;
+
+      const provider = providerRegistry.get('linkedin');
+      const exchangeSpy = vi
+        .spyOn(provider!, 'exchangeAuthorizationCode')
+        .mockResolvedValue({
+          accessToken: 'mock-access-token',
+          refreshToken: 'mock-refresh-token',
+          expiresIn: 3600,
+        } as any);
+
+      const profilesSpy = vi.spyOn(provider!, 'getProfiles').mockResolvedValue([
+        {
+          profile: {
+            id: 'new-profile-1',
+            name: 'New Profile',
+            provider: SocialProvider.LINKEDIN,
+          },
+        },
+      ]);
+
+      mockPrisma.findByProviderAndExternalId.mockResolvedValue(null); // New account
+      mockEntitlementsService.assertSocialAccountLimit.mockRejectedValue(
+        new ForbiddenException(
+          'Social account limit exceeded for SOLO. Current accounts: 5, max allowed: 5. Please upgrade your plan.',
+        ),
+      );
+
+      await expect(
+        service.handleOAuthCallback(
+          SocialProvider.LINKEDIN,
+          userId,
+          state,
+          'auth-code-123',
+          'http://localhost/callback',
+        ),
+      ).rejects.toThrow(ForbiddenException);
+
+      expect(
+        mockEntitlementsService.assertSocialAccountLimit,
+      ).toHaveBeenCalledWith(workspaceId, 1);
+      expect(mockPrisma.upsertWithConnection).not.toHaveBeenCalled();
+
+      exchangeSpy.mockRestore();
+      profilesSpy.mockRestore();
+    });
+
+    it('existing account at cap -> connect succeeds with no assertion failure', async () => {
+      const url = await service.generateAuthUrl(
+        SocialProvider.LINKEDIN,
+        userId,
+        workspaceId,
+        'http://localhost/callback',
+      );
+      const parsedUrl = new URL(url);
+      const state = parsedUrl.searchParams.get('state')!;
+
+      const provider = providerRegistry.get('linkedin');
+      const exchangeSpy = vi
+        .spyOn(provider!, 'exchangeAuthorizationCode')
+        .mockResolvedValue({
+          accessToken: 'mock-access-token',
+          refreshToken: 'mock-refresh-token',
+          expiresIn: 3600,
+        } as any);
+
+      const profilesSpy = vi.spyOn(provider!, 'getProfiles').mockResolvedValue([
+        {
+          profile: {
+            id: 'existing-profile-1',
+            name: 'Existing Profile',
+            provider: SocialProvider.LINKEDIN,
+          },
+        },
+      ]);
+
+      mockPrisma.findByProviderAndExternalId.mockResolvedValue({
+        id: 'acc-existing-1',
+        provider: SocialProvider.LINKEDIN,
+        externalId: 'existing-profile-1',
+      }); // Existing account
+      mockEntitlementsService.assertSocialAccountLimit.mockRejectedValue(
+        new Error(
+          'assertSocialAccountLimit should not be called for existing accounts',
+        ),
+      );
+
+      const result = await service.handleOAuthCallback(
+        SocialProvider.LINKEDIN,
+        userId,
+        state,
+        'auth-code-123',
+        'http://localhost/callback',
+      );
+
+      expect(result).toBeDefined();
+      expect(
+        mockEntitlementsService.assertSocialAccountLimit,
+      ).not.toHaveBeenCalled();
+      expect(mockPrisma.upsertWithConnection).toHaveBeenCalled();
+
+      exchangeSpy.mockRestore();
+      profilesSpy.mockRestore();
+    });
+
+    it('discovery selection of 2 new profiles at cap - 1 -> throws and creates none', async () => {
+      const discoveryId = 'disc-123';
+      const session = {
+        discoveryId,
+        workspaceId,
+        userId,
+        provider: SocialProvider.LINKEDIN,
+        sharedCredentials: {
+          accessToken: 'tok-1',
+          refreshToken: 'ref-1',
+          expiresAt: new Date(Date.now() + 3600000),
+          scopes: ['w_member_social'],
+        },
+        profiles: [
+          { profile: { id: 'p1', name: 'Profile 1' } },
+          { profile: { id: 'p2', name: 'Profile 2' } },
+        ],
+        createdAt: Date.now(),
+      };
+
+      await service.storeDiscovery(session);
+
+      // Both profiles are new
+      mockPrisma.findByProviderAndExternalId.mockResolvedValue(null);
+      mockEntitlementsService.assertSocialAccountLimit.mockRejectedValue(
+        new ForbiddenException(
+          'Social account limit exceeded for SOLO. Current accounts: 4, max allowed: 5. Please upgrade your plan.',
+        ),
+      );
+
+      await expect(
+        service.processDiscoverySelection(discoveryId, workspaceId, userId, [
+          'p1',
+          'p2',
+        ]),
+      ).rejects.toThrow(ForbiddenException);
+
+      expect(
+        mockEntitlementsService.assertSocialAccountLimit,
+      ).toHaveBeenCalledWith(workspaceId, 2);
+      expect(mockPrisma.upsertManyWithConnection).not.toHaveBeenCalled();
+    });
+
+    it('discovery selection mixing 1 existing + 1 new under the cap -> succeeds', async () => {
+      const discoveryId = 'disc-456';
+      const session = {
+        discoveryId,
+        workspaceId,
+        userId,
+        provider: SocialProvider.LINKEDIN,
+        sharedCredentials: {
+          accessToken: 'tok-1',
+          refreshToken: 'ref-1',
+          expiresAt: new Date(Date.now() + 3600000),
+          scopes: ['w_member_social'],
+        },
+        profiles: [
+          { profile: { id: 'p1', name: 'Profile 1' } },
+          { profile: { id: 'p2', name: 'Profile 2' } },
+        ],
+        createdAt: Date.now(),
+      };
+
+      await service.storeDiscovery(session);
+
+      // p1 is existing, p2 is new
+      mockPrisma.findByProviderAndExternalId.mockImplementation(
+        async (_provider: any, externalId: string) => {
+          if (externalId === 'p1') {
+            return { id: 'existing-p1', externalId: 'p1' };
+          }
+          return null;
+        },
+      );
+      mockPrisma.upsertManyWithConnection.mockResolvedValue([
+        { account: { id: 'acc-p1' }, isNew: false },
+        { account: { id: 'acc-p2' }, isNew: true },
+      ]);
+
+      const result = await service.processDiscoverySelection(
+        discoveryId,
+        workspaceId,
+        userId,
+        ['p1', 'p2'],
+      );
+
+      expect(result).toHaveLength(2);
+      expect(
+        mockEntitlementsService.assertSocialAccountLimit,
+      ).toHaveBeenCalledWith(workspaceId, 1);
+      expect(mockPrisma.upsertManyWithConnection).toHaveBeenCalledWith(
+        workspaceId,
+        expect.any(Array),
+      );
     });
   });
 });
