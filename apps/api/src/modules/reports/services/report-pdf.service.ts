@@ -160,19 +160,44 @@ export class ReportPdfService {
           engagement: 470,
         };
 
-        const headerRowY = tableY + 20;
-        doc.rect(40, headerRowY, 515, 22).fill('#F3F4F6');
+        const renderTableHeader = (headerY: number) => {
+          doc.rect(40, headerY, 515, 22).fill('#F3F4F6');
 
-        doc
-          .fillColor('#374151')
-          .fontSize(8.5)
-          .font('Helvetica-Bold')
-          .text('Account', colX.account + 6, headerRowY + 6)
-          .text('Provider', colX.provider, headerRowY + 6)
-          .text('Posts', colX.posts, headerRowY + 6)
-          .text('Followers (start -> end)', colX.followers, headerRowY + 6)
-          .text('Growth', colX.growth, headerRowY + 6)
-          .text('Engagement', colX.engagement, headerRowY + 6);
+          doc
+            .fillColor('#374151')
+            .fontSize(8.5)
+            .font('Helvetica-Bold')
+            .text('Account', colX.account + 6, headerY + 6)
+            .text('Provider', colX.provider, headerY + 6)
+            .text('Posts', colX.posts, headerY + 6)
+            .text('Followers (start -> end)', colX.followers, headerY + 6)
+            .text('Growth', colX.growth, headerY + 6)
+            .text('Engagement', colX.engagement, headerY + 6);
+        };
+
+        const footerText = data.branding.whiteLabeled
+          ? data.branding.displayName
+          : `${data.branding.displayName} • Generated with Agency OS`;
+
+        const renderFooter = () => {
+          const footerY = doc.page.height - 35;
+          doc
+            .moveTo(40, footerY - 10)
+            .lineTo(555, footerY - 10)
+            .stroke('#E5E7EB');
+
+          doc
+            .fillColor('#9CA3AF')
+            .fontSize(8.5)
+            .font('Helvetica')
+            .text(footerText, 40, footerY, {
+              width: 515,
+              align: 'center',
+            });
+        };
+
+        const headerRowY = tableY + 20;
+        renderTableHeader(headerRowY);
 
         let currentRowY = headerRowY + 22;
 
@@ -184,6 +209,13 @@ export class ReportPdfService {
             .text('No accounts connected to workspace.', 46, currentRowY + 8);
         } else {
           for (const account of data.accounts) {
+            if (currentRowY + 24 > doc.page.height - 55) {
+              renderFooter();
+              doc.addPage();
+              renderTableHeader(40);
+              currentRowY = 40 + 22;
+            }
+
             doc.rect(40, currentRowY, 515, 24).stroke('#E5E7EB');
 
             const followersStr = account.hasMetrics
@@ -218,25 +250,8 @@ export class ReportPdfService {
           }
         }
 
-        // 5. Footer
-        const footerY = pageHeight - 35;
-        doc
-          .moveTo(40, footerY - 10)
-          .lineTo(555, footerY - 10)
-          .stroke('#E5E7EB');
-
-        const footerText = data.branding.whiteLabeled
-          ? data.branding.displayName
-          : `${data.branding.displayName} • Generated with Agency OS`;
-
-        doc
-          .fillColor('#9CA3AF')
-          .fontSize(8.5)
-          .font('Helvetica')
-          .text(footerText, 40, footerY, {
-            width: 515,
-            align: 'center',
-          });
+        // 5. Footer on final page
+        renderFooter();
 
         doc.end();
       } catch (err) {

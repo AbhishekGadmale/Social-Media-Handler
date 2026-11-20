@@ -5521,7 +5521,7 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
     - `PUT /branding`: 403 for EDITOR (requires `branding.manage`), 400 for invalid hex color, 400 for invalid logo URL, 200 for OWNER with full custom fields, 200 on empty strings clearing fields to null.
     - `GET /client-report`: 401 unauthenticated, 403 for VIEWER (requires `reports.generate`), 400 on missing or invalid dates, 400 on `from > to`, 200 generating valid PDF buffer starting with `%PDF` with attachment header and audit log entry, 200 with `socialAccountId` filter, 404 for non-existent account.
 - **Web Unit Tests (`apps/web`)**:
-  - 24/24 test files PASS, 263/263 tests PASS.
+  - 24/24 test files PASS, 268/268 tests PASS.
   - `apps/web/src/app/[workspaceId]/analytics/page.spec.tsx`: 14/14 tests PASS (+3 new tests).
   - `apps/web/src/app/[workspaceId]/settings/page.spec.tsx`: 17/17 tests PASS (+5 new tests).
 - **Monorepo Quality Gates**:
