@@ -173,4 +173,43 @@ describe('ReportPdfService', () => {
 
     expect(pdfText).toContain('No accounts connected to workspace.');
   });
+
+  it('paginates and repeats table header across pages when accounts exceed 25 without losing rows', async () => {
+    const manyAccounts = Array.from({ length: 30 }, (_, i) => ({
+      id: `acc-${i + 1}`,
+      name: `Client Account ${i + 1}`,
+      provider: 'INSTAGRAM',
+      hasMetrics: true,
+      postsPublished: i + 1,
+      followersStart: 1000 + i * 10,
+      followersEnd: 1100 + i * 10,
+      followerGrowth: 100,
+      engagementTotal: 500 + i * 5,
+    }));
+
+    const paginatedReportData: ReportData = {
+      ...baseReportData,
+      accounts: manyAccounts,
+    };
+
+    const pdf = await service.renderClientReportPdf(paginatedReportData);
+    expect(pdf).toBeInstanceOf(Buffer);
+
+    const rawStr = pdf.toString('latin1');
+    const pageMatches = rawStr.match(/\/Type\s*\/Page\b/g);
+    expect(pageMatches).not.toBeNull();
+    expect(pageMatches!.length).toBeGreaterThanOrEqual(2);
+
+    const pdfText = extractTextFromPdf(pdf);
+
+    // Every single row is preserved across pages
+    for (let i = 1; i <= 30; i++) {
+      expect(pdfText).toContain(`Client Account ${i}`);
+    }
+
+    // Table header is repeated on each page
+    const headerMatches = pdfText.match(/Followers \(start -> end\)/g);
+    expect(headerMatches).not.toBeNull();
+    expect(headerMatches!.length).toBeGreaterThanOrEqual(2);
+  });
 });
