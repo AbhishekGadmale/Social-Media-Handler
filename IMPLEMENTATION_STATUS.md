@@ -5892,7 +5892,7 @@ A repository-wide search was performed for strings `'4,999'`, `'9,999'`, `'39,99
 
 ### 1. Summary & Motivation
 
-- **Status**: implemented on branch `feat/landing-page-refresh`; pending PR against `main` at base `452f3edd0c2db07c12a387b6f3a8e74f1a8f4b56`
+- **Status**: implemented on branch `feat/landing-page-refresh`; PR #94 open against `main` at reviewed head `81773cbe7924e3b2aa18c14f00a308b0e901a19a`
 - **Scope & Objectives**:
   - Refresh the public landing page (`/`) to showcase recently shipped capabilities (PRs #87, #88, #89, #91) with 100% factual accuracy.
   - Feature additions: added 'Client approvals' and 'White-label reports' feature cards (ungated across plans), added plan social account allowances (Solo 5, Studio 15, Agency 30), and added two factual FAQ entries for approvals and custom branded reports.
@@ -5961,11 +5961,12 @@ A repository-wide search was performed for strings `'4,999'`, `'9,999'`, `'39,99
 
 ### 4. Release Gate & Next Steps
 
-1. **Release Gate**:
+1. **CI Quality Gates**:
+   - CI on reviewed head `81773cbe` is 6/6 green (all 2026-11-20): GitGuardian Security Checks 14:38:47Z, Application Builds 14:39:52Z, Tests 14:40:18Z, Code Quality (Lint & Typecheck) 14:40:25Z, API E2E Tests 14:40:29Z, Docker Build & Smoke Test 14:47:19Z. Note: CI re-runs on the docs-fix head and must be re-verified 6/6 green there before merge.
+2. **Release Gate**:
    - **Live Deployment**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending external infrastructure provisioning, live email delivery verification, live payment credentials, and disaster recovery rehearsals G18/G19).
-2. **Next Steps**:
-   - Open Pull Request against `main`.
-   - Monitor GitHub Actions CI until 6/6 green.
+3. **Next Steps**:
+   - PR #94 is open against main at reviewed head `81773cbe7924e3b2aa18c14f00a308b0e901a19a` with CI 6/6 green; next step is the docs-fix re-review, then merge by the owner.
    - Do NOT merge on this prompt alone. Live deployment remains STRICT NO-GO.
 
 
