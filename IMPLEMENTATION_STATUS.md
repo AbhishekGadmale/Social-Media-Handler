@@ -5826,7 +5826,7 @@ A comprehensive sweep of `apps/web/src` for `auth/logout` and sign-out actions w
 
 ### 1. Summary & Motivation
 
-- **Status**: implemented on branch `fix/legal-prices-and-tradename`; pending PR against `main` at base `ac1501c7d74fba0408774d4ec22f32e5ffdcb6ec`
+- **Status**: implemented on branch `fix/legal-prices-and-tradename`; PR #93 open against `main` at reviewed head `91134ca2a0f992b3d38fa946a91a7a4fed11581a`
 - **Scope & Objectives**:
   - Reconcile published Terms of Service annual pricing with canonical `billing.config.ts` plan configurations: annual prices are strictly 10x monthly prices (2 months free).
   - Align filed enterprise trade name in `ENTERPRISE_DETAILS` to `'Gadmale Technologies'`.
@@ -5858,7 +5858,7 @@ A repository-wide search was performed for strings `'4,999'`, `'9,999'`, `'39,99
   - All other fields (`name`, `state`, `stateCode`) remain unchanged.
 - **Consumer Audit for `tradeName` across Repo**:
   - Codebase search for `tradeName` confirmed **0 consumer references** reading `ENTERPRISE_DETAILS.tradeName`.
-  - `apps/api/src/modules/billing/pdf-invoice.service.ts` was audited and verified to consume only `ENTERPRISE_DETAILS.name` (line 66) and `ENTERPRISE_DETAILS.state`/`stateCode` (line 69).
+  - `apps/api/src/modules/billing/pdf-invoice.service.ts` was audited and verified to consume only `ENTERPRISE_DETAILS.name` (line 135) and `ENTERPRISE_DETAILS.state`/`stateCode` (line 138), with import at line 3.
 
 #### D. Tests & Assertions
 - **`apps/api/src/modules/billing/billing.config.spec.ts`**:
@@ -5880,10 +5880,11 @@ A repository-wide search was performed for strings `'4,999'`, `'9,999'`, `'39,99
 
 ### 4. Release Gate & Next Steps
 
-1. **Release Gate**:
+1. **CI Quality Gates**:
+   - CI on reviewed head `91134ca2` is 6/6 green (all 2026-11-20): GitGuardian Security Checks 14:01:30Z, Application Builds 14:02:36Z, Code Quality (Lint & Typecheck) 14:02:58Z, API E2E Tests 14:03:05Z, Tests 14:03:27Z, Docker Build & Smoke Test 14:09:38Z. Note: CI re-runs on the docs-fix head and must be re-verified 6/6 green there before merge.
+2. **Release Gate**:
    - **Live Deployment**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending external infrastructure provisioning, live email delivery verification, live payment credentials, and disaster recovery rehearsals G18/G19).
-2. **Next Steps**:
-   - Open Pull Request against `main`.
-   - Monitor GitHub Actions CI until 6/6 green.
+3. **Next Steps**:
+   - PR #93 is open against main at reviewed head `91134ca2a0f992b3d38fa946a91a7a4fed11581a` with CI 6/6 green; next step is the docs-fix re-review, then merge by the owner.
    - Do NOT merge on this prompt alone. Live deployment remains STRICT NO-GO.
 
