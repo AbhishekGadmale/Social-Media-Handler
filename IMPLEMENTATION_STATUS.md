@@ -5888,3 +5888,84 @@ A repository-wide search was performed for strings `'4,999'`, `'9,999'`, `'39,99
    - PR #93 is open against main at reviewed head `91134ca2a0f992b3d38fa946a91a7a4fed11581a` with CI 6/6 green; next step is the docs-fix re-review, then merge by the owner.
    - Do NOT merge on this prompt alone. Live deployment remains STRICT NO-GO.
 
+## 80. Landing Page Refresh: Shipped Features and UI Elevation
+
+### 1. Summary & Motivation
+
+- **Status**: implemented on branch `feat/landing-page-refresh`; pending PR against `main` at base `452f3edd0c2db07c12a387b6f3a8e74f1a8f4b56`
+- **Scope & Objectives**:
+  - Refresh the public landing page (`/`) to showcase recently shipped capabilities (PRs #87, #88, #89, #91) with 100% factual accuracy.
+  - Feature additions: added 'Client approvals' and 'White-label reports' feature cards (ungated across plans), added plan social account allowances (Solo 5, Studio 15, Agency 30), and added two factual FAQ entries for approvals and custom branded reports.
+  - UI Elevation: sticky header with backdrop blur, subtle blue-to-slate hero gradient wash, unified section eyebrow hierarchy, uniform icon chip feature cards, connected step markers for workflow, visually elevated Agency pricing tier (`For agencies` tag + accent border), and an accessible pre-footer CTA band.
+  - Architectural constraints: Page remains a pure React Server Component (RSC), `next/link` and `lucide-react` icons only, zero external assets or images, zero new dependencies.
+  - Strict scope boundaries: Maintained strict prohibition of unbuilt features (e.g. AI captions), testimonials, customer logos, user counts, and synthetic social proof.
+
+### 2. Changes & File Modifications
+
+#### A. Public Landing Page (`apps/web/src/app/page.tsx`)
+- **Header Nav**:
+  - Applied `sticky top-0 z-50 bg-white/90 backdrop-blur-md border-b border-gray-200` with existing logo link to `/`, Sign in link to `/login`, and 'Start free trial' CTA to `/signup`.
+- **Hero Section**:
+  - Added subtle background gradient `bg-gradient-to-b from-blue-50/60 via-slate-50/30 to-white border-b border-gray-100`.
+  - Headline preserved: `Social media management for agencies and small teams — plan, publish, and measure client accounts from one workspace`.
+  - Both CTAs preserved: primary `Start 14-day free trial` (`/signup`), secondary `Sign in` (`/login`), microcopy `No credit card required.`.
+- **Risk-Reversal Strip**:
+  - Preserved all 6 factual assurances: 14-day free trial no credit card, monthly billing cancel anytime, 7-day money-back guarantee, UPI/cards accepted via Razorpay, GST invoice on every payment, and prices include GST.
+- **Workflow / How It Works**:
+  - Added `Workflow` eyebrow and connected 3-step numbered markers (1/2/3) with a horizontal connecting line on desktop (`hidden md:block absolute top-6 left-[16%] right-[16%] h-0.5 bg-blue-100`).
+- **Shipped Features Grid**:
+  - Added `Capabilities` eyebrow and organized 10 uniform cards with colored icon chips (`w-10 h-10 rounded-lg bg-blue-50 text-blue-600`):
+    - Added **Client approvals** (`UserCheck`): `Clients review and approve posts before they publish; change requests come back with comments, and nothing goes live while approval is pending.` (not plan-gated).
+    - Added **White-label reports** (`Palette`): `Client-ready PDF reports with your agency's name, logo and brand colour instead of ours.` (not plan-gated).
+    - Preserved existing 8 cards: Multi-platform publishing, Post scheduling, Per-platform post variants, Media library, Analytics dashboard, Team workspaces & roles, Account security, GST-ready billing.
+- **Pricing Section**:
+  - Added `Transparent Pricing` eyebrow and 2-month free annual billing banner.
+  - Added plan social account caps to feature lists:
+    - Solo: `Up to 5 social accounts`
+    - Studio: `Up to 15 social accounts`
+    - Agency: `Up to 30 social accounts`
+  - Monthly prices strictly retained (`₹499`, `₹999`, `₹3,999`), seat lines retained (`1 seat included`, `3 seats included`, `10 seats included`), GST inclusive notice retained.
+  - Founding 50 callout preserved verbatim: `Founding 50 — ₹2,999/month, price locked while your subscription stays active, for the first 50 customers.`.
+  - Visual elevation on Agency card: `border-2 border-blue-600 shadow-lg relative` with `For agencies` tag.
+- **FAQ Section**:
+  - Added `FAQ` eyebrow and expanded to 7 factual entries:
+    - Added: `Can my clients approve posts before they go live?` — `Yes: send a post for approval, the client approves or requests changes with a comment, and publishing stays blocked until it's approved.`
+    - Added: `Can I send reports with my own branding?` — `Yes: add your agency name, logo and brand colour in settings and client reports carry your brand, not Agency OS.`
+    - Preserved existing 5 entries (free trial terms, payment methods, GST compliance, cancellation & refund policy, supported social platforms).
+- **Pre-Footer CTA Band**:
+  - Added pre-footer section with subtle accent wash (`bg-gradient-to-b from-blue-50/80 via-blue-50/50 to-white border-t border-b border-blue-100`):
+    - Heading: `Ready to streamline your agency publishing?`
+    - Microcopy: `Get full access to all features with a 14-day free trial — no credit card required.`
+    - Primary button: `Start free trial` linking to `/signup`.
+- **Footer**:
+  - Maintained operator copyright (`© Gadmale Technologies`), email (`agadmale335@gmail.com`), and legal links (`/terms`, `/privacy`, `/refund-cancellation`).
+
+#### B. Landing Page Unit Tests (`apps/web/src/app/page.spec.tsx`)
+- Removed negative assertions that previously forbade white-label reports and approvals.
+- Added positive assertions verifying rendered feature cards and descriptions for both Client approvals and White-label reports.
+- Added positive assertions for newly added FAQ entries.
+- Added assertions verifying social account allowances across all 3 tiers (`Up to 5 social accounts`, `Up to 15 social accounts`, `Up to 30 social accounts`).
+- Added assertion verifying the final CTA band renders and links to `/signup`.
+- Maintained negative assertions strictly forbidding AI captions (`/ai caption/i`) and social proof/testimonials (`/testimonial/i`, `/trusted by/i`).
+
+### 3. Verification & Test Evidence
+
+- **Landing Page Tests (`apps/web/src/app/page.spec.tsx`)**:
+  - 1/1 test file PASS, **8/8 tests PASS** (before: 5 tests, delta: +3 new test blocks).
+- **Web Unit Tests (`apps/web`)**:
+  - 24/24 test files PASS, **281/281 tests PASS** (before: 278 tests, delta: +3 tests).
+- **Monorepo Quality Gates**:
+  - `apps/web` ESLint: **0 errors, 0 warnings** on modified files.
+  - `apps/web` typecheck (`tsc --noEmit`): **0 errors**.
+  - `apps/api` typecheck (`tsc --noEmit`): **0 errors**.
+
+### 4. Release Gate & Next Steps
+
+1. **Release Gate**:
+   - **Live Deployment**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending external infrastructure provisioning, live email delivery verification, live payment credentials, and disaster recovery rehearsals G18/G19).
+2. **Next Steps**:
+   - Open Pull Request against `main`.
+   - Monitor GitHub Actions CI until 6/6 green.
+   - Do NOT merge on this prompt alone. Live deployment remains STRICT NO-GO.
+
+
