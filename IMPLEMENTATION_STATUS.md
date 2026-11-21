@@ -6099,13 +6099,14 @@ A repository-wide search was performed for strings `'4,999'`, `'9,999'`, `'39,99
 - **Reviewed Head SHA**: `61fce561f1fc4c2a459b2f4d7b5b52ab85faf714` (`61fce56`)
 - **Scope & Objectives**:
   - Web UI role-based access gating: Previously, `CLIENT_APPROVER` and `VIEWER` roles had restricted permissions in the API PermissionMatrix, but the web frontend displayed all management controls (Connect/Disconnect accounts, New Post, publishing controls, branding forms, and billing navigation). Clicking them triggered confusing 403 API errors.
-  - Implement a single web permissions truth (`apps/web/src/lib/permissions.ts`) exporting 8 explicit helper functions mirroring API capabilities: `canManageAccounts`, `canPublish`, `canApprove`, `canManageMembers`, `canManageBilling`, `canViewBilling`, `canManageBranding`, `canGenerateReports`.
+  - Implement a single web permissions truth (`apps/web/src/lib/permissions.ts`) exporting 9 explicit helper functions mirroring API capabilities: `canManageAccounts`, `canPublish`, `canApprove`, `canManageMembers`, `canManageBilling`, `canViewBilling`, `canManageBranding`, `canGenerateReports`, `canReconcile`.
   - Gate UI surfaces across the entire application:
     - **Dashboard Navigation (`DashboardShell`)**: Hide Billing unless `canViewBilling` (`OWNER`, `MANAGER`, `EDITOR`). Hide Team unless `OWNER`, `MANAGER`, or `EDITOR`. Analytics, Accounts, Publishing, and Settings remain accessible.
     - **Accounts (`accounts/page.tsx` & `account-card.tsx`)**: When `!canManageAccounts`, hide Connect section/buttons, hide Disconnect buttons, hide "Grant Publishing Access", display status badges as read-only, and show helper text "Accounts are managed by your agency."
     - **Publishing List (`publishing/page.tsx`)**: Hide "New Post" buttons unless `canPublish`.
-    - **Publishing Detail (`publishing/[postId]/page.tsx`)**: Textarea disabled and Save Changes button hidden unless `canPublish`. "Add Destination" hidden unless `canPublish`. On destinations, hide all publication lifecycle action controls (Publish, Publish Now, Retry, Schedule, Reschedule, Unschedule, Cancel, Delete, and Reconcile) unless `canPublish`. Platform canonical link remains visible for published posts. In `ApprovalCard`, "Send for Approval" rendered only when `canPublish`, while "Approve Post" and "Request Changes" rendered only when `canApprove`.
+    - **Publishing Detail (`publishing/[postId]/page.tsx`)**: Textarea disabled and Save Changes button hidden unless `canPublish`. "Add Destination" hidden unless `canPublish`. On destinations, hide all publication lifecycle action controls (Publish, Publish Now, Retry, Schedule, Reschedule, Unschedule, Cancel, Delete) unless `canPublish`. "Resolve publication" button for `UNKNOWN` status variants is gated specifically on `canReconcile` (`OWNER`, `MANAGER`). Platform canonical link remains visible for published posts. In `ApprovalCard`, "Send for Approval" rendered only when `canPublish`, while "Approve Post" and "Request Changes" rendered only when `canApprove`.
     - **New Draft (`publishing/new/page.tsx`)**: If role is loaded and `!canPublish`, render an inline access-denied state ("Access denied — you don't have permission to create posts in this workspace.") without redirect.
+    - **Analytics (`analytics/page.tsx`)**: Client Performance Report card (`data-testid="client-report-card"`) rendered only when `canGenerateReports` (`OWNER`, `MANAGER`, `EDITOR`); hidden from `CLIENT_APPROVER` and `VIEWER` while analytics overview metrics remain visible.
     - **Settings (`settings/page.tsx`)**: Workspace Branding card rendered only when `canManageBranding` (`OWNER`, `MANAGER`). Personal settings (Active Sessions, Change Password) remain accessible to all roles.
     - **Billing (`billing/page.tsx`)**: When loaded and `!canViewBilling`, render access-denied state ("You do not have permission to view billing information for this workspace.") and disable billing API queries.
   - API permission tightening: Tighten `billing.view` in `apps/api/src/modules/auth/guards/permission.guard.ts` from `['OWNER', 'MANAGER', 'EDITOR', 'CLIENT_APPROVER', 'VIEWER']` to `['OWNER', 'MANAGER', 'EDITOR']`. Document rationale in `DECISIONS.md`.
@@ -6126,7 +6127,8 @@ A repository-wide search was performed for strings `'4,999'`, `'9,999'`, `'39,99
   - `canViewBilling(role)`: `OWNER`, `MANAGER`, `EDITOR`
   - `canManageBranding(role)`: `OWNER`, `MANAGER`
   - `canGenerateReports(role)`: `OWNER`, `MANAGER`, `EDITOR`
-- Full unit test coverage in `apps/web/src/lib/permissions.spec.ts` (8/8 tests pass).
+  - `canReconcile(role)`: `OWNER`, `MANAGER`
+- Full unit test coverage in `apps/web/src/lib/permissions.spec.ts` (9/9 tests pass).
 
 #### B. API Permission Matrix Tightening (`apps/api/src/modules/auth/guards/permission.guard.ts`)
 - Tightened `billing.view` permission from all 5 roles down to `['OWNER', 'MANAGER', 'EDITOR']`.
@@ -6136,23 +6138,25 @@ A repository-wide search was performed for strings `'4,999'`, `'9,999'`, `'39,99
 #### C. Role-Based UI Gating Across Web Routes
 - **DashboardShell**: Filters navigation items based on current workspace membership role (`canViewBilling` for Billing, `OWNER`/`MANAGER`/`EDITOR` for Team).
 - **Accounts**: Renders read-only UI for `CLIENT_APPROVER` and `VIEWER`, hiding Connect and Disconnect controls while displaying "Accounts are managed by your agency." and preserving connection status badges.
-- **Publishing & Post Detail**: Read-only publication preview for approvers with interactive Approve and Request Changes controls; write, edit, schedule, cancel, retry, reconcile, and delete controls restricted strictly to publishers (`canPublish`).
+- **Publishing & Post Detail**: Read-only publication preview for approvers with interactive Approve and Request Changes controls; write, edit, schedule, cancel, retry, and delete controls restricted strictly to publishers (`canPublish`). "Resolve publication" button for `UNKNOWN` status variants is gated specifically to `OWNER` and `MANAGER` via `canReconcile`, preventing 403 errors for `EDITOR`.
 - **New Post & Billing**: Guarded with inline access-denied messages when accessed directly by unauthorized roles.
+- **Analytics**: Client Performance Report card gated to `canGenerateReports` (`OWNER`, `MANAGER`, `EDITOR`), hiding report generation form from `CLIENT_APPROVER` and `VIEWER` while leaving overview metrics visible.
 - **Settings**: Gated Workspace Branding card to `OWNER` and `MANAGER`, while leaving personal Active Sessions and Change Password cards open to all members.
 
 ### 3. Verification & Test Evidence
 
 - **Web Unit Tests (`apps/web`)**:
-  - `apps/web/src/lib/permissions.spec.ts`: **8/8 tests PASS**.
-  - `apps/web/src/components/dashboard-shell.spec.tsx`: **6/6 tests PASS** (delta: +2 tests for role navigation gating).
+  - `apps/web/src/lib/permissions.spec.ts`: **9/9 tests PASS** (delta: +9 tests, new test suite).
+  - `apps/web/src/components/dashboard-shell.spec.tsx`: **6/6 tests PASS** (delta: +1 test for role navigation gating).
   - `apps/web/src/app/[workspaceId]/accounts/page.spec.tsx`: **13/13 tests PASS** (delta: +2 tests for read-only gating).
   - `apps/web/src/components/account-card.spec.tsx`: **16/16 tests PASS**.
   - `apps/web/src/app/[workspaceId]/publishing/page.spec.tsx`: **2/2 tests PASS** (delta: +1 test for New Post gating).
   - `apps/web/src/app/[workspaceId]/publishing/new/page.spec.tsx`: **2/2 tests PASS** (new test suite).
-  - `apps/web/src/app/[workspaceId]/publishing/[postId]/page.spec.tsx`: **44/44 tests PASS** (delta: +2 tests for publisher vs approver controls).
+  - `apps/web/src/app/[workspaceId]/publishing/[postId]/page.spec.tsx`: **45/45 tests PASS** (delta: +3 tests for publisher vs approver controls and reconcile gating).
   - `apps/web/src/app/[workspaceId]/settings/page.spec.tsx`: **19/19 tests PASS** (delta: +2 tests for branding gating).
   - `apps/web/src/app/[workspaceId]/billing/page.spec.tsx`: **11/11 tests PASS** (delta: +2 tests for billing access denial).
-  - Full `@agency-os/web` suite: **28/28 test files PASS, 309/309 tests PASS** (delta: +2 files, +21 tests).
+  - `apps/web/src/app/[workspaceId]/analytics/page.spec.tsx`: **16/16 tests PASS** (delta: +2 tests for client report card role gating).
+  - Full `@agency-os/web` suite: **28/28 test files PASS, 313/313 tests PASS** (previously 26 files, 289 tests on main; delta: +2 files, +24 tests).
 - **API Unit Tests (`apps/api`)**:
   - `apps/api/src/modules/auth/guards/permission.guard.spec.ts`: **8/8 tests PASS** (new test suite).
   - Total API suite: **688/688 tests PASS** in CI.

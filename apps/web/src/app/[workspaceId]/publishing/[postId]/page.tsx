@@ -8,7 +8,7 @@ import { publishingQueries, PostPlatformVariant, Post } from '../../../../lib/qu
 import { getTargetMediaValidationError } from '../../../../lib/publishing/validation';
 import { accountQueries } from '../../../../lib/query/accounts';
 import { authQueries } from '../../../../lib/query/auth';
-import { canPublish, canApprove } from '../../../../lib/permissions';
+import { canPublish, canApprove, canReconcile } from '../../../../lib/permissions';
 import { api, ApiError } from '../../../../lib/api/client';
 import { Button } from '../../../../components/ui/button';
 import {
@@ -35,6 +35,7 @@ export default function PostDetailPage() {
   const currentRole = currentMembership?.role;
   const isPublisher = canPublish(currentRole);
   const isApprover = canApprove(currentRole);
+  const isReconciler = canReconcile(currentRole);
 
   const [content, setContent] = useState(post?.content || '');
   const [isSaving, setIsSaving] = useState(false);
@@ -200,7 +201,7 @@ export default function PostDetailPage() {
 
           <div className="space-y-4 mb-6">
             {post.variants.map(variant => (
-              <TargetCard key={variant.id} variant={variant} workspaceId={workspaceId} post={post} canPublish={isPublisher} />
+              <TargetCard key={variant.id} variant={variant} workspaceId={workspaceId} post={post} canPublish={isPublisher} canReconcile={isReconciler} />
             ))}
             {post.variants.length === 0 && <p className="text-sm text-gray-500 text-center py-4">No destinations added yet.</p>}
           </div>
@@ -468,11 +469,13 @@ function TargetCard({
   workspaceId,
   post,
   canPublish = true,
+  canReconcile = true,
 }: {
   variant: PostPlatformVariant;
   workspaceId: string;
   post: Post;
   canPublish?: boolean;
+  canReconcile?: boolean;
 }) {
   const mediaObjects = post.media.map(m => m.media).filter(Boolean);
   const validationError = variant.socialAccount?.provider ? getTargetMediaValidationError(mediaObjects, variant.socialAccount.provider) : null;
@@ -606,7 +609,7 @@ function TargetCard({
             <AlertCircle className="w-4 h-4 mr-1 flex-shrink-0" />
             <span>Publishing result could not be confirmed. Check the destination platform before taking further action.</span>
           </div>
-          {canPublish && (
+          {canReconcile && (
             <Button size="sm" variant="outline" onClick={() => setIsReconciling(true)}>
               Resolve publication
             </Button>

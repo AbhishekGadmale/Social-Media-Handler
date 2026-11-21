@@ -40,3 +40,7 @@ export function canManageBranding(role?: string | null): boolean {
 export function canGenerateReports(role?: string | null): boolean {
   return role === 'OWNER' || role === 'MANAGER' || role === 'EDITOR';
 }
+
+export function canReconcile(role?: string | null): boolean {
+  return role === 'OWNER' || role === 'MANAGER';
+}

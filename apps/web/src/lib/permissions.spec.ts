@@ -8,6 +8,7 @@ import {
   canViewBilling,
   canManageBranding,
   canGenerateReports,
+  canReconcile,
 } from './permissions';
 
 describe('Web Permissions Helpers (mirroring API PermissionMatrix)', () => {
@@ -105,6 +106,18 @@ describe('Web Permissions Helpers (mirroring API PermissionMatrix)', () => {
       expect(canGenerateReports('VIEWER')).toBe(false);
       expect(canGenerateReports(null)).toBe(false);
       expect(canGenerateReports(undefined)).toBe(false);
+    });
+  });
+
+  describe('canReconcile', () => {
+    it('allows OWNER and MANAGER only', () => {
+      expect(canReconcile('OWNER')).toBe(true);
+      expect(canReconcile('MANAGER')).toBe(true);
+      expect(canReconcile('EDITOR')).toBe(false);
+      expect(canReconcile('CLIENT_APPROVER')).toBe(false);
+      expect(canReconcile('VIEWER')).toBe(false);
+      expect(canReconcile(null)).toBe(false);
+      expect(canReconcile(undefined)).toBe(false);
     });
   });
 });

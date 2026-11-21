@@ -1025,5 +1025,72 @@ describe('Client Approvals UI', () => {
     expect(screen.queryByTestId('approve-post-button')).not.toBeInTheDocument();
     expect(screen.queryByTestId('request-changes-toggle-button')).not.toBeInTheDocument();
   });
+
+  test('role-based gating for Resolve publication: visible to OWNER, hidden from EDITOR', async () => {
+    queryClient.setQueryData(['auth', 'me'], {
+      user: { id: 'usr-3', email: 'editor@example.com' },
+      memberships: [
+        {
+          id: 'mem-3',
+          workspaceId: 'ws-1',
+          userId: 'usr-3',
+          role: 'EDITOR',
+          workspace: { id: 'ws-1', name: 'Test Agency' },
+        },
+      ],
+    });
+
+    queryClient.setQueryData(['workspaces', 'ws-1', 'posts', 'post-1'], {
+      id: 'post-1',
+      workspaceId: 'ws-1',
+      content: 'Unknown status post',
+      status: 'DRAFT',
+      approvalStatus: 'NOT_SUBMITTED',
+      media: [],
+      variants: [
+        {
+          id: 'var-unknown',
+          postId: 'post-1',
+          socialAccountId: 'acc-1',
+          status: 'UNKNOWN',
+          externalPostId: null,
+          canonicalUrl: null,
+          socialAccount: { name: 'My LinkedIn', provider: 'LINKEDIN' },
+        },
+      ],
+    });
+
+    const { unmount } = render(
+      <QueryClientProvider client={queryClient}>
+        <PostDetailPage />
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByText(/publishing result could not be confirmed/i)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /resolve publication/i })).not.toBeInTheDocument();
+
+    unmount();
+
+    queryClient.setQueryData(['auth', 'me'], {
+      user: { id: 'usr-1', email: 'owner@example.com' },
+      memberships: [
+        {
+          id: 'mem-1',
+          workspaceId: 'ws-1',
+          userId: 'usr-1',
+          role: 'OWNER',
+          workspace: { id: 'ws-1', name: 'Test Agency' },
+        },
+      ],
+    });
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <PostDetailPage />
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByRole('button', { name: /resolve publication/i })).toBeInTheDocument();
+  });
 });
 
