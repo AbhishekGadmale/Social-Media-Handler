@@ -6093,7 +6093,10 @@ A repository-wide search was performed for strings `'4,999'`, `'9,999'`, `'39,99
 
 ### 1. Summary & Motivation
 
-- **Status**: implemented on branch `fix/approver-ui-rbac` (pending PR against `main`)
+- **Status**: PR #96 open on branch `fix/approver-ui-rbac` (reviewed head `61fce561f1fc4c2a459b2f4d7b5b52ab85faf714`)
+- **Pull Request**: [#96](https://github.com/AbhishekGadmale/Social-Media-Handler/pull/96)
+- **Branch**: `fix/approver-ui-rbac`
+- **Reviewed Head SHA**: `61fce561f1fc4c2a459b2f4d7b5b52ab85faf714` (`61fce56`)
 - **Scope & Objectives**:
   - Web UI role-based access gating: Previously, `CLIENT_APPROVER` and `VIEWER` roles had restricted permissions in the API PermissionMatrix, but the web frontend displayed all management controls (Connect/Disconnect accounts, New Post, publishing controls, branding forms, and billing navigation). Clicking them triggered confusing 403 API errors.
   - Implement a single web permissions truth (`apps/web/src/lib/permissions.ts`) exporting 8 explicit helper functions mirroring API capabilities: `canManageAccounts`, `canPublish`, `canApprove`, `canManageMembers`, `canManageBilling`, `canViewBilling`, `canManageBranding`, `canGenerateReports`.
@@ -6162,15 +6165,11 @@ A repository-wide search was performed for strings `'4,999'`, `'9,999'`, `'39,99
 ### 4. Release Gate & Next Steps
 
 1. **CI Quality Gates**:
-   - To be verified 6/6 green on the PR head.
+   - CI on reviewed head `61fce56` is 6/6 green (all 2026-11-21): GitGuardian Security Checks 08:14:16Z, Application Builds 08:15:05Z, Code Quality (Lint & Typecheck) 08:15:37Z, API E2E Tests 08:15:50Z, Tests 08:15:57Z, Docker Build & Smoke Test 08:22:50Z. Standing note: CI re-runs on any docs-fix head and must be re-verified 6/6 green there before merge.
 2. **Release Gate**:
    - **Live Deployment**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending external infrastructure provisioning, live email delivery verification, live payment credentials, and disaster recovery rehearsals G18/G19).
 3. **Next Steps**:
-   - Commit changes on branch `fix/approver-ui-rbac`.
-   - Push branch to remote.
-   - Open Pull Request against `main`.
-   - Monitor CI check runs (all 6/6 green).
-   - Update §82 with final PR #, HEAD SHA, CI timestamps, and test counts.
+   - PR #96 is open at reviewed head `61fce56` with CI 6/6 green; next step is the docs-fix re-review, then merge by the owner.
    - Do NOT merge on this prompt alone. Live deployment remains STRICT NO-GO.
 
 
