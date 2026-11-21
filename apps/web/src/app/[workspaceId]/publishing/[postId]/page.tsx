@@ -7,6 +7,8 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { publishingQueries, PostPlatformVariant, Post } from '../../../../lib/query/publishing';
 import { getTargetMediaValidationError } from '../../../../lib/publishing/validation';
 import { accountQueries } from '../../../../lib/query/accounts';
+import { authQueries } from '../../../../lib/query/auth';
+import { canPublish, canApprove, canReconcile } from '../../../../lib/permissions';
 import { api, ApiError } from '../../../../lib/api/client';
 import { Button } from '../../../../components/ui/button';
 import {
@@ -24,6 +26,16 @@ export default function PostDetailPage() {
   const { data: post, isLoading: postLoading } = useQuery(publishingQueries.detail(workspaceId, postId));
   const { data: accountsData } = useQuery(accountQueries.list(workspaceId));
   const accounts = accountsData?.accounts || [];
+
+  const { data: authData } = useQuery({
+    ...authQueries.me(),
+    staleTime: Infinity,
+  });
+  const currentMembership = authData?.memberships?.find((m) => m.workspaceId === workspaceId);
+  const currentRole = currentMembership?.role;
+  const isPublisher = canPublish(currentRole);
+  const isApprover = canApprove(currentRole);
+  const isReconciler = canReconcile(currentRole);
 
   const [content, setContent] = useState(post?.content || '');
   const [isSaving, setIsSaving] = useState(false);
@@ -134,15 +146,17 @@ export default function PostDetailPage() {
             className="w-full rounded-md border border-gray-300 shadow-sm p-3 focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
             value={content}
             onChange={(e) => setContent(e.target.value)}
-            disabled={!isEditable}
+            disabled={!isEditable || !isPublisher}
           />
           {saveError && <p className="text-red-600 text-sm mt-2">{saveError}</p>}
-          <div className="flex justify-end pt-4 mt-2">
-            <Button onClick={handleUpdateDraft} disabled={isSaving || !isEditable || content === post.content}>
-              {isSaving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Save className="w-4 h-4 mr-2" />}
-              Save Changes
-            </Button>
-          </div>
+          {isPublisher && (
+            <div className="flex justify-end pt-4 mt-2">
+              <Button onClick={handleUpdateDraft} disabled={isSaving || !isEditable || content === post.content}>
+                {isSaving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Save className="w-4 h-4 mr-2" />}
+                Save Changes
+              </Button>
+            </div>
+          )}
         </div>
 
         {post.media.length > 0 && (
@@ -180,19 +194,19 @@ export default function PostDetailPage() {
       </div>
 
       <div className="w-full md:w-96 space-y-6">
-        <ApprovalCard post={post} workspaceId={workspaceId} />
+        <ApprovalCard post={post} workspaceId={workspaceId} canApprove={isApprover} canPublish={isPublisher} />
 
         <div className="bg-white shadow sm:rounded-lg p-6 border border-gray-200">
           <h2 className="text-lg font-bold text-gray-900 mb-4">Destinations</h2>
 
           <div className="space-y-4 mb-6">
             {post.variants.map(variant => (
-              <TargetCard key={variant.id} variant={variant} workspaceId={workspaceId} post={post} />
+              <TargetCard key={variant.id} variant={variant} workspaceId={workspaceId} post={post} canPublish={isPublisher} canReconcile={isReconciler} />
             ))}
             {post.variants.length === 0 && <p className="text-sm text-gray-500 text-center py-4">No destinations added yet.</p>}
           </div>
 
-          {isEditable && (
+          {isEditable && isPublisher && (
             <div className="border-t pt-4">
               <label className="block text-sm font-medium text-gray-700 mb-2">Add Destination</label>
               <div className="flex gap-2">
@@ -227,7 +241,17 @@ export default function PostDetailPage() {
   );
 }
 
-function ApprovalCard({ post, workspaceId }: { post: Post; workspaceId: string }) {
+function ApprovalCard({
+  post,
+  workspaceId,
+  canApprove = true,
+  canPublish = true,
+}: {
+  post: Post;
+  workspaceId: string;
+  canApprove?: boolean;
+  canPublish?: boolean;
+}) {
   const queryClient = useQueryClient();
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -324,7 +348,7 @@ function ApprovalCard({ post, workspaceId }: { post: Post; workspaceId: string }
         </div>
       )}
 
-      {(status === 'NOT_SUBMITTED' || status === 'CHANGES_REQUESTED') && (
+      {(status === 'NOT_SUBMITTED' || status === 'CHANGES_REQUESTED') && canPublish && (
         <div className="pt-2">
           <Button
             onClick={handleRequestApproval}
@@ -341,7 +365,7 @@ function ApprovalCard({ post, workspaceId }: { post: Post; workspaceId: string }
         </div>
       )}
 
-      {status === 'PENDING' && !showChangesInput && (
+      {status === 'PENDING' && canApprove && !showChangesInput && (
         <div className="pt-2 space-y-2">
           <Button
             onClick={handleApprove}
@@ -364,7 +388,7 @@ function ApprovalCard({ post, workspaceId }: { post: Post; workspaceId: string }
         </div>
       )}
 
-      {status === 'PENDING' && showChangesInput && (
+      {status === 'PENDING' && canApprove && showChangesInput && (
         <div className="pt-2 space-y-2" data-testid="request-changes-form">
           <label className="block text-xs font-medium text-gray-700">
             Change Request Feedback (required)
@@ -440,7 +464,19 @@ function PlusIcon() {
   return <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>;
 }
 
-function TargetCard({ variant, workspaceId, post }: { variant: PostPlatformVariant, workspaceId: string, post: Post }) {
+function TargetCard({
+  variant,
+  workspaceId,
+  post,
+  canPublish = true,
+  canReconcile = true,
+}: {
+  variant: PostPlatformVariant;
+  workspaceId: string;
+  post: Post;
+  canPublish?: boolean;
+  canReconcile?: boolean;
+}) {
   const mediaObjects = post.media.map(m => m.media).filter(Boolean);
   const validationError = variant.socialAccount?.provider ? getTargetMediaValidationError(mediaObjects, variant.socialAccount.provider) : null;
   const queryClient = useQueryClient();
@@ -573,9 +609,11 @@ function TargetCard({ variant, workspaceId, post }: { variant: PostPlatformVaria
             <AlertCircle className="w-4 h-4 mr-1 flex-shrink-0" />
             <span>Publishing result could not be confirmed. Check the destination platform before taking further action.</span>
           </div>
-          <Button size="sm" variant="outline" onClick={() => setIsReconciling(true)}>
-            Resolve publication
-          </Button>
+          {canReconcile && (
+            <Button size="sm" variant="outline" onClick={() => setIsReconciling(true)}>
+              Resolve publication
+            </Button>
+          )}
         </div>
       )}
 
@@ -595,7 +633,7 @@ function TargetCard({ variant, workspaceId, post }: { variant: PostPlatformVaria
         </div>
       )}
 
-      {isEditable && (
+      {isEditable && canPublish && (
         <div className="space-y-3 mb-4">
           <div>
             <label className="block text-xs font-medium text-gray-700">Title</label>
@@ -672,69 +710,79 @@ function TargetCard({ variant, workspaceId, post }: { variant: PostPlatformVaria
         </div>
       )}
 
-      <div className="flex flex-wrap gap-2 mt-4 pt-3 border-t border-gray-200">
-        {(variant.status === 'DRAFT' || variant.status === 'FAILED' || variant.status === 'SCHEDULED') ? (
-          <Button
-            size="sm"
-            onClick={() => setIsPublishing(true)}
-            disabled={isActioning || !!validationError || post.approvalStatus === 'PENDING' || post.approvalStatus === 'CHANGES_REQUESTED'}
-          >
-            <Play className="w-3 h-3 mr-1" /> {variant.status === 'FAILED' ? 'Retry' : (variant.status === 'SCHEDULED' ? 'Publish Now' : 'Publish')}
-          </Button>
-        ) : null}
-
-        {(variant.status === 'DRAFT' || variant.status === 'FAILED') ? (
-          <div className="flex items-center gap-1">
-            <input type="datetime-local" className="text-xs border p-1 rounded" value={scheduleDate} onChange={e => setScheduleDate(e.target.value)} />
+      {canPublish ? (
+        <div className="flex flex-wrap gap-2 mt-4 pt-3 border-t border-gray-200">
+          {(variant.status === 'DRAFT' || variant.status === 'FAILED' || variant.status === 'SCHEDULED') ? (
             <Button
-              variant="outline"
               size="sm"
-              onClick={() => handleAction('schedule', { scheduledAt: new Date(scheduleDate).toISOString() })}
-              disabled={!scheduleDate || isActioning || !!validationError || post.approvalStatus === 'PENDING' || post.approvalStatus === 'CHANGES_REQUESTED'}
+              onClick={() => setIsPublishing(true)}
+              disabled={isActioning || !!validationError || post.approvalStatus === 'PENDING' || post.approvalStatus === 'CHANGES_REQUESTED'}
             >
-              <Calendar className="w-3 h-3 mr-1" /> Schedule
+              <Play className="w-3 h-3 mr-1" /> {variant.status === 'FAILED' ? 'Retry' : (variant.status === 'SCHEDULED' ? 'Publish Now' : 'Publish')}
             </Button>
-          </div>
-        ) : null}
+          ) : null}
 
-        {variant.status === 'SCHEDULED' && (
-          <div className="flex items-center gap-1">
-            <input type="datetime-local" className="text-xs border p-1 rounded" value={scheduleDate} onChange={e => setScheduleDate(e.target.value)} />
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => handleAction('reschedule', { scheduledAt: new Date(scheduleDate).toISOString() })}
-              disabled={!scheduleDate || isActioning || post.approvalStatus === 'PENDING' || post.approvalStatus === 'CHANGES_REQUESTED'}
-            >
-              <Calendar className="w-3 h-3 mr-1" /> Reschedule
-            </Button>
-            <Button variant="outline" size="sm" onClick={() => handleAction('unschedule')} disabled={isActioning}>
-              <X className="w-3 h-3 mr-1" /> Unschedule
-            </Button>
-          </div>
-        )}
-
-        {variant.status === 'QUEUED' && (
-          <Button variant="outline" size="sm" onClick={() => handleAction('cancel')} disabled={isActioning}>
-            <X className="w-3 h-3 mr-1" /> Cancel publishing
-          </Button>
-        )}
-
-        {variant.status === 'PUBLISHED' && (
-          <>
-            {variant.canonicalUrl && (
-              <a href={variant.canonicalUrl} target="_blank" rel="noopener noreferrer" className="text-sm text-blue-600 hover:underline inline-flex items-center">
-                View on {variant.socialAccount?.provider || 'Platform'}
-              </a>
-            )}
-            {variant.externalPostId && (
-              <Button variant="outline" size="sm" onClick={() => setIsDeleting(true)} disabled={isActioning}>
-                <X className="w-3 h-3 mr-1" /> Delete Post
+          {(variant.status === 'DRAFT' || variant.status === 'FAILED') ? (
+            <div className="flex items-center gap-1">
+              <input type="datetime-local" className="text-xs border p-1 rounded" value={scheduleDate} onChange={e => setScheduleDate(e.target.value)} />
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => handleAction('schedule', { scheduledAt: new Date(scheduleDate).toISOString() })}
+                disabled={!scheduleDate || isActioning || !!validationError || post.approvalStatus === 'PENDING' || post.approvalStatus === 'CHANGES_REQUESTED'}
+              >
+                <Calendar className="w-3 h-3 mr-1" /> Schedule
               </Button>
-            )}
-          </>
-        )}
-      </div>
+            </div>
+          ) : null}
+
+          {variant.status === 'SCHEDULED' && (
+            <div className="flex items-center gap-1">
+              <input type="datetime-local" className="text-xs border p-1 rounded" value={scheduleDate} onChange={e => setScheduleDate(e.target.value)} />
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => handleAction('reschedule', { scheduledAt: new Date(scheduleDate).toISOString() })}
+                disabled={!scheduleDate || isActioning || post.approvalStatus === 'PENDING' || post.approvalStatus === 'CHANGES_REQUESTED'}
+              >
+                <Calendar className="w-3 h-3 mr-1" /> Reschedule
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => handleAction('unschedule')} disabled={isActioning}>
+                <X className="w-3 h-3 mr-1" /> Unschedule
+              </Button>
+            </div>
+          )}
+
+          {variant.status === 'QUEUED' && (
+            <Button variant="outline" size="sm" onClick={() => handleAction('cancel')} disabled={isActioning}>
+              <X className="w-3 h-3 mr-1" /> Cancel publishing
+            </Button>
+          )}
+
+          {variant.status === 'PUBLISHED' && (
+            <>
+              {variant.canonicalUrl && (
+                <a href={variant.canonicalUrl} target="_blank" rel="noopener noreferrer" className="text-sm text-blue-600 hover:underline inline-flex items-center">
+                  View on {variant.socialAccount?.provider || 'Platform'}
+                </a>
+              )}
+              {variant.externalPostId && (
+                <Button variant="outline" size="sm" onClick={() => setIsDeleting(true)} disabled={isActioning}>
+                  <X className="w-3 h-3 mr-1" /> Delete Post
+                </Button>
+              )}
+            </>
+          )}
+        </div>
+      ) : (
+        variant.status === 'PUBLISHED' && variant.canonicalUrl ? (
+          <div className="flex flex-wrap gap-2 mt-4 pt-3 border-t border-gray-200">
+            <a href={variant.canonicalUrl} target="_blank" rel="noopener noreferrer" className="text-sm text-blue-600 hover:underline inline-flex items-center">
+              View on {variant.socialAccount?.provider || 'Platform'}
+            </a>
+          </div>
+        ) : null
+      )}
 
 
       {isDeleting && (

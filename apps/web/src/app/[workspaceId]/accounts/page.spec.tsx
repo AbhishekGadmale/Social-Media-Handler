@@ -58,7 +58,7 @@ vi.mock('../../../lib/api/client', () => ({
   },
 }));
 
-const createWrapper = () => {
+const createWrapper = (role = 'OWNER') => {
   const queryClient = new QueryClient({
     defaultOptions: {
       queries: {
@@ -66,6 +66,18 @@ const createWrapper = () => {
         gcTime: 0,
       },
     },
+  });
+  queryClient.setQueryData(['auth', 'me'], {
+    user: { id: 'usr-1', email: 'user@example.com' },
+    memberships: [
+      {
+        id: 'mem-1',
+        workspaceId: 'ws-test-123',
+        userId: 'usr-1',
+        role,
+        workspace: { id: 'ws-test-123', name: 'Test Agency' },
+      },
+    ],
   });
   const Wrapper = ({ children }: { children: React.ReactNode }) => (
     <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
@@ -249,5 +261,27 @@ describe('AccountsPage - Meta (Facebook & Instagram) Connect Buttons', () => {
     expect(liBtn).toBeDisabled();
 
     resolvePost!({ url: 'https://www.facebook.com/v20.0/dialog/oauth?test=done' });
+  });
+
+  it('renders read-only view for CLIENT_APPROVER with helper text and no connect/disconnect buttons', async () => {
+    mockApiGet.mockResolvedValueOnce({
+      accounts: [createMockAccount({ provider: 'FACEBOOK', status: 'ACTIVE' })],
+    });
+
+    render(<AccountsPage />, { wrapper: createWrapper('CLIENT_APPROVER') });
+
+    expect(await screen.findByText('Accounts are managed by your agency.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /connect/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /disconnect/i })).not.toBeInTheDocument();
+  });
+
+  it('renders read-only empty state for VIEWER with helper text and no connect buttons', async () => {
+    mockApiGet.mockResolvedValueOnce({ accounts: [] });
+
+    render(<AccountsPage />, { wrapper: createWrapper('VIEWER') });
+
+    expect(await screen.findByText('No connected accounts')).toBeInTheDocument();
+    expect(screen.getByText('Accounts are managed by your agency.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /connect/i })).not.toBeInTheDocument();
   });
 });

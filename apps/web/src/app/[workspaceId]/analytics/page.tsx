@@ -4,6 +4,8 @@ import React, { useState } from 'react';
 import { useParams } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
 import { analyticsQueries } from '../../../lib/query/analytics';
+import { authQueries } from '../../../lib/query/auth';
+import { canGenerateReports } from '../../../lib/permissions';
 import { downloadClientReportPdf } from '../../../lib/query/reports';
 import { ApiError } from '../../../lib/api/client';
 import {
@@ -104,6 +106,14 @@ function getStatusBadge(status: string) {
 export default function AnalyticsDashboard() {
   const params = useParams();
   const workspaceId = params.workspaceId as string;
+
+  const { data: authData } = useQuery({
+    ...authQueries.me(),
+    staleTime: Infinity,
+  });
+  const currentMembership = authData?.memberships?.find((m) => m.workspaceId === workspaceId);
+  const currentRole = currentMembership?.role;
+  const canReport = canGenerateReports(currentRole);
 
   const {
     data,
@@ -314,91 +324,93 @@ export default function AnalyticsDashboard() {
           </div>
 
           {/* Client Report Card */}
-          <div className="bg-white rounded-xl border shadow-sm p-6" data-testid="client-report-card">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-gray-100">
-              <div className="flex items-center space-x-3">
-                <div className="p-2.5 bg-blue-50 text-blue-600 rounded-lg">
-                  <FileText className="w-5 h-5" aria-hidden="true" />
+          {canReport && (
+            <div className="bg-white rounded-xl border shadow-sm p-6" data-testid="client-report-card">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-gray-100">
+                <div className="flex items-center space-x-3">
+                  <div className="p-2.5 bg-blue-50 text-blue-600 rounded-lg">
+                    <FileText className="w-5 h-5" aria-hidden="true" />
+                  </div>
+                  <div>
+                    <h2 className="text-lg font-semibold text-gray-900">Client Performance Report</h2>
+                    <p className="text-xs text-gray-500 mt-0.5">
+                      Generate and download a branded PDF performance report for a selected date range.
+                    </p>
+                  </div>
                 </div>
+              </div>
+
+              {reportError && (
+                <div
+                  className="mt-4 p-3 bg-red-50 border border-red-200 rounded-lg flex items-center space-x-2 text-sm text-red-700"
+                  role="alert"
+                >
+                  <AlertCircle className="w-4 h-4 text-red-500 flex-shrink-0" />
+                  <span>{reportError}</span>
+                </div>
+              )}
+
+              <form onSubmit={handleDownloadReport} className="mt-5 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 items-end">
                 <div>
-                  <h2 className="text-lg font-semibold text-gray-900">Client Performance Report</h2>
-                  <p className="text-xs text-gray-500 mt-0.5">
-                    Generate and download a branded PDF performance report for a selected date range.
-                  </p>
+                  <label htmlFor="reportFrom" className="block text-xs font-medium text-gray-700 mb-1">
+                    From Date
+                  </label>
+                  <input
+                    id="reportFrom"
+                    type="date"
+                    value={reportFrom}
+                    onChange={(e) => setReportFrom(e.target.value)}
+                    required
+                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  />
                 </div>
-              </div>
+
+                <div>
+                  <label htmlFor="reportTo" className="block text-xs font-medium text-gray-700 mb-1">
+                    To Date
+                  </label>
+                  <input
+                    id="reportTo"
+                    type="date"
+                    value={reportTo}
+                    onChange={(e) => setReportTo(e.target.value)}
+                    required
+                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  />
+                </div>
+
+                <div>
+                  <label htmlFor="reportAccount" className="block text-xs font-medium text-gray-700 mb-1">
+                    Account Filter
+                  </label>
+                  <select
+                    id="reportAccount"
+                    value={reportAccount}
+                    onChange={(e) => setReportAccount(e.target.value)}
+                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white"
+                  >
+                    <option value="">All accounts</option>
+                    {data?.accounts.map((acc) => (
+                      <option key={acc.id} value={acc.id}>
+                        {acc.name || 'Unnamed'} ({acc.provider})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <button
+                    type="submit"
+                    disabled={isDownloadingReport}
+                    className="w-full inline-flex items-center justify-center px-4 py-2 border border-transparent text-sm font-medium rounded-lg shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 transition-colors"
+                  >
+                    <Download className={`w-4 h-4 mr-2 ${isDownloadingReport ? 'animate-bounce' : ''}`} aria-hidden="true" />
+                    {isDownloadingReport ? 'Generating...' : 'Download PDF'}
+                  </button>
+                </div>
+              </form>
             </div>
-
-            {reportError && (
-              <div
-                className="mt-4 p-3 bg-red-50 border border-red-200 rounded-lg flex items-center space-x-2 text-sm text-red-700"
-                role="alert"
-              >
-                <AlertCircle className="w-4 h-4 text-red-500 flex-shrink-0" />
-                <span>{reportError}</span>
-              </div>
-            )}
-
-            <form onSubmit={handleDownloadReport} className="mt-5 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 items-end">
-              <div>
-                <label htmlFor="reportFrom" className="block text-xs font-medium text-gray-700 mb-1">
-                  From Date
-                </label>
-                <input
-                  id="reportFrom"
-                  type="date"
-                  value={reportFrom}
-                  onChange={(e) => setReportFrom(e.target.value)}
-                  required
-                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                />
-              </div>
-
-              <div>
-                <label htmlFor="reportTo" className="block text-xs font-medium text-gray-700 mb-1">
-                  To Date
-                </label>
-                <input
-                  id="reportTo"
-                  type="date"
-                  value={reportTo}
-                  onChange={(e) => setReportTo(e.target.value)}
-                  required
-                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                />
-              </div>
-
-              <div>
-                <label htmlFor="reportAccount" className="block text-xs font-medium text-gray-700 mb-1">
-                  Account Filter
-                </label>
-                <select
-                  id="reportAccount"
-                  value={reportAccount}
-                  onChange={(e) => setReportAccount(e.target.value)}
-                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white"
-                >
-                  <option value="">All accounts</option>
-                  {data?.accounts.map((acc) => (
-                    <option key={acc.id} value={acc.id}>
-                      {acc.name || 'Unnamed'} ({acc.provider})
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <button
-                  type="submit"
-                  disabled={isDownloadingReport}
-                  className="w-full inline-flex items-center justify-center px-4 py-2 border border-transparent text-sm font-medium rounded-lg shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 transition-colors"
-                >
-                  <Download className={`w-4 h-4 mr-2 ${isDownloadingReport ? 'animate-bounce' : ''}`} aria-hidden="true" />
-                  {isDownloadingReport ? 'Generating...' : 'Download PDF'}
-                </button>
-              </div>
-            </form>
-          </div>
+          )}
 
           {/* Accounts Breakdown */}
           <div className="bg-white rounded-xl border shadow-sm overflow-hidden">

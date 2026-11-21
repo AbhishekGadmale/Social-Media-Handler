@@ -5,6 +5,8 @@ import { useParams } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { accountQueries } from '../../../lib/query/accounts';
+import { authQueries } from '../../../lib/query/auth';
+import { canManageAccounts } from '../../../lib/permissions';
 import { AccountCard } from '../../../components/account-card';
 import { ApiError, api } from '../../../lib/api/client';
 import { AlertCircle, RefreshCw, Link as LinkIcon, Plus } from 'lucide-react';
@@ -13,6 +15,14 @@ import { Button } from '../../../components/ui/button';
 export default function AccountsPage() {
   const params = useParams();
   const workspaceId = params.workspaceId as string;
+
+  const { data: authData } = useQuery({
+    ...authQueries.me(),
+    staleTime: Infinity,
+  });
+  const currentMembership = authData?.memberships?.find((m) => m.workspaceId === workspaceId);
+  const currentRole = currentMembership?.role;
+  const canManage = canManageAccounts(currentRole);
 
   const [isConnectingYt, setIsConnectingYt] = useState(false);
   const [isConnectingLi, setIsConnectingLi] = useState(false);
@@ -112,48 +122,52 @@ export default function AccountsPage() {
         
         {!isLoading && !isError && accounts.length > 0 && (
           <div className="flex flex-col items-end gap-2">
-            <div className="flex gap-2">
-              {!hasYoutube && (
-                <Button onClick={handleConnectYoutube} disabled={isConnectingYt || isConnectingLi || isConnectingFb || isConnectingIg}>
-                  {isConnectingYt ? (
-                    <RefreshCw className="w-4 h-4 mr-2 animate-spin" aria-hidden="true" />
-                  ) : (
-                    <Plus className="w-4 h-4 mr-2" aria-hidden="true" />
-                  )}
-                  Connect YouTube
-                </Button>
-              )}
-              {!hasLinkedin && (
-                <Button onClick={handleConnectLinkedin} disabled={isConnectingYt || isConnectingLi || isConnectingFb || isConnectingIg}>
-                  {isConnectingLi ? (
-                    <RefreshCw className="w-4 h-4 mr-2 animate-spin" aria-hidden="true" />
-                  ) : (
-                    <Plus className="w-4 h-4 mr-2" aria-hidden="true" />
-                  )}
-                  Connect LinkedIn
-                </Button>
-              )}
-              {!hasFacebook && (
-                <Button onClick={handleConnectFacebook} disabled={isConnectingYt || isConnectingLi || isConnectingFb || isConnectingIg}>
-                  {isConnectingFb ? (
-                    <RefreshCw className="w-4 h-4 mr-2 animate-spin" aria-hidden="true" />
-                  ) : (
-                    <Plus className="w-4 h-4 mr-2" aria-hidden="true" />
-                  )}
-                  Connect Facebook
-                </Button>
-              )}
-              {!hasInstagram && (
-                <Button onClick={handleConnectInstagram} disabled={isConnectingYt || isConnectingLi || isConnectingFb || isConnectingIg}>
-                  {isConnectingIg ? (
-                    <RefreshCw className="w-4 h-4 mr-2 animate-spin" aria-hidden="true" />
-                  ) : (
-                    <Plus className="w-4 h-4 mr-2" aria-hidden="true" />
-                  )}
-                  Connect Instagram
-                </Button>
-              )}
-            </div>
+            {canManage ? (
+              <div className="flex gap-2">
+                {!hasYoutube && (
+                  <Button onClick={handleConnectYoutube} disabled={isConnectingYt || isConnectingLi || isConnectingFb || isConnectingIg}>
+                    {isConnectingYt ? (
+                      <RefreshCw className="w-4 h-4 mr-2 animate-spin" aria-hidden="true" />
+                    ) : (
+                      <Plus className="w-4 h-4 mr-2" aria-hidden="true" />
+                    )}
+                    Connect YouTube
+                  </Button>
+                )}
+                {!hasLinkedin && (
+                  <Button onClick={handleConnectLinkedin} disabled={isConnectingYt || isConnectingLi || isConnectingFb || isConnectingIg}>
+                    {isConnectingLi ? (
+                      <RefreshCw className="w-4 h-4 mr-2 animate-spin" aria-hidden="true" />
+                    ) : (
+                      <Plus className="w-4 h-4 mr-2" aria-hidden="true" />
+                    )}
+                    Connect LinkedIn
+                  </Button>
+                )}
+                {!hasFacebook && (
+                  <Button onClick={handleConnectFacebook} disabled={isConnectingYt || isConnectingLi || isConnectingFb || isConnectingIg}>
+                    {isConnectingFb ? (
+                      <RefreshCw className="w-4 h-4 mr-2 animate-spin" aria-hidden="true" />
+                    ) : (
+                      <Plus className="w-4 h-4 mr-2" aria-hidden="true" />
+                    )}
+                    Connect Facebook
+                  </Button>
+                )}
+                {!hasInstagram && (
+                  <Button onClick={handleConnectInstagram} disabled={isConnectingYt || isConnectingLi || isConnectingFb || isConnectingIg}>
+                    {isConnectingIg ? (
+                      <RefreshCw className="w-4 h-4 mr-2 animate-spin" aria-hidden="true" />
+                    ) : (
+                      <Plus className="w-4 h-4 mr-2" aria-hidden="true" />
+                    )}
+                    Connect Instagram
+                  </Button>
+                )}
+              </div>
+            ) : (
+              <p className="text-xs text-gray-500">Accounts are managed by your agency.</p>
+            )}
             {connectError && <p className="text-xs text-red-600">{connectError}</p>}
           </div>
         )}
@@ -211,48 +225,57 @@ export default function AccountsPage() {
           <p className="mt-2 text-sm text-gray-500 max-w-sm">
             You haven&apos;t connected any social media accounts to this workspace yet.
           </p>
-          <div className="mt-6 flex flex-col items-center gap-2">
-            <div className="flex gap-2">
-              <Button onClick={handleConnectYoutube} disabled={isConnectingYt || isConnectingLi || isConnectingFb || isConnectingIg}>
-                {isConnectingYt ? (
-                  <RefreshCw className="w-4 h-4 mr-2 animate-spin" aria-hidden="true" />
-                ) : (
-                  <Plus className="w-4 h-4 mr-2" aria-hidden="true" />
-                )}
-                Connect YouTube
-              </Button>
-              <Button onClick={handleConnectLinkedin} disabled={isConnectingYt || isConnectingLi || isConnectingFb || isConnectingIg}>
-                {isConnectingLi ? (
-                  <RefreshCw className="w-4 h-4 mr-2 animate-spin" aria-hidden="true" />
-                ) : (
-                  <Plus className="w-4 h-4 mr-2" aria-hidden="true" />
-                )}
-                Connect LinkedIn
-              </Button>
-              <Button onClick={handleConnectFacebook} disabled={isConnectingYt || isConnectingLi || isConnectingFb || isConnectingIg}>
-                {isConnectingFb ? (
-                  <RefreshCw className="w-4 h-4 mr-2 animate-spin" aria-hidden="true" />
-                ) : (
-                  <Plus className="w-4 h-4 mr-2" aria-hidden="true" />
-                )}
-                Connect Facebook
-              </Button>
-              <Button onClick={handleConnectInstagram} disabled={isConnectingYt || isConnectingLi || isConnectingFb || isConnectingIg}>
-                {isConnectingIg ? (
-                  <RefreshCw className="w-4 h-4 mr-2 animate-spin" aria-hidden="true" />
-                ) : (
-                  <Plus className="w-4 h-4 mr-2" aria-hidden="true" />
-                )}
-                Connect Instagram
-              </Button>
+          {canManage ? (
+            <div className="mt-6 flex flex-col items-center gap-2">
+              <div className="flex gap-2">
+                <Button onClick={handleConnectYoutube} disabled={isConnectingYt || isConnectingLi || isConnectingFb || isConnectingIg}>
+                  {isConnectingYt ? (
+                    <RefreshCw className="w-4 h-4 mr-2 animate-spin" aria-hidden="true" />
+                  ) : (
+                    <Plus className="w-4 h-4 mr-2" aria-hidden="true" />
+                  )}
+                  Connect YouTube
+                </Button>
+                <Button onClick={handleConnectLinkedin} disabled={isConnectingYt || isConnectingLi || isConnectingFb || isConnectingIg}>
+                  {isConnectingLi ? (
+                    <RefreshCw className="w-4 h-4 mr-2 animate-spin" aria-hidden="true" />
+                  ) : (
+                    <Plus className="w-4 h-4 mr-2" aria-hidden="true" />
+                  )}
+                  Connect LinkedIn
+                </Button>
+                <Button onClick={handleConnectFacebook} disabled={isConnectingYt || isConnectingLi || isConnectingFb || isConnectingIg}>
+                  {isConnectingFb ? (
+                    <RefreshCw className="w-4 h-4 mr-2 animate-spin" aria-hidden="true" />
+                  ) : (
+                    <Plus className="w-4 h-4 mr-2" aria-hidden="true" />
+                  )}
+                  Connect Facebook
+                </Button>
+                <Button onClick={handleConnectInstagram} disabled={isConnectingYt || isConnectingLi || isConnectingFb || isConnectingIg}>
+                  {isConnectingIg ? (
+                    <RefreshCw className="w-4 h-4 mr-2 animate-spin" aria-hidden="true" />
+                  ) : (
+                    <Plus className="w-4 h-4 mr-2" aria-hidden="true" />
+                  )}
+                  Connect Instagram
+                </Button>
+              </div>
+              {connectError && <p className="text-xs text-red-600">{connectError}</p>}
             </div>
-            {connectError && <p className="text-xs text-red-600">{connectError}</p>}
-          </div>
+          ) : (
+            <p className="mt-4 text-xs text-gray-500">Accounts are managed by your agency.</p>
+          )}
         </div>
       ) : (
         <div className="space-y-4" aria-label="List of connected accounts">
           {accounts.map((account) => (
-            <AccountCard key={account.id} account={account} onDisconnect={() => refetch()} />
+            <AccountCard
+              key={account.id}
+              account={account}
+              onDisconnect={canManage ? () => refetch() : undefined}
+              canManageAccounts={canManage}
+            />
           ))}
         </div>
       )}

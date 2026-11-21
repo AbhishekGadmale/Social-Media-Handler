@@ -7,6 +7,7 @@ import { api, ApiError } from '../lib/api/client';
 import React, { useEffect, useState } from 'react';
 import { Menu, BarChart, Users, LogOut, ChevronDown, Send, CreditCard, Settings, UserCheck } from 'lucide-react';
 import Link from 'next/link';
+import { canViewBilling } from '../lib/permissions';
 
 export function DashboardShell({ children }: { children: React.ReactNode }) {
   const params = useParams();
@@ -141,14 +142,22 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
     );
   }
 
-  const navItems = [
+  const canSeeBilling = canViewBilling(currentMembership.role);
+  const canSeeTeam =
+    currentMembership.role === 'OWNER' ||
+    currentMembership.role === 'MANAGER' ||
+    currentMembership.role === 'EDITOR';
+
+  const allNavItems = [
     { name: 'Overview / Analytics', href: `/${currentWorkspaceId}/analytics`, icon: BarChart },
     { name: 'Accounts', href: `/${currentWorkspaceId}/accounts`, icon: Users },
     { name: 'Publishing', href: `/${currentWorkspaceId}/publishing`, icon: Send },
-    { name: 'Team', href: `/${currentWorkspaceId}/team`, icon: UserCheck },
-    { name: 'Billing', href: `/${currentWorkspaceId}/billing`, icon: CreditCard },
+    { name: 'Team', href: `/${currentWorkspaceId}/team`, icon: UserCheck, show: canSeeTeam },
+    { name: 'Billing', href: `/${currentWorkspaceId}/billing`, icon: CreditCard, show: canSeeBilling },
     { name: 'Settings', href: `/${currentWorkspaceId}/settings`, icon: Settings },
   ];
+
+  const navItems = allNavItems.filter((item) => item.show ?? true);
 
   return (
     <div className="flex h-screen bg-gray-50 overflow-hidden">

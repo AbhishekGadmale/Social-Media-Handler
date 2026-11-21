@@ -238,4 +238,67 @@ describe('DashboardShell Verification Gate', () => {
       ).toBeInTheDocument();
     });
   });
+
+  describe('Role-Based Navigation Gating', () => {
+    it('approver sees Analytics/Accounts/Publishing/Settings and does NOT see Team or Billing; owner sees all', async () => {
+      // 1. As CLIENT_APPROVER
+      mockApiGet.mockResolvedValue({
+        user: mockVerifiedUser,
+        memberships: [
+          {
+            id: 'mem-approver',
+            userId: 'user-1',
+            workspaceId: 'ws-1',
+            role: 'CLIENT_APPROVER',
+            workspace: { id: 'ws-1', name: 'Test Workspace' },
+          },
+        ],
+      });
+
+      const { unmount } = renderWithShell();
+
+      await waitFor(() => {
+        expect(screen.getByRole('navigation')).toBeInTheDocument();
+      });
+
+      // Allowed navigation items for approver
+      expect(screen.getByRole('link', { name: /overview \/ analytics/i })).toBeInTheDocument();
+      expect(screen.getByRole('link', { name: /accounts/i })).toBeInTheDocument();
+      expect(screen.getByRole('link', { name: /publishing/i })).toBeInTheDocument();
+      expect(screen.getByRole('link', { name: /settings/i })).toBeInTheDocument();
+
+      // Disallowed navigation items for approver
+      expect(screen.queryByRole('link', { name: /^team$/i })).not.toBeInTheDocument();
+      expect(screen.queryByRole('link', { name: /^billing$/i })).not.toBeInTheDocument();
+
+      unmount();
+
+      // 2. As OWNER
+      mockApiGet.mockResolvedValue({
+        user: mockVerifiedUser,
+        memberships: [
+          {
+            id: 'mem-owner',
+            userId: 'user-1',
+            workspaceId: 'ws-1',
+            role: 'OWNER',
+            workspace: { id: 'ws-1', name: 'Test Workspace' },
+          },
+        ],
+      });
+
+      renderWithShell();
+
+      await waitFor(() => {
+        expect(screen.getByRole('navigation')).toBeInTheDocument();
+      });
+
+      expect(screen.getByRole('link', { name: /overview \/ analytics/i })).toBeInTheDocument();
+      expect(screen.getByRole('link', { name: /accounts/i })).toBeInTheDocument();
+      expect(screen.getByRole('link', { name: /publishing/i })).toBeInTheDocument();
+      expect(screen.getByRole('link', { name: /^team$/i })).toBeInTheDocument();
+      expect(screen.getByRole('link', { name: /^billing$/i })).toBeInTheDocument();
+      expect(screen.getByRole('link', { name: /settings/i })).toBeInTheDocument();
+    });
+  });
 });
