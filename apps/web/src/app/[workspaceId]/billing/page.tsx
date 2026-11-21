@@ -4,6 +4,8 @@ import { useParams, useSearchParams } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
 import { useState, useMemo } from 'react';
 import { billingQueries, BillingPlan } from '../../../lib/query/billing';
+import { authQueries } from '../../../lib/query/auth';
+import { canViewBilling } from '../../../lib/permissions';
 import { ApiError, api } from '../../../lib/api/client';
 import {
   AlertCircle,
@@ -30,13 +32,24 @@ export default function BillingPage() {
   const [isCancelling, setIsCancelling] = useState(false);
   const [cancelError, setCancelError] = useState<string | null>(null);
 
+  const { data: authData, isLoading: isAuthLoading } = useQuery({
+    ...authQueries.me(),
+    staleTime: Infinity,
+  });
+  const currentMembership = authData?.memberships?.find((m) => m.workspaceId === workspaceId);
+  const currentRole = currentMembership?.role;
+  const canView = canViewBilling(currentRole);
+
   const {
     data: billingData,
     isLoading: isBillingLoading,
     isError: isBillingError,
     error: billingError,
     refetch: refetchBilling,
-  } = useQuery(billingQueries.status(workspaceId));
+  } = useQuery({
+    ...billingQueries.status(workspaceId),
+    enabled: canView,
+  });
 
   const {
     data: plansData,
@@ -44,14 +57,20 @@ export default function BillingPage() {
     isError: isPlansError,
     error: plansError,
     refetch: refetchPlans,
-  } = useQuery(billingQueries.plans(workspaceId));
+  } = useQuery({
+    ...billingQueries.plans(workspaceId),
+    enabled: canView,
+  });
 
   const {
     data: invoicesData,
     isLoading: isInvoicesLoading,
     isError: isInvoicesError,
     refetch: refetchInvoices,
-  } = useQuery(billingQueries.invoices(workspaceId));
+  } = useQuery({
+    ...billingQueries.invoices(workspaceId),
+    enabled: canView,
+  });
 
   const isLoading = isBillingLoading || isPlansLoading;
   const isError = isBillingError || isPlansError;
@@ -181,6 +200,28 @@ export default function BillingPage() {
 
   const apiBaseUrl =
     process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api/v1';
+
+  if (!isAuthLoading && authData && !canView) {
+    return (
+      <div className="p-8 max-w-6xl mx-auto space-y-8">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">Workspace Billing</h1>
+          <p className="mt-2 text-sm text-gray-600">
+            Manage your subscription plans, view payment status, and download tax
+            invoices.
+          </p>
+        </div>
+        <div className="bg-red-50 border border-red-200 rounded-lg p-6 flex flex-col items-center text-center">
+          <AlertCircle className="w-10 h-10 text-red-500 mb-3" aria-hidden="true" />
+          <h3 className="text-lg font-medium text-red-800">Access Denied</h3>
+          <p className="mt-2 text-sm text-red-700">
+            You do not have permission to view billing information for this
+            workspace.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="p-8 max-w-6xl mx-auto space-y-8">

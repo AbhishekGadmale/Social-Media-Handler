@@ -7,9 +7,14 @@ import { Button } from './ui/button';
 interface AccountCardProps {
   account: ConnectedAccount;
   onDisconnect?: () => void;
+  canManageAccounts?: boolean;
 }
 
-export function AccountCard({ account, onDisconnect }: AccountCardProps) {
+export function AccountCard({
+  account,
+  onDisconnect,
+  canManageAccounts = true,
+}: AccountCardProps) {
   const isYoutube = account.provider === 'YOUTUBE';
   const [localStatus, setLocalStatus] = useState<AccountStatus | null>(null);
   const currentStatus = localStatus || account.status;
@@ -91,18 +96,20 @@ export function AccountCard({ account, onDisconnect }: AccountCardProps) {
                 <AlertCircle className="w-3.5 h-3.5" aria-hidden="true" />
                 Reconnection Needed
               </span>
-              <Button
-                onClick={() => handleReconnect()}
-                disabled={isReconnecting}
-                variant="outline"
-                size="sm"
-                className="h-8 text-xs font-medium border-yellow-200 text-yellow-700 hover:bg-yellow-50 hover:text-yellow-800"
-              >
-                {isReconnecting ? (
-                  <RefreshCw className="w-3.5 h-3.5 mr-1.5 animate-spin" aria-hidden="true" />
-                ) : null}
-                Reconnect {account.provider.toLowerCase()}
-              </Button>
+              {canManageAccounts ? (
+                <Button
+                  onClick={() => handleReconnect()}
+                  disabled={isReconnecting}
+                  variant="outline"
+                  size="sm"
+                  className="h-8 text-xs font-medium border-yellow-200 text-yellow-700 hover:bg-yellow-50 hover:text-yellow-800"
+                >
+                  {isReconnecting ? (
+                    <RefreshCw className="w-3.5 h-3.5 mr-1.5 animate-spin" aria-hidden="true" />
+                  ) : null}
+                  Reconnect {account.provider.toLowerCase()}
+                </Button>
+              ) : null}
               {error && <p className="text-xs text-red-600">{error}</p>}
             </div>
           ) : isDisconnected ? (
@@ -120,22 +127,24 @@ export function AccountCard({ account, onDisconnect }: AccountCardProps) {
 
         {/* Disconnect or Reconnect actions */}
         {isDisconnected ? (
-          <div className="flex flex-col items-end gap-1">
-            <Button
-              onClick={() => handleReconnect()}
-              disabled={isReconnecting}
-              variant="outline"
-              size="sm"
-              className="h-8 text-xs font-medium"
-            >
-              {isReconnecting ? (
-                <RefreshCw className="w-3.5 h-3.5 mr-1.5 animate-spin" aria-hidden="true" />
-              ) : null}
-              Reconnect {account.provider.toLowerCase()}
-            </Button>
-            {error && <p className="text-xs text-red-600">{error}</p>}
-          </div>
-        ) : !showConfirmDisconnect ? (
+          canManageAccounts ? (
+            <div className="flex flex-col items-end gap-1">
+              <Button
+                onClick={() => handleReconnect()}
+                disabled={isReconnecting}
+                variant="outline"
+                size="sm"
+                className="h-8 text-xs font-medium"
+              >
+                {isReconnecting ? (
+                  <RefreshCw className="w-3.5 h-3.5 mr-1.5 animate-spin" aria-hidden="true" />
+                ) : null}
+                Reconnect {account.provider.toLowerCase()}
+              </Button>
+              {error && <p className="text-xs text-red-600">{error}</p>}
+            </div>
+          ) : null
+        ) : canManageAccounts && !showConfirmDisconnect ? (
           <div className="flex items-center gap-2">
             <Button
               onClick={() => setShowConfirmDisconnect(true)}
@@ -148,7 +157,7 @@ export function AccountCard({ account, onDisconnect }: AccountCardProps) {
               Disconnect
             </Button>
           </div>
-        ) : (
+        ) : canManageAccounts && showConfirmDisconnect ? (
           <div className="flex flex-col items-end gap-1.5 p-2 bg-red-50/50 border border-red-100 rounded-md">
             <p className="text-xs text-red-700 max-w-[220px] text-right">
               Disconnect account? Publishing and sync will stop.
@@ -182,7 +191,7 @@ export function AccountCard({ account, onDisconnect }: AccountCardProps) {
             </div>
             {disconnectError && <p className="text-xs text-red-600 mt-1">{disconnectError}</p>}
           </div>
-        )}
+        ) : null}
 
         <div className="flex flex-col gap-1 items-end mt-2" aria-label="Account capabilities">
           {account.capabilities?.includes('POST_PUBLISH') ? (
@@ -191,7 +200,7 @@ export function AccountCard({ account, onDisconnect }: AccountCardProps) {
             <div className="flex flex-col items-end gap-1 mt-1">
               <span className="text-xs text-red-600 bg-red-50 px-2 py-0.5 rounded font-medium border border-red-200">Publishing: Unavailable</span>
               <p className="text-[10px] text-gray-500 max-w-[150px] text-right leading-tight">Reconnect account to grant required permission</p>
-              {isActive && (
+              {isActive && canManageAccounts && (
                 <Button
                   onClick={() => handleReconnect(true)}
                   disabled={isReconnecting}

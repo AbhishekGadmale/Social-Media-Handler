@@ -8,13 +8,23 @@ import { api } from '../../../../lib/api/client';
 import { ArrowLeft, Loader2, Save } from 'lucide-react';
 import Link from 'next/link';
 import { Post } from '../../../../lib/query/publishing';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { authQueries } from '../../../../lib/query/auth';
+import { canPublish } from '../../../../lib/permissions';
 
 export default function NewDraftPage() {
   const params = useParams();
   const workspaceId = params.workspaceId as string;
   const router = useRouter();
   const queryClient = useQueryClient();
+
+  const { data: authData, isLoading: isAuthLoading } = useQuery({
+    ...authQueries.me(),
+    staleTime: Infinity,
+  });
+  const currentMembership = authData?.memberships?.find((m) => m.workspaceId === workspaceId);
+  const currentRole = currentMembership?.role;
+  const canCreate = canPublish(currentRole);
 
   const [content, setContent] = useState('');
   const [mediaAssetIds, setMediaAssetIds] = useState<string[]>([]);
@@ -46,6 +56,24 @@ export default function NewDraftPage() {
       setIsSaving(false);
     }
   };
+
+  if (!isAuthLoading && authData && !canCreate) {
+    return (
+      <div className="p-8 max-w-4xl mx-auto">
+        <div className="mb-6 flex items-center">
+          <Link href={`/${workspaceId}/publishing`} className="text-gray-500 hover:text-gray-900 mr-4">
+            <ArrowLeft className="w-5 h-5" />
+          </Link>
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900">Access Denied</h1>
+          </div>
+        </div>
+        <div className="bg-red-50 border border-red-200 rounded-lg p-6 text-center">
+          <p className="text-red-700">Access denied — you don&apos;t have permission to create posts in this workspace.</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="p-8 max-w-4xl mx-auto">

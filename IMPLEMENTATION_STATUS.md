@@ -6089,5 +6089,90 @@ A repository-wide search was performed for strings `'4,999'`, `'9,999'`, `'39,99
    - PR #95 is open at the reviewed head with CI 6/6 green; next step is the docs-fix re-review, then merge by the owner.
    - Do NOT merge on this prompt alone. Live deployment remains STRICT NO-GO.
 
+## 82. Role-Based UI Gating for CLIENT_APPROVER / VIEWER & API billing.view Tightening
+
+### 1. Summary & Motivation
+
+- **Status**: implemented on branch `fix/approver-ui-rbac` (pending PR against `main`)
+- **Scope & Objectives**:
+  - Web UI role-based access gating: Previously, `CLIENT_APPROVER` and `VIEWER` roles had restricted permissions in the API PermissionMatrix, but the web frontend displayed all management controls (Connect/Disconnect accounts, New Post, publishing controls, branding forms, and billing navigation). Clicking them triggered confusing 403 API errors.
+  - Implement a single web permissions truth (`apps/web/src/lib/permissions.ts`) exporting 8 explicit helper functions mirroring API capabilities: `canManageAccounts`, `canPublish`, `canApprove`, `canManageMembers`, `canManageBilling`, `canViewBilling`, `canManageBranding`, `canGenerateReports`.
+  - Gate UI surfaces across the entire application:
+    - **Dashboard Navigation (`DashboardShell`)**: Hide Billing unless `canViewBilling` (`OWNER`, `MANAGER`, `EDITOR`). Hide Team unless `OWNER`, `MANAGER`, or `EDITOR`. Analytics, Accounts, Publishing, and Settings remain accessible.
+    - **Accounts (`accounts/page.tsx` & `account-card.tsx`)**: When `!canManageAccounts`, hide Connect section/buttons, hide Disconnect buttons, hide "Grant Publishing Access", display status badges as read-only, and show helper text "Accounts are managed by your agency."
+    - **Publishing List (`publishing/page.tsx`)**: Hide "New Post" buttons unless `canPublish`.
+    - **Publishing Detail (`publishing/[postId]/page.tsx`)**: Textarea disabled and Save Changes button hidden unless `canPublish`. "Add Destination" hidden unless `canPublish`. On destinations, hide all publication lifecycle action controls (Publish, Publish Now, Retry, Schedule, Reschedule, Unschedule, Cancel, Delete, and Reconcile) unless `canPublish`. Platform canonical link remains visible for published posts. In `ApprovalCard`, "Send for Approval" rendered only when `canPublish`, while "Approve Post" and "Request Changes" rendered only when `canApprove`.
+    - **New Draft (`publishing/new/page.tsx`)**: If role is loaded and `!canPublish`, render an inline access-denied state ("Access denied — you don't have permission to create posts in this workspace.") without redirect.
+    - **Settings (`settings/page.tsx`)**: Workspace Branding card rendered only when `canManageBranding` (`OWNER`, `MANAGER`). Personal settings (Active Sessions, Change Password) remain accessible to all roles.
+    - **Billing (`billing/page.tsx`)**: When loaded and `!canViewBilling`, render access-denied state ("You do not have permission to view billing information for this workspace.") and disable billing API queries.
+  - API permission tightening: Tighten `billing.view` in `apps/api/src/modules/auth/guards/permission.guard.ts` from `['OWNER', 'MANAGER', 'EDITOR', 'CLIENT_APPROVER', 'VIEWER']` to `['OWNER', 'MANAGER', 'EDITOR']`. Document rationale in `DECISIONS.md`.
+- **Out of Scope**:
+  - Changes to Team page (already gated to OWNER/MANAGER).
+  - Changes to client approval state machine or publishing worker.
+  - Additional roles or modifications to other permissions.
+
+### 2. Architecture & Implementation Details
+
+#### A. Web Permissions Truth (`apps/web/src/lib/permissions.ts`)
+- Centralized helper functions mapping roles to actions:
+  - `canManageAccounts(role)`: `OWNER`, `MANAGER`
+  - `canPublish(role)`: `OWNER`, `MANAGER`, `EDITOR`
+  - `canApprove(role)`: `OWNER`, `MANAGER`, `CLIENT_APPROVER`
+  - `canManageMembers(role)`: `OWNER`, `MANAGER`
+  - `canManageBilling(role)`: `OWNER`
+  - `canViewBilling(role)`: `OWNER`, `MANAGER`, `EDITOR`
+  - `canManageBranding(role)`: `OWNER`, `MANAGER`
+  - `canGenerateReports(role)`: `OWNER`, `MANAGER`, `EDITOR`
+- Full unit test coverage in `apps/web/src/lib/permissions.spec.ts` (8/8 tests pass).
+
+#### B. API Permission Matrix Tightening (`apps/api/src/modules/auth/guards/permission.guard.ts`)
+- Tightened `billing.view` permission from all 5 roles down to `['OWNER', 'MANAGER', 'EDITOR']`.
+- Rationale recorded in `DECISIONS.md`: external clients (`CLIENT_APPROVER`) and external viewers (`VIEWER`) should not have access to agency subscription pricing (Solo/Studio/Agency/Founding tiers), billing intervals, or enterprise GST invoices.
+- Comprehensive unit test coverage in `apps/api/src/modules/auth/guards/permission.guard.spec.ts` (8/8 tests pass).
+
+#### C. Role-Based UI Gating Across Web Routes
+- **DashboardShell**: Filters navigation items based on current workspace membership role (`canViewBilling` for Billing, `OWNER`/`MANAGER`/`EDITOR` for Team).
+- **Accounts**: Renders read-only UI for `CLIENT_APPROVER` and `VIEWER`, hiding Connect and Disconnect controls while displaying "Accounts are managed by your agency." and preserving connection status badges.
+- **Publishing & Post Detail**: Read-only publication preview for approvers with interactive Approve and Request Changes controls; write, edit, schedule, cancel, retry, reconcile, and delete controls restricted strictly to publishers (`canPublish`).
+- **New Post & Billing**: Guarded with inline access-denied messages when accessed directly by unauthorized roles.
+- **Settings**: Gated Workspace Branding card to `OWNER` and `MANAGER`, while leaving personal Active Sessions and Change Password cards open to all members.
+
+### 3. Verification & Test Evidence
+
+- **Web Unit Tests (`apps/web`)**:
+  - `apps/web/src/lib/permissions.spec.ts`: **8/8 tests PASS**.
+  - `apps/web/src/components/dashboard-shell.spec.tsx`: **6/6 tests PASS** (delta: +2 tests for role navigation gating).
+  - `apps/web/src/app/[workspaceId]/accounts/page.spec.tsx`: **13/13 tests PASS** (delta: +2 tests for read-only gating).
+  - `apps/web/src/components/account-card.spec.tsx`: **16/16 tests PASS**.
+  - `apps/web/src/app/[workspaceId]/publishing/page.spec.tsx`: **2/2 tests PASS** (delta: +1 test for New Post gating).
+  - `apps/web/src/app/[workspaceId]/publishing/new/page.spec.tsx`: **2/2 tests PASS** (new test suite).
+  - `apps/web/src/app/[workspaceId]/publishing/[postId]/page.spec.tsx`: **44/44 tests PASS** (delta: +2 tests for publisher vs approver controls).
+  - `apps/web/src/app/[workspaceId]/settings/page.spec.tsx`: **19/19 tests PASS** (delta: +2 tests for branding gating).
+  - `apps/web/src/app/[workspaceId]/billing/page.spec.tsx`: **11/11 tests PASS** (delta: +2 tests for billing access denial).
+  - Full `@agency-os/web` suite: **28/28 test files PASS, 309/309 tests PASS** (delta: +2 files, +21 tests).
+- **API Unit Tests (`apps/api`)**:
+  - `apps/api/src/modules/auth/guards/permission.guard.spec.ts`: **8/8 tests PASS** (new test suite).
+  - Total API suite: **688/688 tests PASS** in CI.
+- **Code Quality & Typecheck**:
+  - `apps/web` typecheck (`tsc --noEmit`): **0 errors**.
+  - `apps/api` typecheck (`tsc --noEmit`): **0 errors**.
+  - `apps/web` ESLint: **0 errors**.
+  - `apps/api` ESLint: **0 errors**.
+
+### 4. Release Gate & Next Steps
+
+1. **CI Quality Gates**:
+   - To be verified 6/6 green on the PR head.
+2. **Release Gate**:
+   - **Live Deployment**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending external infrastructure provisioning, live email delivery verification, live payment credentials, and disaster recovery rehearsals G18/G19).
+3. **Next Steps**:
+   - Commit changes on branch `fix/approver-ui-rbac`.
+   - Push branch to remote.
+   - Open Pull Request against `main`.
+   - Monitor CI check runs (all 6/6 green).
+   - Update §82 with final PR #, HEAD SHA, CI timestamps, and test counts.
+   - Do NOT merge on this prompt alone. Live deployment remains STRICT NO-GO.
+
+
 
 

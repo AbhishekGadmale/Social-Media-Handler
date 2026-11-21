@@ -39,12 +39,24 @@ vi.mock('../../../lib/api/client', () => ({
   ApiError: MockApiError,
 }));
 
-function renderWithClient(ui: React.ReactElement) {
+function renderWithClient(ui: React.ReactElement, role = 'OWNER') {
   const queryClient = new QueryClient({
     defaultOptions: {
       queries: { retry: false, gcTime: 0 },
       mutations: { retry: false },
     },
+  });
+  queryClient.setQueryData(['auth', 'me'], {
+    user: { id: 'usr-1', email: 'owner@example.com' },
+    memberships: [
+      {
+        id: 'mem-1',
+        workspaceId: 'ws-123',
+        userId: 'usr-1',
+        role,
+        workspace: { id: 'ws-123', name: 'Acme Agency' },
+      },
+    ],
   });
 
   return render(
@@ -518,6 +530,44 @@ describe('SettingsPage - Change Password', () => {
       await waitFor(() => {
         expect(screen.getByText('Workspace is read-only.')).toBeInTheDocument();
       });
+    });
+  });
+
+  describe('Role-based UI gating', () => {
+    it('CLIENT_APPROVER sees Active Sessions and Change Password, but Workspace Branding is hidden', async () => {
+      mockApiGet.mockImplementation((url: string) => {
+        if (url.includes('sessions')) return Promise.resolve({ sessions: [] });
+        return Promise.resolve({});
+      });
+
+      renderWithClient(<SettingsPage />, 'CLIENT_APPROVER');
+
+      // Personal sections are visible
+      expect(await screen.findByRole('heading', { name: 'Active Sessions' })).toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: 'Change Password' })).toBeInTheDocument();
+
+      // Branding card is hidden
+      expect(screen.queryByTestId('branding-card')).not.toBeInTheDocument();
+      expect(screen.queryByRole('heading', { name: 'Workspace Branding' })).not.toBeInTheDocument();
+    });
+
+    it('OWNER sees Workspace Branding card', async () => {
+      mockApiGet.mockImplementation((url: string) => {
+        if (url.includes('sessions')) return Promise.resolve({ sessions: [] });
+        if (url.includes('branding')) {
+          return Promise.resolve({
+            brandDisplayName: 'Acme Media',
+            brandLogoUrl: '',
+            brandAccentColor: '#111827',
+          });
+        }
+        return Promise.resolve({});
+      });
+
+      renderWithClient(<SettingsPage />, 'OWNER');
+
+      expect(await screen.findByTestId('branding-card')).toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: 'Workspace Branding' })).toBeInTheDocument();
     });
   });
 });

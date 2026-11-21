@@ -37,6 +37,18 @@ let queryClient: QueryClient;
 beforeEach(() => {
   vi.clearAllMocks();
   queryClient = new QueryClient();
+  queryClient.setQueryData(['auth', 'me'], {
+    user: { id: 'usr-1', email: 'owner@example.com' },
+    memberships: [
+      {
+        id: 'mem-1',
+        workspaceId: 'ws-1',
+        userId: 'usr-1',
+        role: 'OWNER',
+        workspace: { id: 'ws-1', name: 'Test Agency' },
+      },
+    ],
+  });
   vi.stubGlobal('alert', vi.fn());
 });
 
@@ -915,6 +927,103 @@ describe('Client Approvals UI', () => {
     const publishBtn = await screen.findByRole('button', { name: /Publish/i });
     expect(publishBtn).toBeDisabled();
     expect(screen.getByTestId('approval-gate-notice')).toBeInTheDocument();
+  });
+
+  test('role CLIENT_APPROVER: textarea disabled, no save button, no publish/schedule buttons, but approval controls visible for PENDING', async () => {
+    queryClient.setQueryData(['auth', 'me'], {
+      user: { id: 'usr-2', email: 'approver@example.com' },
+      memberships: [
+        {
+          id: 'mem-2',
+          workspaceId: 'ws-1',
+          userId: 'usr-2',
+          role: 'CLIENT_APPROVER',
+          workspace: { id: 'ws-1', name: 'Test Agency' },
+        },
+      ],
+    });
+
+    queryClient.setQueryData(['workspaces', 'ws-1', 'posts', 'post-1'], {
+      id: 'post-1',
+      workspaceId: 'ws-1',
+      content: 'Draft content for review',
+      status: 'DRAFT',
+      approvalStatus: 'PENDING',
+      media: [],
+      variants: [
+        {
+          id: 'var-1',
+          postId: 'post-1',
+          socialAccountId: 'acc-1',
+          status: 'DRAFT',
+          externalPostId: null,
+          canonicalUrl: null,
+          socialAccount: { name: 'My LinkedIn', provider: 'LINKEDIN' },
+        },
+      ],
+    });
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <PostDetailPage />
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByDisplayValue('Draft content for review')).toBeDisabled();
+    expect(screen.queryByRole('button', { name: /save changes/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^publish$/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /schedule/i })).not.toBeInTheDocument();
+    expect(screen.queryByText(/add destination/i)).not.toBeInTheDocument();
+
+    // Approver actions are present for PENDING post
+    expect(screen.getByTestId('approve-post-button')).toBeInTheDocument();
+    expect(screen.getByTestId('request-changes-toggle-button')).toBeInTheDocument();
+  });
+
+  test('role EDITOR: cannot approve post (approval buttons hidden), but has publisher controls when APPROVED', async () => {
+    queryClient.setQueryData(['auth', 'me'], {
+      user: { id: 'usr-3', email: 'editor@example.com' },
+      memberships: [
+        {
+          id: 'mem-3',
+          workspaceId: 'ws-1',
+          userId: 'usr-3',
+          role: 'EDITOR',
+          workspace: { id: 'ws-1', name: 'Test Agency' },
+        },
+      ],
+    });
+
+    queryClient.setQueryData(['workspaces', 'ws-1', 'posts', 'post-1'], {
+      id: 'post-1',
+      workspaceId: 'ws-1',
+      content: 'Pending editor post',
+      status: 'DRAFT',
+      approvalStatus: 'PENDING',
+      media: [],
+      variants: [
+        {
+          id: 'var-1',
+          postId: 'post-1',
+          socialAccountId: 'acc-1',
+          status: 'DRAFT',
+          externalPostId: null,
+          canonicalUrl: null,
+          socialAccount: { name: 'My LinkedIn', provider: 'LINKEDIN' },
+        },
+      ],
+    });
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <PostDetailPage />
+      </QueryClientProvider>,
+    );
+
+    // Editor cannot approve
+    expect(await screen.findByDisplayValue('Pending editor post')).toBeInTheDocument();
+    expect(screen.queryByTestId('approve-post-button')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('request-changes-toggle-button')).not.toBeInTheDocument();
   });
 });
 
