@@ -6180,8 +6180,10 @@ A repository-wide search was performed for strings `'4,999'`, `'9,999'`, `'39,99
 
 ### 1. Summary & Motivation
 
-- **Status**: PR pending against `main` on branch `feat/client-layer` (base commit `b179a210389170424c64d9be3618c3ec176ac3c6`)
+- **Status**: PR #97 open on branch `feat/client-layer` (reviewed head `f7cdf5d2e8ef688fc8deabfef1f25302ec2de7c7`)
+- **Pull Request**: [#97](https://github.com/AbhishekGadmale/Social-Media-Handler/pull/97)
 - **Branch**: `feat/client-layer`
+- **Reviewed Head SHA**: `f7cdf5d2e8ef688fc8deabfef1f25302ec2de7c7` (`f7cdf5d`)
 - **Scope & Objectives**:
   - Agencies manage multiple clients within a single workspace, with billing retained at the workspace tier. Prior to this build, social accounts formed a flat pool, `CLIENT_APPROVER` members had workspace-wide visibility into all clients' accounts, posts, and analytics, and white-label report branding existed only at the workspace level.
   - Deliver a client layer across database, API, and web frontend adhering strictly to the 7 locked design decisions:
@@ -6217,12 +6219,12 @@ A repository-wide search was performed for strings `'4,999'`, `'9,999'`, `'39,99
   - `PermissionGuard`: Added permissions `'clients.view': ['OWNER', 'MANAGER', 'EDITOR']` and `'clients.manage': ['OWNER', 'MANAGER']`.
 - **Clients Module (`apps/api/src/modules/clients/`)**:
   - `ClientsService`: Implements `createClient`, `listClients` (including computed `accountCount` and `scopedMemberCount`), `getClient`, `updateClient`, and `deleteClient` (enforces 409 Conflict if scoped approvers remain assigned). Emits `CLIENT_CREATED`, `CLIENT_UPDATED`, `CLIENT_DELETED` audit logs.
-  - `ClientsController`: Exposes `POST`, `GET`, `GET :clientId`, `PATCH :clientId`, and `DELETE :clientId` under `/workspaces/:workspaceId/clients`. Protected by `AuthGuard`, `WorkspaceGuard`, `PermissionGuard`, and `WorkspaceWritableGuard` on mutations.
+  - `ClientsController`: Exposes `POST`, `GET`, `GET :clientId`, `PATCH :clientId`, and `DELETE :clientId` under `/v1/workspaces/:workspaceId/clients`. Protected by `AuthGuard`, `WorkspaceGuard`, `PermissionGuard`, and `WorkspaceWritableGuard` on mutations.
 - **Accounts Module (`apps/api/src/modules/accounts/`)**:
   - `AccountsService`:
     - `listWorkspaceAccounts`: Includes `clientId` and `client` object in queries; scopes by `scopeClientId` if passed from scoped approver.
     - `getWorkspaceAccount`: Returns 404 NotFound if a scoped approver requests an account belonging to another client or unassigned.
-    - `assignClient`: Implements `PATCH /workspaces/:workspaceId/accounts/:accountId/client`, validating client exists in workspace, updating assignment, and recording `ACCOUNT_CLIENT_ASSIGNED` audit log.
+    - `assignClient`: Implements `PATCH /v1/workspaces/:workspaceId/accounts/:accountId/client`, validating client exists in workspace, updating assignment, and recording `ACCOUNT_CLIENT_ASSIGNED` audit log.
 - **Publishing Module (`apps/api/src/modules/publishing/`)**:
   - `PublishingApplicationService`:
     - `getPosts`: Filters posts for scoped approvers so that only posts targeting their client's accounts are returned.
@@ -6296,11 +6298,11 @@ A repository-wide search was performed for strings `'4,999'`, `'9,999'`, `'39,99
 ### 4. Release Gate & Next Steps
 
 1. **CI Quality Gates**:
-   - To be verified 6/6 green on the PR head.
+   - CI on reviewed head `f7cdf5d` is 6/6 green (all 2026-11-22): GitGuardian Security Checks 17:09:34Z, Application Builds 17:10:21Z, Code Quality (Lint & Typecheck) 17:10:56Z, API E2E Tests 17:11:24Z, Tests 17:11:25Z, Docker Build & Smoke Test 17:17:23Z. Standing note: CI re-runs on any docs-fix head and must be re-verified 6/6 green there before merge.
 2. **Release Gate**:
    - **Live Deployment**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending external infrastructure provisioning, live email delivery verification, live payment credentials, and disaster recovery rehearsals G18/G19).
 3. **Next Steps**:
-   - Open Pull Request against `main` for review.
+   - PR #97 is open at reviewed head `f7cdf5d` with CI 6/6 green; next step is the docs-fix re-review, then merge by the owner.
    - Do NOT merge on this prompt alone. Live deployment remains STRICT NO-GO.
 
 
