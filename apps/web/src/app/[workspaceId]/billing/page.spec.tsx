@@ -62,9 +62,21 @@ vi.mock('../../../lib/api/client', () => ({
   },
 }));
 
-const createWrapper = () => {
+const createWrapper = (role = 'OWNER') => {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false, gcTime: 0 } },
+  });
+  queryClient.setQueryData(['auth', 'me'], {
+    user: { id: 'usr-1', email: 'owner@example.com' },
+    memberships: [
+      {
+        id: 'mem-1',
+        workspaceId: 'ws-test-123',
+        userId: 'usr-1',
+        role,
+        workspace: { id: 'ws-test-123', name: 'Acme Agency' },
+      },
+    ],
   });
   const Wrapper = ({ children }: { children: React.ReactNode }) => (
     <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
@@ -428,5 +440,29 @@ describe('BillingPage', () => {
         screen.getByText('Subscription cancellation failed due to pending invoice'),
       ).toBeInTheDocument();
     });
+  });
+
+  it('renders Access Denied state for CLIENT_APPROVER without querying billing', async () => {
+    render(<BillingPage />, { wrapper: createWrapper('CLIENT_APPROVER') });
+
+    expect(await screen.findByRole('heading', { name: 'Access Denied' })).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        'You do not have permission to view billing information for this workspace.',
+      ),
+    ).toBeInTheDocument();
+    expect(mockApiGet).not.toHaveBeenCalled();
+  });
+
+  it('renders Access Denied state for VIEWER without querying billing', async () => {
+    render(<BillingPage />, { wrapper: createWrapper('VIEWER') });
+
+    expect(await screen.findByRole('heading', { name: 'Access Denied' })).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        'You do not have permission to view billing information for this workspace.',
+      ),
+    ).toBeInTheDocument();
+    expect(mockApiGet).not.toHaveBeenCalled();
   });
 });

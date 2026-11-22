@@ -4,6 +4,8 @@
 import { useParams, useRouter } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
 import { publishingQueries, PostStatus, ApprovalStatus } from '../../../lib/query/publishing';
+import { authQueries } from '../../../lib/query/auth';
+import { canPublish } from '../../../lib/permissions';
 import { Button } from '../../../components/ui/button';
 import { Plus, Clock, CheckCircle2, AlertCircle, FileText, Send, Loader2 } from 'lucide-react';
 import Link from 'next/link';
@@ -60,6 +62,13 @@ export default function PublishingPage() {
   const router = useRouter();
 
   const { data: posts = [], isLoading, isError } = useQuery(publishingQueries.list(workspaceId));
+  const { data: authData } = useQuery({
+    ...authQueries.me(),
+    staleTime: Infinity,
+  });
+  const currentMembership = authData?.memberships?.find((m) => m.workspaceId === workspaceId);
+  const currentRole = currentMembership?.role;
+  const canCreate = canPublish(currentRole);
 
   return (
     <div className="p-8 max-w-6xl mx-auto">
@@ -71,12 +80,14 @@ export default function PublishingPage() {
           </p>
         </div>
         
-        <div>
-          <Button onClick={() => router.push(`/${workspaceId}/publishing/new`)}>
-            <Plus className="w-4 h-4 mr-2" aria-hidden="true" />
-            New Post
-          </Button>
-        </div>
+        {canCreate && (
+          <div>
+            <Button onClick={() => router.push(`/${workspaceId}/publishing/new`)}>
+              <Plus className="w-4 h-4 mr-2" aria-hidden="true" />
+              New Post
+            </Button>
+          </div>
+        )}
       </div>
 
       {isLoading ? (
@@ -96,12 +107,14 @@ export default function PublishingPage() {
           </div>
           <h3 className="text-lg font-medium text-gray-900">No publications yet</h3>
           <p className="mt-2 text-sm text-gray-500 max-w-sm mb-6">
-            Get started by creating your first post.
+            {canCreate ? 'Get started by creating your first post.' : 'No posts have been created in this workspace yet.'}
           </p>
-          <Button onClick={() => router.push(`/${workspaceId}/publishing/new`)}>
-            <Plus className="w-4 h-4 mr-2" aria-hidden="true" />
-            New Post
-          </Button>
+          {canCreate && (
+            <Button onClick={() => router.push(`/${workspaceId}/publishing/new`)}>
+              <Plus className="w-4 h-4 mr-2" aria-hidden="true" />
+              New Post
+            </Button>
+          )}
         </div>
       ) : (
         <div className="bg-white shadow overflow-hidden sm:rounded-md">

@@ -34,7 +34,7 @@ export const PermissionMatrix: Record<string, string[]> = {
   'publishing.retry': ['OWNER', 'MANAGER', 'EDITOR'],
   'publishing.reconcile': ['OWNER', 'MANAGER'],
   'audit.view': ['OWNER', 'MANAGER'],
-  'billing.view': ['OWNER', 'MANAGER', 'EDITOR', 'CLIENT_APPROVER', 'VIEWER'],
+  'billing.view': ['OWNER', 'MANAGER', 'EDITOR'],
   'billing.manage': ['OWNER'],
   'reports.generate': ['OWNER', 'MANAGER', 'EDITOR'],
   'branding.manage': ['OWNER', 'MANAGER'],

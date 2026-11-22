@@ -20,6 +20,18 @@ let queryClient: QueryClient;
 beforeEach(() => {
   vi.clearAllMocks();
   queryClient = new QueryClient();
+  queryClient.setQueryData(['auth', 'me'], {
+    user: { id: 'usr-1', email: 'test@example.com' },
+    memberships: [
+      {
+        id: 'mem-1',
+        workspaceId: 'ws-1',
+        userId: 'usr-1',
+        role: 'OWNER',
+        workspace: { id: 'ws-1', name: 'Test Agency' },
+      },
+    ],
+  });
 });
 
 test('renders approval status badges for pending, approved, and changes requested posts', async () => {
@@ -76,4 +88,33 @@ test('renders approval status badges for pending, approved, and changes requeste
   expect(screen.getByText('Approved')).toBeInTheDocument();
   expect(screen.getByText('Changes Requested')).toBeInTheDocument();
   expect(screen.queryByText('Not Submitted')).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: /new post/i })).toBeInTheDocument();
+});
+
+test('hides New Post button in header and empty state for CLIENT_APPROVER', async () => {
+  queryClient.setQueryData(['auth', 'me'], {
+    user: { id: 'usr-2', email: 'approver@example.com' },
+    memberships: [
+      {
+        id: 'mem-2',
+        workspaceId: 'ws-1',
+        userId: 'usr-2',
+        role: 'CLIENT_APPROVER',
+        workspace: { id: 'ws-1', name: 'Test Agency' },
+      },
+    ],
+  });
+
+  // Test empty state
+  queryClient.setQueryData(['workspaces', 'ws-1', 'posts', { skip: 0, take: 50 }], []);
+
+  render(
+    <QueryClientProvider client={queryClient}>
+      <PublishingPage />
+    </QueryClientProvider>,
+  );
+
+  expect(await screen.findByText('No publications yet')).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: /new post/i })).not.toBeInTheDocument();
+  expect(screen.getByText('No posts have been created in this workspace yet.')).toBeInTheDocument();
 });

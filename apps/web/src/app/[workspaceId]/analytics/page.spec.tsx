@@ -91,8 +91,22 @@ const createTestQueryClient = () =>
     },
   });
 
-const renderDashboard = (client?: QueryClient) => {
+const renderDashboard = (client?: QueryClient, role: string = 'OWNER') => {
   const queryClient = client || createTestQueryClient();
+  if (!queryClient.getQueryData(['auth', 'me'])) {
+    queryClient.setQueryData(['auth', 'me'], {
+      user: { id: 'usr-1', email: 'user@example.com' },
+      memberships: [
+        {
+          id: 'mem-1',
+          workspaceId: currentWorkspaceId,
+          userId: 'usr-1',
+          role,
+          workspace: { id: currentWorkspaceId, name: 'Test Workspace' },
+        },
+      ],
+    });
+  }
   return render(
     <QueryClientProvider client={queryClient}>
       <AnalyticsDashboard />
@@ -348,6 +362,29 @@ describe('AnalyticsDashboard Page', () => {
           'Date range cannot exceed 366 days.'
         );
       });
+    });
+
+    it('does not render client report card when user is CLIENT_APPROVER, while analytics overview remains visible', async () => {
+      vi.mocked(api.get).mockResolvedValueOnce(mockOverviewData);
+      renderDashboard(undefined, 'CLIENT_APPROVER');
+
+      // Analytics data renders
+      expect(await screen.findByText('12,500')).toBeInTheDocument();
+      expect(screen.getByText('Total Followers')).toBeInTheDocument();
+      expect(screen.getByText('Agency LinkedIn')).toBeInTheDocument();
+
+      // Report card is NOT rendered
+      expect(screen.queryByTestId('client-report-card')).not.toBeInTheDocument();
+      expect(screen.queryByText('Client Performance Report')).not.toBeInTheDocument();
+    });
+
+    it('renders client report card when user is EDITOR', async () => {
+      vi.mocked(api.get).mockResolvedValueOnce(mockOverviewData);
+      renderDashboard(undefined, 'EDITOR');
+
+      expect(await screen.findByText('12,500')).toBeInTheDocument();
+      expect(screen.getByTestId('client-report-card')).toBeInTheDocument();
+      expect(screen.getByText('Client Performance Report')).toBeInTheDocument();
     });
   });
 });
