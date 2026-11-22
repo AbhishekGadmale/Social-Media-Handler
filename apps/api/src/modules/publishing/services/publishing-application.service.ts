@@ -152,11 +152,27 @@ export class PublishingApplicationService {
     });
   }
 
-  async getPosts(workspaceId: string, take = 50, skip = 0) {
+  async getPosts(
+    workspaceId: string,
+    take = 50,
+    skip = 0,
+    scopeClientId?: string,
+  ) {
     const repo = this.getRepo(workspaceId);
     return repo.posts.findMany({
       take,
       skip,
+      where: scopeClientId
+        ? {
+            variants: {
+              some: {
+                socialAccount: {
+                  clientId: scopeClientId,
+                },
+              },
+            },
+          }
+        : undefined,
       orderBy: { createdAt: 'desc' },
       include: {
         media: { orderBy: { sortOrder: 'asc' }, include: { media: true } },
@@ -165,7 +181,11 @@ export class PublishingApplicationService {
     });
   }
 
-  async getPostById(workspaceId: string, postId: string) {
+  async getPostById(
+    workspaceId: string,
+    postId: string,
+    scopeClientId?: string,
+  ) {
     const repo = this.getRepo(workspaceId);
     const post: any = await repo.posts.findById(postId, {
       include: {
@@ -174,6 +194,16 @@ export class PublishingApplicationService {
       },
     });
     if (!post) throw new NotFoundException('Post not found');
+
+    if (
+      scopeClientId &&
+      !post.variants?.some(
+        (v: any) => v.socialAccount?.clientId === scopeClientId,
+      )
+    ) {
+      throw new NotFoundException('Post not found');
+    }
+
     return post;
   }
 
@@ -494,7 +524,18 @@ export class PublishingApplicationService {
     workspaceId: string,
     variantId: string,
     isRetry = false,
+    scopeClientId?: string,
   ) {
+    if (scopeClientId) {
+      const variant = await this.prisma.postPlatformVariant.findFirst({
+        where: { id: variantId, workspaceId },
+        include: { socialAccount: true },
+      });
+      if (!variant || variant.socialAccount?.clientId !== scopeClientId) {
+        throw new NotFoundException('Publication target not found');
+      }
+    }
+
     const result = await this.validator.validateTarget(
       workspaceId,
       variantId,
@@ -951,6 +992,15 @@ export class PublishingApplicationService {
     });
 
     // Email dispatch to approvers (fire-and-forget)
+    const postWithVariants: any = await repo.posts.findById(postId, {
+      include: { variants: { include: { socialAccount: true } } },
+    });
+    const postTargetClientIds = new Set(
+      postWithVariants?.variants
+        ?.map((v: any) => v.socialAccount?.clientId)
+        .filter(Boolean) as string[],
+    );
+
     const approvers = await this.prisma.workspaceMember.findMany({
       where: {
         workspaceId,
@@ -962,6 +1012,11 @@ export class PublishingApplicationService {
 
     const contentPreview = (post.content || '').slice(0, 140);
     for (const member of approvers) {
+      if (member.role === 'CLIENT_APPROVER' && member.clientId) {
+        if (!postTargetClientIds.has(member.clientId)) {
+          continue;
+        }
+      }
       if (member.user?.email) {
         this.emailDeliveryService
           .sendApprovalRequestedEmail(member.user.email, contentPreview)
@@ -982,10 +1037,26 @@ export class PublishingApplicationService {
     });
   }
 
-  async approvePost(workspaceId: string, userId: string, postId: string) {
+  async approvePost(
+    workspaceId: string,
+    userId: string,
+    postId: string,
+    scopeClientId?: string,
+  ) {
     const repo = this.getRepo(workspaceId);
-    const post = (await repo.posts.findById(postId)) as any;
+    const post = (await repo.posts.findById(postId, {
+      include: { variants: { include: { socialAccount: true } } },
+    })) as any;
     if (!post) throw new NotFoundException('Post not found');
+
+    if (
+      scopeClientId &&
+      !post.variants?.some(
+        (v: any) => v.socialAccount?.clientId === scopeClientId,
+      )
+    ) {
+      throw new NotFoundException('Post not found');
+    }
 
     if (post.approvalStatus !== ApprovalStatus.PENDING) {
       throw new ConflictException('Post is not pending approval.');
@@ -1042,10 +1113,22 @@ export class PublishingApplicationService {
     userId: string,
     postId: string,
     comment: string,
+    scopeClientId?: string,
   ) {
     const repo = this.getRepo(workspaceId);
-    const post = (await repo.posts.findById(postId)) as any;
+    const post = (await repo.posts.findById(postId, {
+      include: { variants: { include: { socialAccount: true } } },
+    })) as any;
     if (!post) throw new NotFoundException('Post not found');
+
+    if (
+      scopeClientId &&
+      !post.variants?.some(
+        (v: any) => v.socialAccount?.clientId === scopeClientId,
+      )
+    ) {
+      throw new NotFoundException('Post not found');
+    }
 
     if (post.approvalStatus !== ApprovalStatus.PENDING) {
       throw new ConflictException('Post is not pending approval.');

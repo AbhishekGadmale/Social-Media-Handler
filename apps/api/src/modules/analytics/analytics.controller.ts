@@ -20,10 +20,17 @@ export class AnalyticsController {
   @Get('overview')
   @UseGuards(AuthGuard, WorkspaceGuard, PermissionGuard)
   @RequirePermission('analytics.view')
-  async getOverview(@Param('workspaceId', ParseUUIDPipe) workspaceId: string) {
-    const overview =
-      await this.analyticsService.getWorkspaceOverview(workspaceId);
-    return overview;
+  async getOverview(
+    @Param('workspaceId', ParseUUIDPipe) workspaceId: string,
+    @Req() req?: Request,
+  ) {
+    const role = (req as any)?.workspaceRole;
+    const clientId = (req as any)?.workspaceClientId;
+    const scopeClientId =
+      role === 'CLIENT_APPROVER' && clientId ? clientId : undefined;
+    return scopeClientId
+      ? this.analyticsService.getWorkspaceOverview(workspaceId, scopeClientId)
+      : this.analyticsService.getWorkspaceOverview(workspaceId);
   }
 
   @Get('accounts/:accountId')
@@ -32,7 +39,18 @@ export class AnalyticsController {
   async getAccountAnalytics(
     @Param('workspaceId', ParseUUIDPipe) workspaceId: string,
     @Param('accountId', ParseUUIDPipe) accountId: string,
+    @Req() req?: Request,
   ) {
-    return this.analyticsService.getAccountAnalytics(workspaceId, accountId);
+    const role = (req as any)?.workspaceRole;
+    const clientId = (req as any)?.workspaceClientId;
+    const scopeClientId =
+      role === 'CLIENT_APPROVER' && clientId ? clientId : undefined;
+    return scopeClientId
+      ? this.analyticsService.getAccountAnalytics(
+          workspaceId,
+          accountId,
+          scopeClientId,
+        )
+      : this.analyticsService.getAccountAnalytics(workspaceId, accountId);
   }
 }

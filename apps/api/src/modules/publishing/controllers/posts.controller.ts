@@ -8,8 +8,10 @@ import {
   Param,
   Query,
   UseGuards,
+  Req,
   HttpCode,
 } from '@nestjs/common';
+import type { Request } from 'express';
 import { PublishingApplicationService } from '../services/publishing-application.service';
 import {
   CreatePostDto,
@@ -49,11 +51,17 @@ export class PostsController {
     @Param('workspaceId') workspaceId: string,
     @Query('take') take?: string,
     @Query('skip') skip?: string,
+    @Req() req?: Request,
   ) {
+    const role = (req as any)?.workspaceRole;
+    const clientId = (req as any)?.workspaceClientId;
+    const scopeClientId =
+      role === 'CLIENT_APPROVER' && clientId ? clientId : undefined;
     return this.publishingService.getPosts(
       workspaceId,
       take ? parseInt(take, 10) : 50,
       skip ? parseInt(skip, 10) : 0,
+      scopeClientId,
     );
   }
 
@@ -62,8 +70,17 @@ export class PostsController {
   async getPostById(
     @Param('workspaceId') workspaceId: string,
     @Param('postId') postId: string,
+    @Req() req?: Request,
   ) {
-    return this.publishingService.getPostById(workspaceId, postId);
+    const role = (req as any)?.workspaceRole;
+    const clientId = (req as any)?.workspaceClientId;
+    const scopeClientId =
+      role === 'CLIENT_APPROVER' && clientId ? clientId : undefined;
+    return this.publishingService.getPostById(
+      workspaceId,
+      postId,
+      scopeClientId,
+    );
   }
 
   @Patch(':postId')
@@ -114,8 +131,20 @@ export class PostsController {
     @Param('workspaceId') workspaceId: string,
     @CurrentUser() user: any,
     @Param('postId') postId: string,
+    @Req() req?: Request,
   ) {
-    return this.publishingService.approvePost(workspaceId, user.id, postId);
+    const role = (req as any)?.workspaceRole;
+    const clientId = (req as any)?.workspaceClientId;
+    const scopeClientId =
+      role === 'CLIENT_APPROVER' && clientId ? clientId : undefined;
+    return scopeClientId
+      ? this.publishingService.approvePost(
+          workspaceId,
+          user.id,
+          postId,
+          scopeClientId,
+        )
+      : this.publishingService.approvePost(workspaceId, user.id, postId);
   }
 
   @Post(':postId/request-changes')
@@ -127,12 +156,25 @@ export class PostsController {
     @CurrentUser() user: any,
     @Param('postId') postId: string,
     @Body() dto: RequestChangesDto,
+    @Req() req?: Request,
   ) {
-    return this.publishingService.requestChanges(
-      workspaceId,
-      user.id,
-      postId,
-      dto.comment,
-    );
+    const role = (req as any)?.workspaceRole;
+    const clientId = (req as any)?.workspaceClientId;
+    const scopeClientId =
+      role === 'CLIENT_APPROVER' && clientId ? clientId : undefined;
+    return scopeClientId
+      ? this.publishingService.requestChanges(
+          workspaceId,
+          user.id,
+          postId,
+          dto.comment,
+          scopeClientId,
+        )
+      : this.publishingService.requestChanges(
+          workspaceId,
+          user.id,
+          postId,
+          dto.comment,
+        );
   }
 }

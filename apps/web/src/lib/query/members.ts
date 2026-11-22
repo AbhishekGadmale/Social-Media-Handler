@@ -1,12 +1,8 @@
-import { queryOptions } from '@tanstack/react-query';
-import { api } from '../api/client';
+import { queryOptions } from "@tanstack/react-query";
+import { api } from "../api/client";
 
 export type WorkspaceRoleType =
-  | 'OWNER'
-  | 'MANAGER'
-  | 'EDITOR'
-  | 'CLIENT_APPROVER'
-  | 'VIEWER';
+  "OWNER" | "MANAGER" | "EDITOR" | "CLIENT_APPROVER" | "VIEWER";
 
 export interface WorkspaceMemberItem {
   id: string;
@@ -14,6 +10,8 @@ export interface WorkspaceMemberItem {
   name: string | null;
   email: string;
   role: WorkspaceRoleType;
+  clientId?: string | null;
+  clientName?: string | null;
   joinedAt: string;
 }
 
@@ -21,6 +19,8 @@ export interface WorkspaceInvitationItem {
   id: string;
   email: string;
   role: WorkspaceRoleType;
+  clientId?: string | null;
+  clientName?: string | null;
   expiresAt: string;
   createdAt: string;
   invitedBy: {
@@ -46,14 +46,14 @@ export interface InvitationInfoResponse {
 export const membersQueries = {
   list: (workspaceId: string) =>
     queryOptions({
-      queryKey: ['workspaces', workspaceId, 'members'],
+      queryKey: ["workspaces", workspaceId, "members"],
       queryFn: () =>
         api.get<WorkspaceMembersResponse>(`workspaces/${workspaceId}/members`),
       enabled: !!workspaceId,
     }),
   invitationInfo: (token: string) =>
     queryOptions({
-      queryKey: ['invitations', 'info', token],
+      queryKey: ["invitations", "info", token],
       queryFn: () =>
         api.get<InvitationInfoResponse>(
           `invitations/info?token=${encodeURIComponent(token)}`,

@@ -7,6 +7,7 @@ import {
   Query,
   UseGuards,
   Res,
+  BadRequestException,
 } from '@nestjs/common';
 import type { Response } from 'express';
 import { AuthGuard } from '../../auth/guards/auth.guard';
@@ -55,12 +56,26 @@ export class ReportsController {
     @Query() query: ReportQueryDto,
     @Res() res: Response,
   ) {
-    const reportData = await this.reportsService.assembleReportData(
-      workspaceId,
-      query.from,
-      query.to,
-      query.socialAccountId,
-    );
+    if (query.clientId && query.socialAccountId) {
+      throw new BadRequestException(
+        'clientId and socialAccountId cannot be used together.',
+      );
+    }
+
+    const reportData = query.clientId
+      ? await this.reportsService.assembleReportData(
+          workspaceId,
+          query.from,
+          query.to,
+          query.socialAccountId,
+          query.clientId,
+        )
+      : await this.reportsService.assembleReportData(
+          workspaceId,
+          query.from,
+          query.to,
+          query.socialAccountId,
+        );
 
     const pdfBuffer = await this.pdfService.renderClientReportPdf(reportData);
 
@@ -74,6 +89,7 @@ export class ReportsController {
         from: query.from,
         to: query.to,
         socialAccountId: query.socialAccountId ?? null,
+        ...(query.clientId ? { clientId: query.clientId } : {}),
       },
     });
 

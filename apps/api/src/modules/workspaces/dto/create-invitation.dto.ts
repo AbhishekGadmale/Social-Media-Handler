@@ -1,4 +1,10 @@
-import { IsEmail, IsEnum, IsNotEmpty } from 'class-validator';
+import {
+  IsEmail,
+  IsEnum,
+  IsNotEmpty,
+  IsOptional,
+  IsUUID,
+} from 'class-validator';
 import { Transform } from 'class-transformer';
 import { WorkspaceRole } from '@agency-os/database';
 
@@ -16,4 +22,8 @@ export class CreateInvitationDto {
       'role must be a valid WorkspaceRole (OWNER, MANAGER, EDITOR, CLIENT_APPROVER, VIEWER)',
   })
   role!: WorkspaceRole;
+
+  @IsOptional()
+  @IsUUID()
+  clientId?: string;
 }

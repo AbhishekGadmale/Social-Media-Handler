@@ -1,12 +1,18 @@
-import { queryOptions } from '@tanstack/react-query';
-import { api } from '../api/client';
+import { queryOptions } from "@tanstack/react-query";
+import { api } from "../api/client";
 
-export type AccountProvider = 'YOUTUBE' | 'GOOGLE' | string;
-export type AccountStatus = 'ACTIVE' | 'REAUTH_REQUIRED' | 'DISCONNECTED' | 'ERROR' | string;
+export type AccountProvider = "YOUTUBE" | "GOOGLE" | string;
+export type AccountStatus =
+  "ACTIVE" | "REAUTH_REQUIRED" | "DISCONNECTED" | "ERROR" | string;
 
 export interface ConnectedAccount {
   id: string;
   workspaceId: string;
+  clientId?: string | null;
+  client?: {
+    id: string;
+    name: string;
+  } | null;
   provider: AccountProvider;
   externalId: string;
   name: string;
@@ -23,8 +29,9 @@ export interface AccountsResponse {
 export const accountQueries = {
   list: (workspaceId: string) =>
     queryOptions({
-      queryKey: ['workspaces', workspaceId, 'accounts'],
-      queryFn: () => api.get<AccountsResponse>(`workspaces/${workspaceId}/accounts`),
+      queryKey: ["workspaces", workspaceId, "accounts"],
+      queryFn: () =>
+        api.get<AccountsResponse>(`workspaces/${workspaceId}/accounts`),
       enabled: !!workspaceId,
     }),
 };

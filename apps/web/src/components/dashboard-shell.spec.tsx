@@ -1,21 +1,21 @@
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { DashboardShell } from './dashboard-shell';
-import { vi, describe, it, expect, beforeEach } from 'vitest';
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { DashboardShell } from "./dashboard-shell";
+import { vi, describe, it, expect, beforeEach } from "vitest";
 
 const mockPush = vi.fn();
 const mockReplace = vi.fn();
 
-vi.mock('next/navigation', () => ({
-  useParams: () => ({ workspaceId: 'ws-1' }),
+vi.mock("next/navigation", () => ({
+  useParams: () => ({ workspaceId: "ws-1" }),
   useRouter: () => ({ push: mockPush, replace: mockReplace }),
-  usePathname: () => '/ws-1/analytics',
+  usePathname: () => "/ws-1/analytics",
 }));
 
 const mockApiGet = vi.fn();
 const mockApiPost = vi.fn();
 
-vi.mock('../lib/api/client', () => ({
+vi.mock("../lib/api/client", () => ({
   api: {
     get: (...args: unknown[]) => mockApiGet(...args),
     post: (...args: unknown[]) => mockApiPost(...args),
@@ -29,27 +29,27 @@ vi.mock('../lib/api/client', () => ({
       headers?: Headers | Record<string, string>,
     ) {
       let resolvedMessage = message;
-      if (!resolvedMessage && data && typeof data === 'object') {
+      if (!resolvedMessage && data && typeof data === "object") {
         const dataObj = data as Record<string, unknown>;
         const nested = dataObj.error;
         let extracted: unknown;
-        if (nested && typeof nested === 'object') {
+        if (nested && typeof nested === "object") {
           extracted = (nested as Record<string, unknown>).message;
         }
         if (extracted === undefined) {
           extracted = dataObj.message;
         }
         if (Array.isArray(extracted)) {
-          resolvedMessage = extracted.join(', ');
-        } else if (typeof extracted === 'string') {
+          resolvedMessage = extracted.join(", ");
+        } else if (typeof extracted === "string") {
           resolvedMessage = extracted;
         }
       }
-      super(resolvedMessage || 'API Error');
-      this.name = 'ApiError';
+      super(resolvedMessage || "API Error");
+      this.name = "ApiError";
       this.headers = {};
       if (headers) {
-        if (typeof (headers as Headers).forEach === 'function') {
+        if (typeof (headers as Headers).forEach === "function") {
           (headers as Headers).forEach((val, key) => {
             this.headers[key.toLowerCase()] = val;
           });
@@ -62,39 +62,41 @@ vi.mock('../lib/api/client', () => ({
 }));
 
 const mockVerifiedUser = {
-  id: 'user-1',
-  email: 'test@example.com',
-  name: 'Test User',
+  id: "user-1",
+  email: "test@example.com",
+  name: "Test User",
   emailVerified: true,
-  createdAt: '2026-01-01',
-  updatedAt: '2026-01-01',
+  createdAt: "2026-01-01",
+  updatedAt: "2026-01-01",
 };
 
 const mockUnverifiedUser = {
-  id: 'user-1',
-  email: 'test@example.com',
-  name: 'Test User',
+  id: "user-1",
+  email: "test@example.com",
+  name: "Test User",
   emailVerified: false,
-  createdAt: '2026-01-01',
-  updatedAt: '2026-01-01',
+  createdAt: "2026-01-01",
+  updatedAt: "2026-01-01",
 };
 
 const mockMemberships = [
   {
-    id: 'mem-1',
-    userId: 'user-1',
-    workspaceId: 'ws-1',
-    role: 'OWNER',
-    createdAt: '2026-01-01',
-    updatedAt: '2026-01-01',
+    id: "mem-1",
+    userId: "user-1",
+    workspaceId: "ws-1",
+    role: "OWNER",
+    createdAt: "2026-01-01",
+    updatedAt: "2026-01-01",
     workspace: {
-      id: 'ws-1',
-      name: 'Test Workspace',
+      id: "ws-1",
+      name: "Test Workspace",
     },
   },
 ];
 
-const renderWithShell = (children = <div data-testid="child-content">Workspace Content</div>) => {
+const renderWithShell = (
+  children = <div data-testid="child-content">Workspace Content</div>,
+) => {
   const queryClient = new QueryClient({
     defaultOptions: {
       queries: { retry: false, gcTime: 0 },
@@ -108,12 +110,12 @@ const renderWithShell = (children = <div data-testid="child-content">Workspace C
   );
 };
 
-describe('DashboardShell Verification Gate', () => {
+describe("DashboardShell Verification Gate", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it('renders children and navigation for verified user with a valid workspace membership', async () => {
+  it("renders children and navigation for verified user with a valid workspace membership", async () => {
     mockApiGet.mockResolvedValue({
       user: mockVerifiedUser,
       memberships: mockMemberships,
@@ -122,22 +124,22 @@ describe('DashboardShell Verification Gate', () => {
     renderWithShell();
 
     await waitFor(() => {
-      expect(screen.getByTestId('child-content')).toBeInTheDocument();
+      expect(screen.getByTestId("child-content")).toBeInTheDocument();
     });
-    expect(screen.getByText('Test User')).toBeInTheDocument();
-    expect(screen.getByRole('navigation')).toBeInTheDocument();
-    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.getByText("Test User")).toBeInTheDocument();
+    expect(screen.getByRole("navigation")).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
-  it('renders user email in name position when user.name is null', async () => {
+  it("renders user email in name position when user.name is null", async () => {
     mockApiGet.mockResolvedValue({
       user: {
-        id: 'user-null-name',
-        email: 'fallback@example.com',
+        id: "user-null-name",
+        email: "fallback@example.com",
         name: null,
         emailVerified: true,
-        createdAt: '2026-01-01',
-        updatedAt: '2026-01-01',
+        createdAt: "2026-01-01",
+        updatedAt: "2026-01-01",
       },
       memberships: mockMemberships,
     });
@@ -145,15 +147,15 @@ describe('DashboardShell Verification Gate', () => {
     renderWithShell();
 
     await waitFor(() => {
-      expect(screen.getByTestId('child-content')).toBeInTheDocument();
+      expect(screen.getByTestId("child-content")).toBeInTheDocument();
     });
 
-    const emailOccurrences = screen.getAllByText('fallback@example.com');
+    const emailOccurrences = screen.getAllByText("fallback@example.com");
     expect(emailOccurrences.length).toBe(2);
-    expect(emailOccurrences[0]).toHaveClass('font-medium');
+    expect(emailOccurrences[0]).toHaveClass("font-medium");
   });
 
-  it('renders verification gate and hides children and sidebar nav for unverified user', async () => {
+  it("renders verification gate and hides children and sidebar nav for unverified user", async () => {
     mockApiGet.mockResolvedValue({
       user: mockUnverifiedUser,
       memberships: mockMemberships,
@@ -162,28 +164,29 @@ describe('DashboardShell Verification Gate', () => {
     renderWithShell();
 
     await waitFor(() => {
-      expect(screen.getByRole('alert')).toBeInTheDocument();
+      expect(screen.getByRole("alert")).toBeInTheDocument();
     });
     expect(
-      screen.getByRole('heading', { name: /verify your email to unlock your workspace/i }),
+      screen.getByRole("heading", {
+        name: /verify your email to unlock your workspace/i,
+      }),
     ).toBeInTheDocument();
     expect(
       screen.getByText(
-        'Email verification is required to access workspace features. Please check your inbox for a verification link.',
+        "Email verification is required to access workspace features. Please check your inbox for a verification link.",
       ),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole('button', { name: /resend verification email/i }),
+      screen.getByRole("button", { name: /resend verification email/i }),
     ).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /go to dashboard/i })).toHaveAttribute(
-      'href',
-      '/dashboard',
-    );
-    expect(screen.queryByTestId('child-content')).not.toBeInTheDocument();
-    expect(screen.queryByRole('navigation')).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: /go to dashboard/i }),
+    ).toHaveAttribute("href", "/dashboard");
+    expect(screen.queryByTestId("child-content")).not.toBeInTheDocument();
+    expect(screen.queryByRole("navigation")).not.toBeInTheDocument();
   });
 
-  it('posts auth/resend-verification with user email and shows notice on resend click', async () => {
+  it("posts auth/resend-verification with user email and shows notice on resend click", async () => {
     mockApiGet.mockResolvedValue({
       user: mockUnverifiedUser,
       memberships: mockMemberships,
@@ -192,26 +195,26 @@ describe('DashboardShell Verification Gate', () => {
 
     renderWithShell();
 
-    const resendButton = await screen.findByRole('button', {
+    const resendButton = await screen.findByRole("button", {
       name: /resend verification email/i,
     });
     fireEvent.click(resendButton);
 
     await waitFor(() => {
-      expect(mockApiPost).toHaveBeenCalledWith('auth/resend-verification', {
-        email: 'test@example.com',
+      expect(mockApiPost).toHaveBeenCalledWith("auth/resend-verification", {
+        email: "test@example.com",
       });
     });
     expect(mockApiPost).toHaveBeenCalledTimes(1);
     expect(
       await screen.findByText(
-        'If an unverified account exists for this email, a verification link has been sent.',
+        "If an unverified account exists for this email, a verification link has been sent.",
       ),
     ).toBeInTheDocument();
   });
 
-  it('renders retry message when resend is rejected with 429 and retry-after header', async () => {
-    const { ApiError } = await import('../lib/api/client');
+  it("renders retry message when resend is rejected with 429 and retry-after header", async () => {
+    const { ApiError } = await import("../lib/api/client");
     mockApiGet.mockResolvedValue({
       user: mockUnverifiedUser,
       memberships: mockMemberships,
@@ -219,38 +222,38 @@ describe('DashboardShell Verification Gate', () => {
     mockApiPost.mockRejectedValueOnce(
       new ApiError(
         429,
-        { error: { message: 'Too Many Requests' } },
-        'Too Many Requests',
-        new Headers({ 'retry-after': '45' }),
+        { error: { message: "Too Many Requests" } },
+        "Too Many Requests",
+        new Headers({ "retry-after": "45" }),
       ),
     );
 
     renderWithShell();
 
-    const resendButton = await screen.findByRole('button', {
+    const resendButton = await screen.findByRole("button", {
       name: /resend verification email/i,
     });
     fireEvent.click(resendButton);
 
     await waitFor(() => {
       expect(
-        screen.getByText('Too many attempts. Please try again in 45 seconds.'),
+        screen.getByText("Too many attempts. Please try again in 45 seconds."),
       ).toBeInTheDocument();
     });
   });
 
-  describe('Role-Based Navigation Gating', () => {
-    it('approver sees Analytics/Accounts/Publishing/Settings and does NOT see Team or Billing; owner sees all', async () => {
+  describe("Role-Based Navigation Gating", () => {
+    it("approver sees Analytics/Accounts/Publishing/Settings and does NOT see Team or Billing; owner sees all", async () => {
       // 1. As CLIENT_APPROVER
       mockApiGet.mockResolvedValue({
         user: mockVerifiedUser,
         memberships: [
           {
-            id: 'mem-approver',
-            userId: 'user-1',
-            workspaceId: 'ws-1',
-            role: 'CLIENT_APPROVER',
-            workspace: { id: 'ws-1', name: 'Test Workspace' },
+            id: "mem-approver",
+            userId: "user-1",
+            workspaceId: "ws-1",
+            role: "CLIENT_APPROVER",
+            workspace: { id: "ws-1", name: "Test Workspace" },
           },
         ],
       });
@@ -258,18 +261,33 @@ describe('DashboardShell Verification Gate', () => {
       const { unmount } = renderWithShell();
 
       await waitFor(() => {
-        expect(screen.getByRole('navigation')).toBeInTheDocument();
+        expect(screen.getByRole("navigation")).toBeInTheDocument();
       });
 
       // Allowed navigation items for approver
-      expect(screen.getByRole('link', { name: /overview \/ analytics/i })).toBeInTheDocument();
-      expect(screen.getByRole('link', { name: /accounts/i })).toBeInTheDocument();
-      expect(screen.getByRole('link', { name: /publishing/i })).toBeInTheDocument();
-      expect(screen.getByRole('link', { name: /settings/i })).toBeInTheDocument();
+      expect(
+        screen.getByRole("link", { name: /overview \/ analytics/i }),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole("link", { name: /accounts/i }),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole("link", { name: /publishing/i }),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole("link", { name: /settings/i }),
+      ).toBeInTheDocument();
 
       // Disallowed navigation items for approver
-      expect(screen.queryByRole('link', { name: /^team$/i })).not.toBeInTheDocument();
-      expect(screen.queryByRole('link', { name: /^billing$/i })).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("link", { name: /^clients$/i }),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("link", { name: /^team$/i }),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("link", { name: /^billing$/i }),
+      ).not.toBeInTheDocument();
 
       unmount();
 
@@ -278,11 +296,11 @@ describe('DashboardShell Verification Gate', () => {
         user: mockVerifiedUser,
         memberships: [
           {
-            id: 'mem-owner',
-            userId: 'user-1',
-            workspaceId: 'ws-1',
-            role: 'OWNER',
-            workspace: { id: 'ws-1', name: 'Test Workspace' },
+            id: "mem-owner",
+            userId: "user-1",
+            workspaceId: "ws-1",
+            role: "OWNER",
+            workspace: { id: "ws-1", name: "Test Workspace" },
           },
         ],
       });
@@ -290,15 +308,28 @@ describe('DashboardShell Verification Gate', () => {
       renderWithShell();
 
       await waitFor(() => {
-        expect(screen.getByRole('navigation')).toBeInTheDocument();
+        expect(screen.getByRole("navigation")).toBeInTheDocument();
       });
 
-      expect(screen.getByRole('link', { name: /overview \/ analytics/i })).toBeInTheDocument();
-      expect(screen.getByRole('link', { name: /accounts/i })).toBeInTheDocument();
-      expect(screen.getByRole('link', { name: /publishing/i })).toBeInTheDocument();
-      expect(screen.getByRole('link', { name: /^team$/i })).toBeInTheDocument();
-      expect(screen.getByRole('link', { name: /^billing$/i })).toBeInTheDocument();
-      expect(screen.getByRole('link', { name: /settings/i })).toBeInTheDocument();
+      expect(
+        screen.getByRole("link", { name: /overview \/ analytics/i }),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole("link", { name: /accounts/i }),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole("link", { name: /^clients$/i }),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole("link", { name: /publishing/i }),
+      ).toBeInTheDocument();
+      expect(screen.getByRole("link", { name: /^team$/i })).toBeInTheDocument();
+      expect(
+        screen.getByRole("link", { name: /^billing$/i }),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole("link", { name: /settings/i }),
+      ).toBeInTheDocument();
     });
   });
 });

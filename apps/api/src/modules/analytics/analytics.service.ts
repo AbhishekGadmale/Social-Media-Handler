@@ -26,7 +26,10 @@ export interface OverviewMetrics {
 export class AnalyticsService {
   constructor(private readonly prisma: PrismaClient) {}
 
-  async getWorkspaceOverview(workspaceId: string): Promise<OverviewMetrics> {
+  async getWorkspaceOverview(
+    workspaceId: string,
+    scopeClientId?: string,
+  ): Promise<OverviewMetrics> {
     const repo = new WorkspaceScopedRepository<
       Prisma.SocialAccountDelegate,
       any,
@@ -36,6 +39,7 @@ export class AnalyticsService {
     >(this.prisma, this.prisma.socialAccount, workspaceId);
 
     const accounts = await repo.findMany({
+      where: scopeClientId ? { clientId: scopeClientId } : undefined,
       select: {
         id: true,
         provider: true,
@@ -91,7 +95,11 @@ export class AnalyticsService {
     };
   }
 
-  async getAccountAnalytics(workspaceId: string, accountId: string) {
+  async getAccountAnalytics(
+    workspaceId: string,
+    accountId: string,
+    scopeClientId?: string,
+  ) {
     const repo = new WorkspaceScopedRepository<
       Prisma.SocialAccountDelegate,
       any,
@@ -110,6 +118,7 @@ export class AnalyticsService {
       },
       select: {
         id: true,
+        clientId: true,
         provider: true,
         name: true,
         status: true,
@@ -132,6 +141,10 @@ export class AnalyticsService {
     });
 
     if (!account) {
+      throw new NotFoundException('Account not found in workspace');
+    }
+
+    if (scopeClientId && account.clientId !== scopeClientId) {
       throw new NotFoundException('Account not found in workspace');
     }
 
