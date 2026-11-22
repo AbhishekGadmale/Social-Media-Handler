@@ -45,4 +45,8 @@ export class ReportQueryDto {
   @IsOptional()
   @IsUUID()
   socialAccountId?: string;
+
+  @IsOptional()
+  @IsUUID()
+  clientId?: string;
 }

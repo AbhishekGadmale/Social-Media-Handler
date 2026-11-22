@@ -1,10 +1,12 @@
 import { Module } from '@nestjs/common';
 import { BullModule } from '@nestjs/bullmq';
+import { BillingModule } from '../billing/billing.module';
 import { AccountsController } from './accounts.controller';
 import { AccountsService } from './accounts.service';
 
 @Module({
   imports: [
+    BillingModule,
     BullModule.registerQueue({
       name: 'sync',
       defaultJobOptions: {

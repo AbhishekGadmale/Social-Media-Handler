@@ -38,6 +38,8 @@ export const PermissionMatrix: Record<string, string[]> = {
   'billing.manage': ['OWNER'],
   'reports.generate': ['OWNER', 'MANAGER', 'EDITOR'],
   'branding.manage': ['OWNER', 'MANAGER'],
+  'clients.view': ['OWNER', 'MANAGER', 'EDITOR'],
+  'clients.manage': ['OWNER', 'MANAGER'],
 };
 
 @Injectable()

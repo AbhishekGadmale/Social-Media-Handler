@@ -1,16 +1,17 @@
-'use client';
+"use client";
 
-import React, { useState } from 'react';
-import { useParams } from 'next/navigation';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { authQueries } from '../../../lib/query/auth';
+import React, { useState } from "react";
+import { useParams } from "next/navigation";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { authQueries } from "../../../lib/query/auth";
+import { clientQueries } from "../../../lib/query/clients";
 import {
   membersQueries,
   WorkspaceRoleType,
   WorkspaceMemberItem,
   WorkspaceInvitationItem,
-} from '../../../lib/query/members';
-import { api, ApiError } from '../../../lib/api/client';
+} from "../../../lib/query/members";
+import { api, ApiError } from "../../../lib/api/client";
 import {
   Users,
   UserPlus,
@@ -21,47 +22,63 @@ import {
   AlertCircle,
   CheckCircle2,
   Clock,
-} from 'lucide-react';
+} from "lucide-react";
 
 const ROLES: { value: WorkspaceRoleType; label: string; helper?: string }[] = [
-  { value: 'OWNER', label: 'Owner', helper: 'Full control over workspace and billing' },
-  { value: 'MANAGER', label: 'Manager', helper: 'Can manage accounts, members, and content' },
-  { value: 'EDITOR', label: 'Editor', helper: 'Can create, edit, and schedule posts' },
   {
-    value: 'CLIENT_APPROVER',
-    label: 'Client Approver',
-    helper: 'Can approve posts, cannot publish',
+    value: "OWNER",
+    label: "Owner",
+    helper: "Full control over workspace and billing",
   },
-  { value: 'VIEWER', label: 'Viewer', helper: 'Read-only access across workspace' },
+  {
+    value: "MANAGER",
+    label: "Manager",
+    helper: "Can manage accounts, members, and content",
+  },
+  {
+    value: "EDITOR",
+    label: "Editor",
+    helper: "Can create, edit, and schedule posts",
+  },
+  {
+    value: "CLIENT_APPROVER",
+    label: "Client Approver",
+    helper: "Can approve posts, cannot publish",
+  },
+  {
+    value: "VIEWER",
+    label: "Viewer",
+    helper: "Read-only access across workspace",
+  },
 ];
 
 function getRoleBadge(role: WorkspaceRoleType) {
   switch (role) {
-    case 'OWNER':
+    case "OWNER":
       return (
         <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-50 text-purple-700 border border-purple-200">
           Owner
         </span>
       );
-    case 'MANAGER':
+    case "MANAGER":
       return (
         <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-50 text-blue-700 border border-blue-200">
           Manager
         </span>
       );
-    case 'EDITOR':
+    case "EDITOR":
       return (
         <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
           Editor
         </span>
       );
-    case 'CLIENT_APPROVER':
+    case "CLIENT_APPROVER":
       return (
         <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-50 text-amber-700 border border-amber-200">
           Client Approver
         </span>
       );
-    case 'VIEWER':
+    case "VIEWER":
       return (
         <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-700 border border-gray-200">
           Viewer
@@ -79,18 +96,21 @@ function getRoleBadge(role: WorkspaceRoleType) {
 export default function TeamPage() {
   const params = useParams();
   const queryClient = useQueryClient();
-  const workspaceId = (params?.workspaceId as string) || '';
+  const workspaceId = (params?.workspaceId as string) || "";
 
   // Auth & Permissions context
-  const { data: authData, isLoading: isAuthLoading } = useQuery(authQueries.me());
+  const { data: authData, isLoading: isAuthLoading } = useQuery(
+    authQueries.me(),
+  );
   const currentMembership = authData?.memberships?.find(
     (m) => m.workspaceId === workspaceId,
   );
   const currentUserId = authData?.user?.id;
-  const currentUserRole = currentMembership?.role as WorkspaceRoleType | undefined;
+  const currentUserRole = currentMembership?.role as
+    WorkspaceRoleType | undefined;
   const canManageMembers =
-    currentUserRole === 'OWNER' || currentUserRole === 'MANAGER';
-  const isOwner = currentUserRole === 'OWNER';
+    currentUserRole === "OWNER" || currentUserRole === "MANAGER";
+  const isOwner = currentUserRole === "OWNER";
 
   // Members Query
   const {
@@ -99,9 +119,17 @@ export default function TeamPage() {
     error: membersError,
   } = useQuery(membersQueries.list(workspaceId));
 
+  // Clients Query (for client-approver scoping)
+  const { data: clientsData } = useQuery({
+    ...clientQueries.list(workspaceId),
+    enabled: !!workspaceId && canManageMembers,
+  });
+  const clients = clientsData?.clients || [];
+
   // Form state
-  const [inviteEmail, setInviteEmail] = useState('');
-  const [inviteRole, setInviteRole] = useState<WorkspaceRoleType>('EDITOR');
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteRole, setInviteRole] = useState<WorkspaceRoleType>("EDITOR");
+  const [inviteClientId, setInviteClientId] = useState("");
   const [inviteError, setInviteError] = useState<string | null>(null);
   const [inviteSuccess, setInviteSuccess] = useState<string | null>(null);
 
@@ -111,12 +139,16 @@ export default function TeamPage() {
 
   // Invite Mutation
   const inviteMutation = useMutation({
-    mutationFn: (payload: { email: string; role: WorkspaceRoleType }) =>
-      api.post(`workspaces/${workspaceId}/members/invitations`, payload),
+    mutationFn: (payload: {
+      email: string;
+      role: WorkspaceRoleType;
+      clientId?: string;
+    }) => api.post(`workspaces/${workspaceId}/members/invitations`, payload),
     onSuccess: () => {
-      setInviteEmail('');
-      setInviteRole('EDITOR');
-      setInviteSuccess('Invitation sent successfully.');
+      setInviteEmail("");
+      setInviteRole("EDITOR");
+      setInviteClientId("");
+      setInviteSuccess("Invitation sent successfully.");
       setInviteError(null);
       queryClient.invalidateQueries({
         queryKey: membersQueries.list(workspaceId).queryKey,
@@ -125,9 +157,9 @@ export default function TeamPage() {
     onError: (err: unknown) => {
       setInviteSuccess(null);
       if (err instanceof ApiError) {
-        setInviteError(err.message || 'Failed to send invitation');
+        setInviteError(err.message || "Failed to send invitation");
       } else {
-        setInviteError('An unexpected error occurred.');
+        setInviteError("An unexpected error occurred.");
       }
     },
   });
@@ -139,7 +171,7 @@ export default function TeamPage() {
         `workspaces/${workspaceId}/members/invitations/${invitationId}/revoke`,
       ),
     onSuccess: () => {
-      setActionSuccess('Invitation revoked.');
+      setActionSuccess("Invitation revoked.");
       setActionError(null);
       queryClient.invalidateQueries({
         queryKey: membersQueries.list(workspaceId).queryKey,
@@ -148,7 +180,7 @@ export default function TeamPage() {
     onError: (err: unknown) => {
       setActionSuccess(null);
       setActionError(
-        err instanceof ApiError ? err.message : 'Failed to revoke invitation',
+        err instanceof ApiError ? err.message : "Failed to revoke invitation",
       );
     },
   });
@@ -160,7 +192,7 @@ export default function TeamPage() {
         `workspaces/${workspaceId}/members/invitations/${invitationId}/resend`,
       ),
     onSuccess: () => {
-      setActionSuccess('Invitation resent.');
+      setActionSuccess("Invitation resent.");
       setActionError(null);
       queryClient.invalidateQueries({
         queryKey: membersQueries.list(workspaceId).queryKey,
@@ -169,7 +201,7 @@ export default function TeamPage() {
     onError: (err: unknown) => {
       setActionSuccess(null);
       setActionError(
-        err instanceof ApiError ? err.message : 'Failed to resend invitation',
+        err instanceof ApiError ? err.message : "Failed to resend invitation",
       );
     },
   });
@@ -179,12 +211,18 @@ export default function TeamPage() {
     mutationFn: ({
       memberId,
       role,
+      clientId,
     }: {
       memberId: string;
       role: WorkspaceRoleType;
-    }) => api.patch(`workspaces/${workspaceId}/members/${memberId}`, { role }),
+      clientId?: string | null;
+    }) =>
+      api.patch(`workspaces/${workspaceId}/members/${memberId}`, {
+        role,
+        ...(clientId !== undefined ? { clientId } : {}),
+      }),
     onSuccess: () => {
-      setActionSuccess('Member role updated.');
+      setActionSuccess("Member role updated.");
       setActionError(null);
       queryClient.invalidateQueries({
         queryKey: membersQueries.list(workspaceId).queryKey,
@@ -193,7 +231,7 @@ export default function TeamPage() {
     onError: (err: unknown) => {
       setActionSuccess(null);
       setActionError(
-        err instanceof ApiError ? err.message : 'Failed to update member role',
+        err instanceof ApiError ? err.message : "Failed to update member role",
       );
     },
   });
@@ -203,7 +241,7 @@ export default function TeamPage() {
     mutationFn: (memberId: string) =>
       api.delete(`workspaces/${workspaceId}/members/${memberId}`),
     onSuccess: () => {
-      setActionSuccess('Member removed from workspace.');
+      setActionSuccess("Member removed from workspace.");
       setActionError(null);
       queryClient.invalidateQueries({
         queryKey: membersQueries.list(workspaceId).queryKey,
@@ -212,7 +250,7 @@ export default function TeamPage() {
     onError: (err: unknown) => {
       setActionSuccess(null);
       setActionError(
-        err instanceof ApiError ? err.message : 'Failed to remove member',
+        err instanceof ApiError ? err.message : "Failed to remove member",
       );
     },
   });
@@ -222,18 +260,22 @@ export default function TeamPage() {
     setInviteError(null);
     setInviteSuccess(null);
     if (!inviteEmail || !inviteEmail.trim()) {
-      setInviteError('Please provide a valid email address.');
+      setInviteError("Please provide a valid email address.");
       return;
     }
     inviteMutation.mutate({
       email: inviteEmail.trim(),
       role: inviteRole,
+      clientId:
+        inviteRole === "CLIENT_APPROVER" && inviteClientId
+          ? inviteClientId
+          : undefined,
     });
   };
 
   const members = membersData?.members || [];
   const invitations = membersData?.invitations || [];
-  const ownerCount = members.filter((m) => m.role === 'OWNER').length;
+  const ownerCount = members.filter((m) => m.role === "OWNER").length;
 
   if (isAuthLoading || isMembersLoading) {
     return (
@@ -253,7 +295,7 @@ export default function TeamPage() {
           <span>
             {membersError instanceof ApiError
               ? membersError.message
-              : 'Failed to load team members.'}
+              : "Failed to load team members."}
           </span>
         </div>
       </div>
@@ -268,7 +310,8 @@ export default function TeamPage() {
           Team & Members
         </h1>
         <p className="mt-1 text-sm text-gray-500">
-          Manage workspace members, assign role permissions, and track active invitations.
+          Manage workspace members, assign role permissions, and track active
+          invitations.
         </p>
       </div>
 
@@ -350,31 +393,60 @@ export default function TeamPage() {
                 <select
                   id="invite-role"
                   value={inviteRole}
-                  onChange={(e) =>
-                    setInviteRole(e.target.value as WorkspaceRoleType)
-                  }
+                  onChange={(e) => {
+                    const newRole = e.target.value as WorkspaceRoleType;
+                    setInviteRole(newRole);
+                    if (newRole !== "CLIENT_APPROVER") {
+                      setInviteClientId("");
+                    }
+                  }}
                   className="block w-full py-2 px-3 border border-gray-300 bg-white rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                 >
                   {ROLES.map((r) => {
-                    const isOwnerOption = r.value === 'OWNER';
+                    const isOwnerOption = r.value === "OWNER";
                     const disabled = isOwnerOption && !isOwner;
                     return (
-                      <option
-                        key={r.value}
-                        value={r.value}
-                        disabled={disabled}
-                      >
-                        {r.label} {disabled ? '(Owner only)' : ''}
+                      <option key={r.value} value={r.value} disabled={disabled}>
+                        {r.label} {disabled ? "(Owner only)" : ""}
                       </option>
                     );
                   })}
                 </select>
-                {inviteRole === 'CLIENT_APPROVER' && (
+                {inviteRole === "CLIENT_APPROVER" && (
                   <p className="text-xs text-amber-600 font-medium mt-1">
                     Can approve posts, cannot publish
                   </p>
                 )}
               </div>
+
+              {inviteRole === "CLIENT_APPROVER" && (
+                <div className="md:col-span-12 space-y-1">
+                  <label
+                    htmlFor="invite-client"
+                    className="block text-xs font-medium text-gray-700 uppercase tracking-wider"
+                  >
+                    Client Scope
+                  </label>
+                  <select
+                    id="invite-client"
+                    aria-label="Client Scope"
+                    value={inviteClientId}
+                    onChange={(e) => setInviteClientId(e.target.value)}
+                    className="block w-full max-w-xs py-2 px-3 border border-gray-300 bg-white rounded-md text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="">No client selected</option>
+                    {clients.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-xs text-gray-500">
+                    No client selected: this approver will see all clients in
+                    this workspace.
+                  </p>
+                </div>
+              )}
 
               <div className="md:col-span-2 md:pt-6">
                 <button
@@ -382,7 +454,7 @@ export default function TeamPage() {
                   disabled={inviteMutation.isPending}
                   className="w-full inline-flex items-center justify-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50"
                 >
-                  {inviteMutation.isPending ? 'Sending...' : 'Send Invite'}
+                  {inviteMutation.isPending ? "Sending..." : "Send Invite"}
                 </button>
               </div>
             </div>
@@ -432,14 +504,16 @@ export default function TeamPage() {
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
               {members.map((member: WorkspaceMemberItem) => {
-                const isTargetOwner = member.role === 'OWNER';
+                const isTargetOwner = member.role === "OWNER";
                 const isSelf = member.userId === currentUserId;
                 const isLastOwner = isTargetOwner && ownerCount <= 1;
 
                 // Hierarchy permissions
                 // Only Owner can modify Owner's role
                 const canModifyThisMemberRole =
-                  canManageMembers && (!isTargetOwner || isOwner) && !isLastOwner;
+                  canManageMembers &&
+                  (!isTargetOwner || isOwner) &&
+                  !isLastOwner;
                 // Only Owner can remove Owner; last owner cannot be removed; self cannot remove
                 const canRemoveThisMember =
                   canManageMembers &&
@@ -452,7 +526,7 @@ export default function TeamPage() {
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="flex flex-col">
                         <span className="font-medium text-gray-900">
-                          {member.name || 'Anonymous User'}
+                          {member.name || "Anonymous User"}
                           {isSelf && (
                             <span className="ml-2 text-xs font-normal text-gray-500">
                               (You)
@@ -465,7 +539,19 @@ export default function TeamPage() {
                       </div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
-                      {getRoleBadge(member.role)}
+                      <div className="flex flex-col gap-1 items-start">
+                        {getRoleBadge(member.role)}
+                        {member.role === "CLIENT_APPROVER" && (
+                          <span
+                            className="text-xs text-gray-500"
+                            data-testid={`member-client-${member.id}`}
+                          >
+                            {member.clientName
+                              ? `Client: ${member.clientName}`
+                              : "All clients"}
+                          </span>
+                        )}
+                      </div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-xs text-gray-500">
                       {new Date(member.joinedAt).toLocaleDateString()}
@@ -479,17 +565,22 @@ export default function TeamPage() {
                             !canModifyThisMemberRole ||
                             updateRoleMutation.isPending
                           }
-                          onChange={(e) =>
+                          onChange={(e) => {
+                            const newRole = e.target.value as WorkspaceRoleType;
                             updateRoleMutation.mutate({
                               memberId: member.id,
-                              role: e.target.value as WorkspaceRoleType,
-                            })
-                          }
+                              role: newRole,
+                              clientId:
+                                newRole === "CLIENT_APPROVER"
+                                  ? member.clientId
+                                  : null,
+                            });
+                          }}
                           aria-label={`Change role for ${member.name || member.email}`}
                           className="inline-block py-1 px-2 border border-gray-300 bg-white rounded text-xs text-gray-700 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:opacity-50 disabled:bg-gray-100"
                         >
                           {ROLES.map((r) => {
-                            const isOwnerOption = r.value === 'OWNER';
+                            const isOwnerOption = r.value === "OWNER";
                             const disabled = isOwnerOption && !isOwner;
                             return (
                               <option
@@ -503,6 +594,36 @@ export default function TeamPage() {
                           })}
                         </select>
 
+                        {/* Client Scope Select for CLIENT_APPROVER */}
+                        {member.role === "CLIENT_APPROVER" &&
+                          clients.length > 0 && (
+                            <select
+                              value={member.clientId || ""}
+                              disabled={
+                                !canModifyThisMemberRole ||
+                                updateRoleMutation.isPending
+                              }
+                              onChange={(e) =>
+                                updateRoleMutation.mutate({
+                                  memberId: member.id,
+                                  role: member.role,
+                                  clientId: e.target.value
+                                    ? e.target.value
+                                    : null,
+                                })
+                              }
+                              aria-label={`Assign client for ${member.name || member.email}`}
+                              className="inline-block py-1 px-2 border border-gray-300 bg-white rounded text-xs text-gray-700 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:opacity-50 disabled:bg-gray-100"
+                            >
+                              <option value="">All clients</option>
+                              {clients.map((c) => (
+                                <option key={c.id} value={c.id}>
+                                  {c.name}
+                                </option>
+                              ))}
+                            </select>
+                          )}
+
                         {/* Remove Action */}
                         <button
                           onClick={() => removeMemberMutation.mutate(member.id)}
@@ -512,12 +633,12 @@ export default function TeamPage() {
                           }
                           title={
                             isSelf
-                              ? 'You cannot remove yourself'
+                              ? "You cannot remove yourself"
                               : isLastOwner
-                                ? 'Cannot remove the last owner'
+                                ? "Cannot remove the last owner"
                                 : isTargetOwner && !isOwner
-                                  ? 'Only an owner can remove an owner'
-                                  : 'Remove member'
+                                  ? "Only an owner can remove an owner"
+                                  : "Remove member"
                           }
                           className="inline-flex items-center p-1 border border-transparent rounded text-red-600 hover:bg-red-50 focus:outline-none focus:ring-1 focus:ring-red-500 disabled:opacity-30 disabled:hover:bg-transparent"
                         >
@@ -574,7 +695,16 @@ export default function TeamPage() {
                       {inv.email}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
-                      {getRoleBadge(inv.role)}
+                      <div className="flex flex-col gap-1 items-start">
+                        {getRoleBadge(inv.role)}
+                        {inv.role === "CLIENT_APPROVER" && (
+                          <span className="text-xs text-gray-500">
+                            {inv.clientName
+                              ? `Client: ${inv.clientName}`
+                              : "All clients"}
+                          </span>
+                        )}
+                      </div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-xs text-gray-500">
                       {inv.invitedBy.name || inv.invitedBy.email}

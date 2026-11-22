@@ -13,9 +13,14 @@
  *       preserving local development and test suite ergonomics.
  */
 export function validateEmailDeliveryConfig(
-  apiKey: string | undefined = process.env.RESEND_API_KEY,
-  isProduction: boolean = process.env.NODE_ENV === 'production',
+  ...args: [apiKey?: string, isProduction?: boolean]
 ): string | undefined {
+  const apiKey = args.length > 0 ? args[0] : process.env.RESEND_API_KEY;
+  const isProduction =
+    args.length > 1 && args[1] !== undefined
+      ? args[1]
+      : process.env.NODE_ENV === 'production';
+
   if (isProduction) {
     if (!apiKey || apiKey.trim() === '') {
       throw new Error(

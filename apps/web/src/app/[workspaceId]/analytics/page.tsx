@@ -1,13 +1,14 @@
-'use client';
+"use client";
 
-import React, { useState } from 'react';
-import { useParams } from 'next/navigation';
-import { useQuery } from '@tanstack/react-query';
-import { analyticsQueries } from '../../../lib/query/analytics';
-import { authQueries } from '../../../lib/query/auth';
-import { canGenerateReports } from '../../../lib/permissions';
-import { downloadClientReportPdf } from '../../../lib/query/reports';
-import { ApiError } from '../../../lib/api/client';
+import React, { useState } from "react";
+import { useParams } from "next/navigation";
+import { useQuery } from "@tanstack/react-query";
+import { analyticsQueries } from "../../../lib/query/analytics";
+import { authQueries } from "../../../lib/query/auth";
+import { clientQueries } from "../../../lib/query/clients";
+import { canGenerateReports, canViewClients } from "../../../lib/permissions";
+import { downloadClientReportPdf } from "../../../lib/query/reports";
+import { ApiError } from "../../../lib/api/client";
 import {
   AlertCircle,
   RefreshCw,
@@ -26,79 +27,83 @@ import {
   AlertTriangle,
   FileText,
   Download,
-} from 'lucide-react';
-import Link from 'next/link';
+} from "lucide-react";
+import Link from "next/link";
 
 function getProviderBadge(provider: string) {
-  const p = (provider || '').toUpperCase();
+  const p = (provider || "").toUpperCase();
   switch (p) {
-    case 'LINKEDIN':
+    case "LINKEDIN":
       return {
         icon: <Share2 className="w-5 h-5 text-blue-600" aria-hidden="true" />,
-        containerClass: 'bg-blue-50 text-blue-700',
-        label: 'LinkedIn',
+        containerClass: "bg-blue-50 text-blue-700",
+        label: "LinkedIn",
       };
-    case 'YOUTUBE':
+    case "YOUTUBE":
       return {
-        icon: <PlaySquare className="w-5 h-5 text-red-600" aria-hidden="true" />,
-        containerClass: 'bg-red-50 text-red-700',
-        label: 'YouTube',
+        icon: (
+          <PlaySquare className="w-5 h-5 text-red-600" aria-hidden="true" />
+        ),
+        containerClass: "bg-red-50 text-red-700",
+        label: "YouTube",
       };
-    case 'TWITTER':
+    case "TWITTER":
       return {
-        icon: <MessageSquare className="w-5 h-5 text-sky-600" aria-hidden="true" />,
-        containerClass: 'bg-sky-50 text-sky-700',
-        label: 'Twitter / X',
+        icon: (
+          <MessageSquare className="w-5 h-5 text-sky-600" aria-hidden="true" />
+        ),
+        containerClass: "bg-sky-50 text-sky-700",
+        label: "Twitter / X",
       };
-    case 'INSTAGRAM':
+    case "INSTAGRAM":
       return {
         icon: <Camera className="w-5 h-5 text-pink-600" aria-hidden="true" />,
-        containerClass: 'bg-pink-50 text-pink-700',
-        label: 'Instagram',
+        containerClass: "bg-pink-50 text-pink-700",
+        label: "Instagram",
       };
-    case 'FACEBOOK':
+    case "FACEBOOK":
       return {
         icon: <Globe className="w-5 h-5 text-indigo-600" aria-hidden="true" />,
-        containerClass: 'bg-indigo-50 text-indigo-700',
-        label: 'Facebook',
+        containerClass: "bg-indigo-50 text-indigo-700",
+        label: "Facebook",
       };
-    case 'TIKTOK':
+    case "TIKTOK":
       return {
         icon: <Video className="w-5 h-5 text-slate-700" aria-hidden="true" />,
-        containerClass: 'bg-slate-100 text-slate-800',
-        label: 'TikTok',
+        containerClass: "bg-slate-100 text-slate-800",
+        label: "TikTok",
       };
     default:
       return {
         icon: <Globe className="w-5 h-5 text-gray-600" aria-hidden="true" />,
-        containerClass: 'bg-gray-100 text-gray-700',
-        label: provider || 'Other',
+        containerClass: "bg-gray-100 text-gray-700",
+        label: provider || "Other",
       };
   }
 }
 
 function getStatusBadge(status: string) {
-  const s = (status || '').toUpperCase();
+  const s = (status || "").toUpperCase();
   switch (s) {
-    case 'ACTIVE':
+    case "ACTIVE":
       return {
-        label: 'Active',
-        className: 'bg-green-50 text-green-700 border-green-200',
+        label: "Active",
+        className: "bg-green-50 text-green-700 border-green-200",
       };
-    case 'REAUTH_REQUIRED':
+    case "REAUTH_REQUIRED":
       return {
-        label: 'Reauth Required',
-        className: 'bg-amber-50 text-amber-800 border-amber-200',
+        label: "Reauth Required",
+        className: "bg-amber-50 text-amber-800 border-amber-200",
       };
-    case 'DISCONNECTED':
+    case "DISCONNECTED":
       return {
-        label: 'Disconnected',
-        className: 'bg-gray-100 text-gray-700 border-gray-200',
+        label: "Disconnected",
+        className: "bg-gray-100 text-gray-700 border-gray-200",
       };
     default:
       return {
-        label: status || 'Unknown',
-        className: 'bg-gray-100 text-gray-700 border-gray-200',
+        label: status || "Unknown",
+        className: "bg-gray-100 text-gray-700 border-gray-200",
       };
   }
 }
@@ -111,26 +116,31 @@ export default function AnalyticsDashboard() {
     ...authQueries.me(),
     staleTime: Infinity,
   });
-  const currentMembership = authData?.memberships?.find((m) => m.workspaceId === workspaceId);
+  const currentMembership = authData?.memberships?.find(
+    (m) => m.workspaceId === workspaceId,
+  );
   const currentRole = currentMembership?.role;
   const canReport = canGenerateReports(currentRole);
+  const canSeeClients = canViewClients(currentRole);
 
-  const {
-    data,
-    isLoading,
-    isError,
-    error,
-    refetch,
-    isFetching,
-  } = useQuery(analyticsQueries.overview(workspaceId));
+  const { data, isLoading, isError, error, refetch, isFetching } = useQuery(
+    analyticsQueries.overview(workspaceId),
+  );
+
+  const { data: clientsData } = useQuery({
+    ...clientQueries.list(workspaceId),
+    enabled: !!workspaceId && canSeeClients,
+  });
+  const clients = clientsData?.clients || [];
 
   const [reportFrom, setReportFrom] = useState(() =>
-    new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
+    new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
   );
   const [reportTo, setReportTo] = useState(() =>
-    new Date().toISOString().slice(0, 10)
+    new Date().toISOString().slice(0, 10),
   );
-  const [reportAccount, setReportAccount] = useState('');
+  const [reportAccount, setReportAccount] = useState("");
+  const [reportClient, setReportClient] = useState("");
   const [isDownloadingReport, setIsDownloadingReport] = useState(false);
   const [reportError, setReportError] = useState<string | null>(null);
 
@@ -143,24 +153,28 @@ export default function AnalyticsDashboard() {
         workspaceId,
         reportFrom,
         reportTo,
-        reportAccount || undefined
+        reportAccount || undefined,
+        reportClient || undefined,
       );
     } catch (err) {
       setReportError(
-        err instanceof Error ? err.message : 'Failed to download client report.'
+        err instanceof Error
+          ? err.message
+          : "Failed to download client report.",
       );
     } finally {
       setIsDownloadingReport(false);
     }
   };
 
-  const formatNumber = (num: number) => new Intl.NumberFormat('en-US').format(num);
+  const formatNumber = (num: number) =>
+    new Intl.NumberFormat("en-US").format(num);
 
   const formatDate = (dateString: string) => {
-    return new Intl.DateTimeFormat('en-US', {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric',
+    return new Intl.DateTimeFormat("en-US", {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
     }).format(new Date(dateString));
   };
 
@@ -168,9 +182,12 @@ export default function AnalyticsDashboard() {
     <div className="p-8 max-w-7xl mx-auto space-y-8">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Analytics Overview</h1>
+          <h1 className="text-2xl font-bold text-gray-900">
+            Analytics Overview
+          </h1>
           <p className="mt-1 text-sm text-gray-600">
-            Latest recorded daily snapshot metrics across your connected social accounts.
+            Latest recorded daily snapshot metrics across your connected social
+            accounts.
           </p>
         </div>
         <button
@@ -180,10 +197,10 @@ export default function AnalyticsDashboard() {
           aria-label="Refresh analytics data"
         >
           <RefreshCw
-            className={`w-4 h-4 mr-2 text-gray-500 ${isFetching ? 'animate-spin' : ''}`}
+            className={`w-4 h-4 mr-2 text-gray-500 ${isFetching ? "animate-spin" : ""}`}
             aria-hidden="true"
           />
-          {isFetching ? 'Refreshing...' : 'Refresh'}
+          {isFetching ? "Refreshing..." : "Refresh"}
         </button>
       </div>
 
@@ -191,7 +208,10 @@ export default function AnalyticsDashboard() {
         <div className="space-y-8" role="status" aria-label="Loading analytics">
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
             {[1, 2, 3, 4].map((i) => (
-              <div key={i} className="bg-white border rounded-xl p-6 shadow-sm animate-pulse">
+              <div
+                key={i}
+                className="bg-white border rounded-xl p-6 shadow-sm animate-pulse"
+              >
                 <div className="h-4 bg-gray-200 rounded w-1/2 mb-4"></div>
                 <div className="h-8 bg-gray-200 rounded w-3/4"></div>
               </div>
@@ -209,19 +229,28 @@ export default function AnalyticsDashboard() {
         </div>
       ) : isError ? (
         <div className="bg-red-50 border border-red-200 rounded-xl p-8 flex flex-col items-center text-center max-w-2xl mx-auto mt-12">
-          <AlertCircle className="w-12 h-12 text-red-500 mb-4" aria-hidden="true" />
+          <AlertCircle
+            className="w-12 h-12 text-red-500 mb-4"
+            aria-hidden="true"
+          />
           {error instanceof ApiError && error.status === 403 ? (
             <>
-              <h3 className="text-xl font-semibold text-red-900">Access Denied</h3>
+              <h3 className="text-xl font-semibold text-red-900">
+                Access Denied
+              </h3>
               <p className="mt-2 text-red-700">
-                You don&apos;t have permission to view analytics in this workspace.
+                You don&apos;t have permission to view analytics in this
+                workspace.
               </p>
             </>
           ) : (
             <>
-              <h3 className="text-xl font-semibold text-red-900">Failed to load analytics</h3>
+              <h3 className="text-xl font-semibold text-red-900">
+                Failed to load analytics
+              </h3>
               <p className="mt-2 text-red-700 max-w-md">
-                An error occurred while fetching your overview metrics. Please try again.
+                An error occurred while fetching your overview metrics. Please
+                try again.
               </p>
               <button
                 onClick={() => refetch()}
@@ -239,9 +268,12 @@ export default function AnalyticsDashboard() {
           <div className="w-20 h-20 bg-gray-50 rounded-full flex items-center justify-center mb-6">
             <BarChart3 className="w-10 h-10 text-gray-400" aria-hidden="true" />
           </div>
-          <h3 className="text-xl font-semibold text-gray-900">No data available</h3>
+          <h3 className="text-xl font-semibold text-gray-900">
+            No data available
+          </h3>
           <p className="mt-3 text-gray-500 max-w-md">
-            Connect your social media accounts to start seeing followers, engagement, and performance metrics here.
+            Connect your social media accounts to start seeing followers,
+            engagement, and performance metrics here.
           </p>
           <Link
             href={`/${workspaceId}/accounts`}
@@ -263,11 +295,12 @@ export default function AnalyticsDashboard() {
                 <div>
                   <h3 className="text-sm font-medium text-yellow-800">
                     {`Action Required: ${data.accountsRequiringReauth} account${
-                      data.accountsRequiringReauth > 1 ? 's need' : ' needs'
+                      data.accountsRequiringReauth > 1 ? "s need" : " needs"
                     } reconnection`}
                   </h3>
                   <p className="mt-1 text-sm text-yellow-700">
-                    Some accounts have lost their connection and are no longer syncing data.
+                    Some accounts have lost their connection and are no longer
+                    syncing data.
                   </p>
                 </div>
               </div>
@@ -284,7 +317,10 @@ export default function AnalyticsDashboard() {
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
             <div className="bg-white rounded-xl border shadow-sm p-6 flex flex-col">
               <div className="flex items-center text-sm font-medium text-gray-500 mb-4">
-                <Users className="w-5 h-5 mr-2 text-blue-500" aria-hidden="true" />
+                <Users
+                  className="w-5 h-5 mr-2 text-blue-500"
+                  aria-hidden="true"
+                />
                 Total Followers
               </div>
               <div className="text-3xl font-bold text-gray-900">
@@ -294,7 +330,10 @@ export default function AnalyticsDashboard() {
 
             <div className="bg-white rounded-xl border shadow-sm p-6 flex flex-col">
               <div className="flex items-center text-sm font-medium text-gray-500 mb-4">
-                <Activity className="w-5 h-5 mr-2 text-indigo-500" aria-hidden="true" />
+                <Activity
+                  className="w-5 h-5 mr-2 text-indigo-500"
+                  aria-hidden="true"
+                />
                 Total Engagement
               </div>
               <div className="text-3xl font-bold text-gray-900">
@@ -304,7 +343,10 @@ export default function AnalyticsDashboard() {
 
             <div className="bg-white rounded-xl border shadow-sm p-6 flex flex-col">
               <div className="flex items-center text-sm font-medium text-gray-500 mb-4">
-                <LinkIcon className="w-5 h-5 mr-2 text-emerald-500" aria-hidden="true" />
+                <LinkIcon
+                  className="w-5 h-5 mr-2 text-emerald-500"
+                  aria-hidden="true"
+                />
                 Connected Accounts
               </div>
               <div className="text-3xl font-bold text-gray-900">
@@ -314,7 +356,10 @@ export default function AnalyticsDashboard() {
 
             <div className="bg-white rounded-xl border shadow-sm p-6 flex flex-col">
               <div className="flex items-center text-sm font-medium text-gray-500 mb-4">
-                <CheckCircle2 className="w-5 h-5 mr-2 text-green-500" aria-hidden="true" />
+                <CheckCircle2
+                  className="w-5 h-5 mr-2 text-green-500"
+                  aria-hidden="true"
+                />
                 Active Accounts
               </div>
               <div className="text-3xl font-bold text-gray-900">
@@ -325,16 +370,22 @@ export default function AnalyticsDashboard() {
 
           {/* Client Report Card */}
           {canReport && (
-            <div className="bg-white rounded-xl border shadow-sm p-6" data-testid="client-report-card">
+            <div
+              className="bg-white rounded-xl border shadow-sm p-6"
+              data-testid="client-report-card"
+            >
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-gray-100">
                 <div className="flex items-center space-x-3">
                   <div className="p-2.5 bg-blue-50 text-blue-600 rounded-lg">
                     <FileText className="w-5 h-5" aria-hidden="true" />
                   </div>
                   <div>
-                    <h2 className="text-lg font-semibold text-gray-900">Client Performance Report</h2>
+                    <h2 className="text-lg font-semibold text-gray-900">
+                      Client Performance Report
+                    </h2>
                     <p className="text-xs text-gray-500 mt-0.5">
-                      Generate and download a branded PDF performance report for a selected date range.
+                      Generate and download a branded PDF performance report for
+                      a selected date range.
                     </p>
                   </div>
                 </div>
@@ -350,9 +401,15 @@ export default function AnalyticsDashboard() {
                 </div>
               )}
 
-              <form onSubmit={handleDownloadReport} className="mt-5 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 items-end">
+              <form
+                onSubmit={handleDownloadReport}
+                className="mt-5 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 items-end"
+              >
                 <div>
-                  <label htmlFor="reportFrom" className="block text-xs font-medium text-gray-700 mb-1">
+                  <label
+                    htmlFor="reportFrom"
+                    className="block text-xs font-medium text-gray-700 mb-1"
+                  >
                     From Date
                   </label>
                   <input
@@ -366,7 +423,10 @@ export default function AnalyticsDashboard() {
                 </div>
 
                 <div>
-                  <label htmlFor="reportTo" className="block text-xs font-medium text-gray-700 mb-1">
+                  <label
+                    htmlFor="reportTo"
+                    className="block text-xs font-medium text-gray-700 mb-1"
+                  >
                     To Date
                   </label>
                   <input
@@ -379,20 +439,61 @@ export default function AnalyticsDashboard() {
                   />
                 </div>
 
+                {canSeeClients && clients.length > 0 && (
+                  <div>
+                    <label
+                      htmlFor="reportClient"
+                      className="block text-xs font-medium text-gray-700 mb-1"
+                    >
+                      Client Filter
+                    </label>
+                    <select
+                      id="reportClient"
+                      aria-label="Client Filter"
+                      value={reportClient}
+                      disabled={!!reportAccount}
+                      onChange={(e) => {
+                        setReportClient(e.target.value);
+                        if (e.target.value) {
+                          setReportAccount("");
+                        }
+                      }}
+                      className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white disabled:opacity-50 disabled:bg-gray-100"
+                    >
+                      <option value="">All clients</option>
+                      {clients.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+
                 <div>
-                  <label htmlFor="reportAccount" className="block text-xs font-medium text-gray-700 mb-1">
+                  <label
+                    htmlFor="reportAccount"
+                    className="block text-xs font-medium text-gray-700 mb-1"
+                  >
                     Account Filter
                   </label>
                   <select
                     id="reportAccount"
+                    aria-label="Account Filter"
                     value={reportAccount}
-                    onChange={(e) => setReportAccount(e.target.value)}
-                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white"
+                    disabled={!!reportClient}
+                    onChange={(e) => {
+                      setReportAccount(e.target.value);
+                      if (e.target.value) {
+                        setReportClient("");
+                      }
+                    }}
+                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white disabled:opacity-50 disabled:bg-gray-100"
                   >
                     <option value="">All accounts</option>
                     {data?.accounts.map((acc) => (
                       <option key={acc.id} value={acc.id}>
-                        {acc.name || 'Unnamed'} ({acc.provider})
+                        {acc.name || "Unnamed"} ({acc.provider})
                       </option>
                     ))}
                   </select>
@@ -404,8 +505,11 @@ export default function AnalyticsDashboard() {
                     disabled={isDownloadingReport}
                     className="w-full inline-flex items-center justify-center px-4 py-2 border border-transparent text-sm font-medium rounded-lg shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 transition-colors"
                   >
-                    <Download className={`w-4 h-4 mr-2 ${isDownloadingReport ? 'animate-bounce' : ''}`} aria-hidden="true" />
-                    {isDownloadingReport ? 'Generating...' : 'Download PDF'}
+                    <Download
+                      className={`w-4 h-4 mr-2 ${isDownloadingReport ? "animate-bounce" : ""}`}
+                      aria-hidden="true"
+                    />
+                    {isDownloadingReport ? "Generating..." : "Download PDF"}
                   </button>
                 </div>
               </form>
@@ -416,7 +520,9 @@ export default function AnalyticsDashboard() {
           <div className="bg-white rounded-xl border shadow-sm overflow-hidden">
             <div className="px-6 py-5 border-b bg-gray-50/50 flex items-center justify-between">
               <div>
-                <h2 className="text-lg font-semibold text-gray-900">Account Performance</h2>
+                <h2 className="text-lg font-semibold text-gray-900">
+                  Account Performance
+                </h2>
                 <p className="text-xs text-gray-500 mt-0.5">
                   Latest recorded performance per connected social profile.
                 </p>
@@ -441,10 +547,12 @@ export default function AnalyticsDashboard() {
                       </div>
                       <div>
                         <h3 className="font-semibold text-gray-900 truncate max-w-[200px]">
-                          {account.name || 'Unnamed Account'}
+                          {account.name || "Unnamed Account"}
                         </h3>
                         <div className="flex items-center mt-1 space-x-2 text-xs">
-                          <span className="text-gray-500">{providerInfo.label}</span>
+                          <span className="text-gray-500">
+                            {providerInfo.label}
+                          </span>
                           <span className="text-gray-300" aria-hidden="true">
                             &bull;
                           </span>
@@ -496,7 +604,7 @@ export default function AnalyticsDashboard() {
                       <Link
                         href={`/${workspaceId}/analytics/${account.id}`}
                         className="p-2 text-gray-400 hover:text-gray-600 rounded-full hover:bg-gray-100 transition-colors"
-                        aria-label={`View details for ${account.name || 'Unnamed Account'}`}
+                        aria-label={`View details for ${account.name || "Unnamed Account"}`}
                       >
                         <ChevronRight className="w-5 h-5" aria-hidden="true" />
                       </Link>

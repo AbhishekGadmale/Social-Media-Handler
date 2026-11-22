@@ -2,6 +2,8 @@ import {
   Controller,
   Post,
   Get,
+  Patch,
+  Body,
   Param,
   UseGuards,
   Req,
@@ -12,8 +14,11 @@ import { Queue } from 'bullmq';
 import { AuthGuard } from '../auth/guards/auth.guard';
 import { WorkspaceGuard } from '../auth/guards/workspace.guard';
 import { PermissionGuard } from '../auth/guards/permission.guard';
+import { WorkspaceWritableGuard } from '../billing/guards/workspace-writable.guard';
 import { RequirePermission } from '../auth/decorators/permission.decorator';
+import { CurrentUser } from '../auth/decorators/user.decorator';
 import { AccountsService } from './accounts.service';
+import { AssignAccountClientDto } from './dto/assign-account-client.dto';
 
 import { Throttle } from '@nestjs/throttler';
 import { RateLimitPolicies } from '../core/rate-limit.policies';
@@ -35,9 +40,18 @@ export class AccountsController {
   @Get()
   @UseGuards(AuthGuard, WorkspaceGuard, PermissionGuard)
   @RequirePermission('accounts.view')
-  async listAccounts(@Param('workspaceId', ParseUUIDPipe) workspaceId: string) {
-    const accounts =
-      await this.accountsService.listWorkspaceAccounts(workspaceId);
+  async listAccounts(
+    @Param('workspaceId', ParseUUIDPipe) workspaceId: string,
+    @Req() req?: Request,
+  ) {
+    const role = (req as any)?.workspaceRole;
+    const clientId = (req as any)?.workspaceClientId;
+    const scopeClientId =
+      role === 'CLIENT_APPROVER' && clientId ? clientId : undefined;
+    const accounts = await this.accountsService.listWorkspaceAccounts(
+      workspaceId,
+      scopeClientId,
+    );
     return { accounts };
   }
 
@@ -50,7 +64,19 @@ export class AccountsController {
     @Param('accountId', ParseUUIDPipe) accountId: string,
     @Req() req: Request,
   ) {
-    await this.accountsService.getWorkspaceAccount(workspaceId, accountId);
+    const role = (req as any).workspaceRole;
+    const clientId = (req as any).workspaceClientId;
+    const scopeClientId =
+      role === 'CLIENT_APPROVER' && clientId ? clientId : undefined;
+    if (scopeClientId) {
+      await this.accountsService.getWorkspaceAccount(
+        workspaceId,
+        accountId,
+        scopeClientId,
+      );
+    } else {
+      await this.accountsService.getWorkspaceAccount(workspaceId, accountId);
+    }
 
     const correlationId = extractCorrelationId(req);
 
@@ -97,6 +123,23 @@ export class AccountsController {
       accountId,
       userId,
       requestId,
+    );
+  }
+
+  @Patch(':accountId/client')
+  @UseGuards(AuthGuard, WorkspaceGuard, PermissionGuard, WorkspaceWritableGuard)
+  @RequirePermission('clients.manage')
+  async assignClient(
+    @Param('workspaceId', ParseUUIDPipe) workspaceId: string,
+    @Param('accountId', ParseUUIDPipe) accountId: string,
+    @CurrentUser() user: any,
+    @Body() dto: AssignAccountClientDto,
+  ) {
+    return this.accountsService.assignClient(
+      workspaceId,
+      accountId,
+      dto.clientId ?? null,
+      user.id,
     );
   }
 }

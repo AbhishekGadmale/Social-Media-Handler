@@ -177,7 +177,13 @@ export class ReportsService {
     from: string,
     to: string,
     socialAccountId?: string,
+    clientId?: string,
   ): Promise<ReportData> {
+    if (clientId && socialAccountId) {
+      throw new BadRequestException(
+        'clientId and socialAccountId cannot be used together.',
+      );
+    }
     const fromDate = new Date(`${from.slice(0, 10)}T00:00:00.000Z`);
     const toDate = new Date(`${to.slice(0, 10)}T23:59:59.999Z`);
 
@@ -209,6 +215,14 @@ export class ReportsService {
       throw new NotFoundException('Workspace not found');
     }
 
+    let client: {
+      id: string;
+      name: string;
+      brandDisplayName: string | null;
+      brandLogoUrl: string | null;
+      brandAccentColor: string | null;
+    } | null = null;
+
     let accounts: Array<{
       id: string;
       provider: string;
@@ -216,7 +230,26 @@ export class ReportsService {
       name: string | null;
     }>;
 
-    if (socialAccountId) {
+    if (clientId) {
+      client = await this.prisma.client.findFirst({
+        where: { id: clientId, workspaceId },
+        select: {
+          id: true,
+          name: true,
+          brandDisplayName: true,
+          brandLogoUrl: true,
+          brandAccentColor: true,
+        },
+      });
+      if (!client) {
+        throw new NotFoundException('Client not found');
+      }
+      accounts = await this.prisma.socialAccount.findMany({
+        where: { workspaceId, clientId },
+        orderBy: { createdAt: 'asc' },
+        select: { id: true, provider: true, externalId: true, name: true },
+      });
+    } else if (socialAccountId) {
       const account = await this.prisma.socialAccount.findFirst({
         where: { id: socialAccountId, workspaceId },
         select: { id: true, provider: true, externalId: true, name: true },
@@ -309,12 +342,30 @@ export class ReportsService {
       .filter((a) => a.hasMetrics)
       .reduce((sum, a) => sum + (a.engagementTotal ?? 0), 0);
 
-    const branding: ReportBranding = {
-      displayName: workspace.brandDisplayName || workspace.name,
-      logoUrl: workspace.brandLogoUrl,
-      accentColor: workspace.brandAccentColor || '#111827',
-      whiteLabeled: Boolean(workspace.brandDisplayName),
-    };
+    let branding: ReportBranding;
+    if (client?.brandDisplayName) {
+      branding = {
+        displayName: client.brandDisplayName,
+        logoUrl: client.brandLogoUrl || workspace.brandLogoUrl,
+        accentColor:
+          client.brandAccentColor || workspace.brandAccentColor || '#111827',
+        whiteLabeled: true,
+      };
+    } else if (workspace.brandDisplayName) {
+      branding = {
+        displayName: workspace.brandDisplayName,
+        logoUrl: workspace.brandLogoUrl,
+        accentColor: workspace.brandAccentColor || '#111827',
+        whiteLabeled: true,
+      };
+    } else {
+      branding = {
+        displayName: workspace.name,
+        logoUrl: null,
+        accentColor: '#111827',
+        whiteLabeled: false,
+      };
+    }
 
     return {
       workspaceId,

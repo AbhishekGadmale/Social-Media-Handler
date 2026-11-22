@@ -7,6 +7,7 @@ import { getQueueToken } from '@nestjs/bullmq';
 import { PermissionGuard } from '../auth/guards/permission.guard';
 import { AuthGuard } from '../auth/guards/auth.guard';
 import { WorkspaceGuard } from '../auth/guards/workspace.guard';
+import { WorkspaceWritableGuard } from '../billing/guards/workspace-writable.guard';
 import { AuditService } from '../core/audit.service';
 import { AuditAction, SocialAccountStatus } from '@agency-os/database';
 
@@ -60,6 +61,8 @@ describe('AccountsController', () => {
       .overrideGuard(AuthGuard)
       .useValue({ canActivate: () => true })
       .overrideGuard(WorkspaceGuard)
+      .useValue({ canActivate: () => true })
+      .overrideGuard(WorkspaceWritableGuard)
       .useValue({ canActivate: () => true })
       .compile();
 

@@ -9,9 +9,11 @@ import {
   Prisma,
   SocialAccountStatus,
   SocialAccountRepository,
+  AuditAction,
 } from '@agency-os/database';
 import { WorkspaceScopedRepository } from '@agency-os/database';
 import { providerRegistry } from '@agency-os/providers';
+import { AuditService } from '../core/audit.service';
 
 @Injectable()
 export class AccountsService {
@@ -20,9 +22,10 @@ export class AccountsService {
   constructor(
     private readonly prisma: PrismaClient,
     private readonly socialAccountRepo: SocialAccountRepository,
+    private readonly auditService?: AuditService,
   ) {}
 
-  async listWorkspaceAccounts(workspaceId: string) {
+  async listWorkspaceAccounts(workspaceId: string, scopeClientId?: string) {
     const repo = new WorkspaceScopedRepository<
       Prisma.SocialAccountDelegate,
       any,
@@ -32,9 +35,17 @@ export class AccountsService {
     >(this.prisma, this.prisma.socialAccount, workspaceId);
 
     const accounts = await repo.findMany({
+      where: scopeClientId ? { clientId: scopeClientId } : undefined,
       select: {
         id: true,
         workspaceId: true,
+        clientId: true,
+        client: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
         provider: true,
         externalId: true,
         name: true,
@@ -51,7 +62,11 @@ export class AccountsService {
     return accounts;
   }
 
-  async getWorkspaceAccount(workspaceId: string, accountId: string) {
+  async getWorkspaceAccount(
+    workspaceId: string,
+    accountId: string,
+    scopeClientId?: string,
+  ) {
     const repo = new WorkspaceScopedRepository<
       Prisma.SocialAccountDelegate,
       any,
@@ -60,12 +75,78 @@ export class AccountsService {
       Prisma.SocialAccountUpdateInput
     >(this.prisma, this.prisma.socialAccount, workspaceId);
 
-    const account = await repo.findById(accountId);
+    const account = await repo.findById(accountId, {
+      include: {
+        client: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+      },
+    });
     if (!account) {
       throw new NotFoundException('Account not found in workspace');
     }
 
+    if (scopeClientId && account.clientId !== scopeClientId) {
+      throw new NotFoundException('Account not found in workspace');
+    }
+
     return account;
+  }
+
+  async assignClient(
+    workspaceId: string,
+    accountId: string,
+    clientId: string | null,
+    actorId: string,
+  ) {
+    const account = await this.prisma.socialAccount.findFirst({
+      where: { id: accountId, workspaceId },
+    });
+
+    if (!account) {
+      throw new NotFoundException('Account not found in workspace');
+    }
+
+    if (clientId !== null) {
+      const client = await this.prisma.client.findFirst({
+        where: { id: clientId, workspaceId },
+      });
+      if (!client) {
+        throw new NotFoundException('Client not found');
+      }
+    }
+
+    const updated = await this.prisma.socialAccount.update({
+      where: { id: accountId },
+      data: { clientId },
+      include: {
+        client: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+      },
+    });
+
+    if (this.auditService) {
+      await this.auditService.logAction({
+        workspaceId,
+        actorId,
+        action: AuditAction.ACCOUNT_CLIENT_ASSIGNED,
+        targetType: 'SocialAccount',
+        targetId: accountId,
+        metadata: {
+          fromClientId: account.clientId,
+          toClientId: clientId,
+        },
+      });
+    }
+
+    return updated;
   }
 
   async disconnectAccount(

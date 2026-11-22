@@ -6176,6 +6176,134 @@ A repository-wide search was performed for strings `'4,999'`, `'9,999'`, `'39,99
    - PR #96 is open at reviewed head `7892eec` with CI 6/6 green; next step is the docs-fix re-review, then merge by the owner.
    - Do NOT merge on this prompt alone. Live deployment remains STRICT NO-GO.
 
+## 83. Client Layer — Client Grouping, Scoped Approver Visibility, and Per-Client Report Branding
+
+### 1. Summary & Motivation
+
+- **Status**: PR pending against `main` on branch `feat/client-layer` (base commit `b179a210389170424c64d9be3618c3ec176ac3c6`)
+- **Branch**: `feat/client-layer`
+- **Scope & Objectives**:
+  - Agencies manage multiple clients within a single workspace, with billing retained at the workspace tier. Prior to this build, social accounts formed a flat pool, `CLIENT_APPROVER` members had workspace-wide visibility into all clients' accounts, posts, and analytics, and white-label report branding existed only at the workspace level.
+  - Deliver a client layer across database, API, and web frontend adhering strictly to the 7 locked design decisions:
+    1. **New `Client` entity**: Workspace-scoped with `name`, `brandDisplayName`, `brandLogoUrl`, and `brandAccentColor`.
+    2. **Account Assignment**: `SocialAccount.clientId` is nullable; unassigned accounts remain valid.
+    3. **Approver Scoping**: Access scoping applies strictly to `CLIENT_APPROVER` members whose `WorkspaceMember.clientId` is populated ("scoped approver"). All other roles (`OWNER`, `MANAGER`, `EDITOR`, `VIEWER`) and unscoped approvers (`clientId == null`) retain full workspace-wide visibility.
+    4. **Post Visibility**: A post is visible to a scoped approver if and only if at least one `PostPlatformVariant` targets an account belonging to their assigned client. Draft posts without assigned account targets remain invisible to scoped approvers.
+    5. **Out-of-Scope Isolation**: Single-resource access (account, post, analytics) by a scoped approver outside their assigned client returns HTTP 404 NotFound (never 403, never leaking the resource existence or metadata).
+    6. **Deletion Safety**: Deleting a client with scoped approvers assigned is rejected with HTTP 409 Conflict (`"Remove or reassign this client's approver first."`). When approvers are removed, account foreign keys are set to NULL via `onDelete: SetNull`.
+    7. **Report Branding Fallback**: Branded reports resolve branding hierarchically: Client branding (`client.brandDisplayName`) -> Workspace branding (`workspace.brandDisplayName`) -> Platform default. White-label rules hold: when client or workspace branding is set, all platform branding is stripped from the PDF and metadata.
+    8. **No Client Count Cap in v1**: No plan gating, seat gating, or billing modifications are introduced.
+
+### 2. Architecture & Implementation Details
+
+#### A. Database Schema & Audit Logging (`packages/database`)
+- **Prisma Schema (`packages/database/prisma/schema.prisma`)**:
+  - Added `Client` model: `id`, `workspaceId`, `name`, `brandDisplayName`, `brandLogoUrl`, `brandAccentColor`, `createdAt`, `updatedAt`, indexed on `[workspaceId]`.
+  - Added relation on `Workspace`: `clients Client[]`.
+  - Added nullable `clientId` foreign key to `SocialAccount` with `onDelete: SetNull`.
+  - Added nullable `clientId` foreign key to `WorkspaceMember` with `onDelete: Restrict` (preventing deletion of client while approvers are assigned).
+  - Added nullable `clientId` column to `WorkspaceInvitation`.
+- **Migration SQL (`packages/database/prisma/migrations/20261122000000_add_clients/migration.sql`)**:
+  - Created `Client` table with constraints and foreign keys.
+  - Added `clientId` columns and foreign key references to `SocialAccount` and `WorkspaceMember`, plus column to `WorkspaceInvitation`.
+- **Audit Logging (`packages/database/src/repositories/AuditLogRepository.ts`)**:
+  - Registered audit action types: `CLIENT_CREATED`, `CLIENT_UPDATED`, `CLIENT_DELETED`, `ACCOUNT_CLIENT_ASSIGNED`.
+
+#### B. API & Backend Implementation (`apps/api`)
+- **Express Request Typing (`apps/api/src/types/express.d.ts`)**:
+  - Added `workspaceClientId?: string | null;` to Express `Request`.
+- **Authentication & Workspace Guards (`apps/api/src/modules/auth/guards/`)**:
+  - `WorkspaceGuard`: Populates `request.workspaceClientId = membership.clientId ?? null;`.
+  - `PermissionGuard`: Added permissions `'clients.view': ['OWNER', 'MANAGER', 'EDITOR']` and `'clients.manage': ['OWNER', 'MANAGER']`.
+- **Clients Module (`apps/api/src/modules/clients/`)**:
+  - `ClientsService`: Implements `createClient`, `listClients` (including computed `accountCount` and `scopedMemberCount`), `getClient`, `updateClient`, and `deleteClient` (enforces 409 Conflict if scoped approvers remain assigned). Emits `CLIENT_CREATED`, `CLIENT_UPDATED`, `CLIENT_DELETED` audit logs.
+  - `ClientsController`: Exposes `POST`, `GET`, `GET :clientId`, `PATCH :clientId`, and `DELETE :clientId` under `/workspaces/:workspaceId/clients`. Protected by `AuthGuard`, `WorkspaceGuard`, `PermissionGuard`, and `WorkspaceWritableGuard` on mutations.
+- **Accounts Module (`apps/api/src/modules/accounts/`)**:
+  - `AccountsService`:
+    - `listWorkspaceAccounts`: Includes `clientId` and `client` object in queries; scopes by `scopeClientId` if passed from scoped approver.
+    - `getWorkspaceAccount`: Returns 404 NotFound if a scoped approver requests an account belonging to another client or unassigned.
+    - `assignClient`: Implements `PATCH /workspaces/:workspaceId/accounts/:accountId/client`, validating client exists in workspace, updating assignment, and recording `ACCOUNT_CLIENT_ASSIGNED` audit log.
+- **Publishing Module (`apps/api/src/modules/publishing/`)**:
+  - `PublishingApplicationService`:
+    - `getPosts`: Filters posts for scoped approvers so that only posts targeting their client's accounts are returned.
+    - `getPostById`, `approvePost`, `requestChanges`, `validateTarget`: Returns 404 NotFound if post or target does not belong to the scoped approver's client.
+    - `requestApproval`: Filters notification recipient queries so only approvers scoped to the post's client (or unscoped approvers) receive notification emails.
+- **Analytics Module (`apps/api/src/modules/analytics/`)**:
+  - `AnalyticsService`: Scopes `getWorkspaceOverview` metrics and account list to the scoped approver's client; `getAccountAnalytics` returns 404 NotFound for out-of-scope accounts.
+- **Workspaces & Member Management (`apps/api/src/modules/workspaces/`)**:
+  - `WorkspacesService`:
+    - Validates client exists when creating invitations or updating member roles with `clientId`.
+    - Enforces that only `CLIENT_APPROVER` can hold a `clientId` (clears `clientId` on role changes away from `CLIENT_APPROVER`).
+    - Propagates `clientId` from `WorkspaceInvitation` to `WorkspaceMember` upon acceptance.
+    - Surfaces `clientId` and resolved `clientName` in `listMembers` for both members and pending invitations.
+- **Reports Module (`apps/api/src/modules/reports/`)**:
+  - Added optional `clientId` to `ReportQueryDto`; `ReportsController` validates mutual exclusion (400 BadRequest if both `clientId` and `socialAccountId` are passed).
+  - `ReportsService`: Filters accounts by `clientId` and applies branding fallback: client branding -> workspace branding -> platform default. White-label rules ensure platform branding is fully stripped when client or workspace branding is set.
+
+#### C. Web Frontend Implementation (`apps/web`)
+- **Permissions Truth (`apps/web/src/lib/permissions.ts`)**:
+  - Added `canViewClients(role)`: `OWNER`, `MANAGER`, `EDITOR`.
+  - Added `canManageClients(role)`: `OWNER`, `MANAGER`.
+  - Full test coverage in `permissions.spec.ts` (11/11 tests pass).
+- **Navigation (`apps/web/src/components/dashboard-shell.tsx`)**:
+  - Added "Clients" navigation item with `Building2` icon, visible to `OWNER`, `MANAGER`, `EDITOR`, and hidden from `CLIENT_APPROVER` and `VIEWER`.
+- **Clients Management Page (`apps/web/src/app/[workspaceId]/clients/`)**:
+  - `page.tsx`: Full client listing displaying brand details, accent color swatch, account count badge, and scoped approver count badge.
+  - Create / Edit client modal supporting name (required), brand display name, brand logo URL, and brand accent color.
+  - Delete client confirmation with inline 409 Conflict error alert displaying `"Remove or reassign this client's approver first."`.
+  - Role-based UI gating: `OWNER` and `MANAGER` have full management controls; `EDITOR` has read-only view; `CLIENT_APPROVER` and `VIEWER` see inline Access Denied.
+- **Accounts Page & Card (`apps/web/src/app/[workspaceId]/accounts/`)**:
+  - `AccountCard`: Renders client badge (`Client: <clientName>` or `Unassigned`). For managers, renders assignment dropdown to assign or unassign client.
+  - `AccountsPage`: Renders client-side filter pills row (`All Accounts (N)`, `Unassigned (N)`, and per-client pills `Client (N)`) to filter visible accounts.
+- **Team Page (`apps/web/src/app/[workspaceId]/team/`)**:
+  - Invite form: When `inviteRole === 'CLIENT_APPROVER'`, renders Client Scope select with helper text: `'No client selected: this approver will see all clients in this workspace.'`.
+  - Members table: Displays `Client: <clientName>` or `All clients` for `CLIENT_APPROVER` members. For managers, renders client assignment dropdown to reassign or clear client scope.
+  - Invitations table: Displays client assignment for pending client approver invitations.
+- **Analytics Page (`apps/web/src/app/[workspaceId]/analytics/`)**:
+  - Client Performance Report card: Added optional Client Filter dropdown.
+  - Mutual exclusion: Selecting a client disables the single-account filter and passes `clientId` to report generation; selecting an account disables the client filter.
+
+### 3. Verification & Test Evidence
+
+- **Database Package (`@agency-os/database`)**:
+  - Prisma client generated successfully (`prisma generate`).
+  - Package built successfully (`pnpm --filter @agency-os/database build`).
+- **API Unit Tests (`@agency-os/api`)**:
+  - `apps/api/src/modules/clients/services/clients.service.spec.ts`: **11/11 tests PASS**.
+  - `apps/api/src/modules/clients/controllers/clients.controller.spec.ts`: **8/8 tests PASS**.
+  - `apps/api/src/modules/accounts/accounts-client-scoping.spec.ts`: **8/8 tests PASS**.
+  - `apps/api/src/modules/publishing/publishing-client-scoping.spec.ts`: **10/10 tests PASS**.
+  - `apps/api/src/modules/workspaces/workspaces-client-scoping.spec.ts`: **7/7 tests PASS**.
+  - `apps/api/src/modules/reports/reports-client-scoping.spec.ts`: **5/5 tests PASS**.
+  - `apps/api/src/modules/analytics/analytics-client-scoping.spec.ts`: **3/3 tests PASS**.
+  - Full API test suite: **56/56 test files PASS, 732/732 tests PASS** (delta: +7 test files, +52 tests).
+- **Web Unit Tests (`@agency-os/web`)**:
+  - `apps/web/src/lib/permissions.spec.ts`: **11/11 tests PASS** (delta: +2 tests for `canViewClients` & `canManageClients`).
+  - `apps/web/src/components/dashboard-shell.spec.tsx`: **6/6 tests PASS**.
+  - `apps/web/src/app/[workspaceId]/clients/page.spec.tsx`: **6/6 tests PASS** (new test suite).
+  - `apps/web/src/app/[workspaceId]/accounts/page.spec.tsx`: **16/16 tests PASS** (delta: +3 tests for client badges, filter pills, and assignment).
+  - `apps/web/src/app/[workspaceId]/team/page.spec.tsx`: **5/5 tests PASS** (delta: +2 tests for client scope in invites and member reassignments).
+  - `apps/web/src/app/[workspaceId]/analytics/page.spec.tsx`: **18/18 tests PASS** (delta: +2 tests for client report filtering and mutual exclusion).
+  - Full Web test suite: **29/29 test files PASS, 328/328 tests PASS** (delta: +1 test file, +15 tests).
+- **Total Monorepo Tests**:
+  - **1,060 unit & integration tests PASSING across API and Web suites** (732 API + 328 Web).
+- **Code Quality & Typecheck**:
+  - `apps/api` TypeScript typecheck (`tsc --noEmit`): **0 errors**.
+  - `apps/web` TypeScript typecheck (`tsc --noEmit`): **0 errors**.
+  - `apps/api` ESLint: **0 errors**.
+  - `apps/web` ESLint: **0 errors**.
+
+### 4. Release Gate & Next Steps
+
+1. **CI Quality Gates**:
+   - To be verified 6/6 green on the PR head.
+2. **Release Gate**:
+   - **Live Deployment**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending external infrastructure provisioning, live email delivery verification, live payment credentials, and disaster recovery rehearsals G18/G19).
+3. **Next Steps**:
+   - Open Pull Request against `main` for review.
+   - Do NOT merge on this prompt alone. Live deployment remains STRICT NO-GO.
+
+
 
 
 

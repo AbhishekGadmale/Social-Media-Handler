@@ -40,6 +40,7 @@ export class WorkspaceGuard implements CanActivate {
     }
 
     request.workspaceRole = membership.role;
+    request.workspaceClientId = membership.clientId ?? null;
     return true;
   }
 }

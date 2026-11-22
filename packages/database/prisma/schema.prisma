@@ -165,6 +165,7 @@ model Workspace {
   subscription         Subscription?
   invoices             Invoice[]
   invitations          WorkspaceInvitation[]
+  clients              Client[]
 
   @@index([organizationId])
 }
@@ -174,11 +175,13 @@ model WorkspaceMember {
   workspaceId String        @db.Uuid
   userId      String        @db.Uuid
   role        WorkspaceRole
+  clientId    String?       @db.Uuid
   createdAt   DateTime      @default(now())
   updatedAt   DateTime      @updatedAt
 
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  client    Client?   @relation(fields: [clientId], references: [id], onDelete: Restrict)
 
   @@unique([workspaceId, userId])
   @@index([userId])
@@ -189,6 +192,7 @@ model WorkspaceInvitation {
   workspaceId     String        @db.Uuid
   email           String
   role            WorkspaceRole
+  clientId        String?       @db.Uuid
   invitedByUserId String        @db.Uuid
   tokenHash       String        @unique
   expiresAt       DateTime
@@ -207,6 +211,7 @@ model WorkspaceInvitation {
 model SocialAccount {
   id           String              @id @db.Uuid
   workspaceId  String              @db.Uuid
+  clientId     String?             @db.Uuid
   provider     SocialProvider
   externalId   String
   name         String?
@@ -216,12 +221,31 @@ model SocialAccount {
   updatedAt    DateTime            @updatedAt
 
   workspace  Workspace             @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  client     Client?               @relation(fields: [clientId], references: [id], onDelete: SetNull)
   connection SocialConnection?
   variants   PostPlatformVariant[]
   metrics    AccountMetricDaily[]
 
   @@unique([provider, externalId])
   @@index([workspaceId, provider])
+  @@index([workspaceId, clientId])
+}
+
+model Client {
+  id               String            @id @db.Uuid
+  workspaceId      String            @db.Uuid
+  name             String
+  brandDisplayName String?
+  brandLogoUrl     String?
+  brandAccentColor String?
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+
+  workspace Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  accounts  SocialAccount[]
+  members   WorkspaceMember[]
+
+  @@index([workspaceId])
 }
 
 model SocialConnection {

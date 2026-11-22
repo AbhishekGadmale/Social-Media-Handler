@@ -81,6 +81,20 @@ export class WorkspacesService {
       throw new ForbiddenException('Managers cannot invite an Owner');
     }
 
+    if (dto.clientId) {
+      if (dto.role !== WorkspaceRole.CLIENT_APPROVER) {
+        throw new BadRequestException(
+          'Only client approvers can be scoped to a client',
+        );
+      }
+      const client = await this.prisma.client.findFirst({
+        where: { id: dto.clientId, workspaceId },
+      });
+      if (!client) {
+        throw new NotFoundException('Client not found');
+      }
+    }
+
     // 2. Existing member check
     const existingUser = await this.prisma.user.findUnique({
       where: { email },
@@ -147,6 +161,7 @@ export class WorkspacesService {
         workspaceId,
         email,
         role: dto.role,
+        clientId: dto.clientId || null,
         invitedByUserId: inviterUserId,
         tokenHash,
         expiresAt,
@@ -167,13 +182,14 @@ export class WorkspacesService {
       action: AuditAction.MEMBER_INVITED,
       targetType: 'WorkspaceInvitation',
       targetId: invitation.id,
-      metadata: { email, role: dto.role },
+      metadata: { email, role: dto.role, clientId: invitation.clientId },
     });
 
     return {
       id: invitation.id,
       email: invitation.email,
       role: invitation.role,
+      clientId: invitation.clientId,
       expiresAt: invitation.expiresAt,
       createdAt: invitation.createdAt,
     };
@@ -189,6 +205,9 @@ export class WorkspacesService {
         user: {
           select: { id: true, name: true, email: true },
         },
+        client: {
+          select: { id: true, name: true },
+        },
       },
       orderBy: { createdAt: 'asc' },
     });
@@ -199,6 +218,8 @@ export class WorkspacesService {
       name: m.user.name,
       email: m.user.email,
       role: m.role,
+      clientId: m.clientId ?? null,
+      clientName: m.client?.name ?? null,
       joinedAt: m.createdAt,
     }));
 
@@ -210,25 +231,43 @@ export class WorkspacesService {
       return { members: formattedMembers };
     }
 
-    const invitations = await this.prisma.workspaceInvitation.findMany({
-      where: {
-        workspaceId,
-        consumedAt: null,
-        revokedAt: null,
-        expiresAt: { gt: new Date() },
-      },
-      include: {
-        invitedByUser: {
-          select: { id: true, name: true, email: true },
+    const clientModel = (this.prisma as any).client;
+    const [invitations, clients] = await Promise.all([
+      this.prisma.workspaceInvitation.findMany({
+        where: {
+          workspaceId,
+          consumedAt: null,
+          revokedAt: null,
+          expiresAt: { gt: new Date() },
         },
-      },
-      orderBy: { createdAt: 'desc' },
-    });
+        include: {
+          invitedByUser: {
+            select: { id: true, name: true, email: true },
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+      }),
+      clientModel
+        ? clientModel.findMany({
+            where: { workspaceId },
+            select: { id: true, name: true },
+          })
+        : Promise.resolve([]),
+    ]);
+
+    const clientMap = new Map(
+      (clients as Array<{ id: string; name: string }>).map((c) => [
+        c.id,
+        c.name,
+      ]),
+    );
 
     const formattedInvitations = invitations.map((inv) => ({
       id: inv.id,
       email: inv.email,
       role: inv.role,
+      clientId: inv.clientId ?? null,
+      clientName: inv.clientId ? (clientMap.get(inv.clientId) ?? null) : null,
       expiresAt: inv.expiresAt,
       createdAt: inv.createdAt,
       invitedBy: {
@@ -398,9 +437,35 @@ export class WorkspacesService {
       }
     }
 
+    let newClientId = targetMember.clientId;
+
+    if (dto.role !== WorkspaceRole.CLIENT_APPROVER) {
+      if (dto.clientId) {
+        throw new BadRequestException(
+          'Only client approvers can be scoped to a client',
+        );
+      }
+      newClientId = null;
+    } else if (dto.clientId !== undefined) {
+      if (dto.clientId === null) {
+        newClientId = null;
+      } else {
+        const client = await this.prisma.client.findFirst({
+          where: { id: dto.clientId, workspaceId },
+        });
+        if (!client) {
+          throw new NotFoundException('Client not found');
+        }
+        newClientId = dto.clientId;
+      }
+    }
+
     const updated = await this.prisma.workspaceMember.update({
       where: { id: memberId },
-      data: { role: dto.role },
+      data: {
+        role: dto.role,
+        clientId: newClientId,
+      },
     });
 
     await this.audit.logAction({
@@ -409,7 +474,12 @@ export class WorkspacesService {
       action: AuditAction.MEMBER_ROLE_UPDATED,
       targetType: 'WorkspaceMember',
       targetId: memberId,
-      metadata: { oldRole: targetMember.role, newRole: dto.role },
+      metadata: {
+        oldRole: targetMember.role,
+        newRole: dto.role,
+        oldClientId: targetMember.clientId,
+        newClientId,
+      },
     });
 
     return updated;
@@ -556,6 +626,7 @@ export class WorkspacesService {
           workspaceId: invitation.workspaceId,
           userId,
           role: invitation.role,
+          clientId: invitation.clientId ?? null,
         },
       });
 

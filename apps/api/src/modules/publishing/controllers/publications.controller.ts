@@ -7,8 +7,10 @@ import {
   Body,
   Param,
   UseGuards,
+  Req,
   HttpCode,
 } from '@nestjs/common';
+import type { Request } from 'express';
 import { PublishingApplicationService } from '../services/publishing-application.service';
 import {
   AddPublicationTargetDto,
@@ -99,8 +101,18 @@ export class PublicationsController {
   async validateTarget(
     @Param('workspaceId') workspaceId: string,
     @Param('publicationId') publicationId: string,
+    @Req() req?: Request,
   ) {
-    return this.publishingService.validateTarget(workspaceId, publicationId);
+    const role = (req as any)?.workspaceRole;
+    const clientId = (req as any)?.workspaceClientId;
+    const scopeClientId =
+      role === 'CLIENT_APPROVER' && clientId ? clientId : undefined;
+    return this.publishingService.validateTarget(
+      workspaceId,
+      publicationId,
+      false,
+      scopeClientId,
+    );
   }
 
   @Post('publications/:publicationId/publish')
