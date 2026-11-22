@@ -3,6 +3,7 @@ import {
   NotFoundException,
   ForbiddenException,
   Logger,
+  Optional,
 } from '@nestjs/common';
 import {
   PrismaClient,
@@ -22,7 +23,7 @@ export class AccountsService {
   constructor(
     private readonly prisma: PrismaClient,
     private readonly socialAccountRepo: SocialAccountRepository,
-    private readonly auditService?: AuditService,
+    @Optional() private readonly auditService?: AuditService,
   ) {}
 
   async listWorkspaceAccounts(workspaceId: string, scopeClientId?: string) {
