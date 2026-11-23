@@ -6355,6 +6355,60 @@ A repository-wide search was performed for strings `'4,999'`, `'9,999'`, `'39,99
    - Post-merge verification: Live Meta retest (reconnect Facebook, complete Page selection, and confirm the accounts land on the Accounts page).
    - Do NOT merge on this prompt alone. Live deployment remains STRICT NO-GO.
 
+## 85. Docker Compose & Environment Pass-Through for Meta OAuth Credentials
+
+### 1. Summary & Motivation
+
+- **Status**: PR #99 open on branch `fix/meta-compose-env` (reviewed head `a272f96b1cd55f44eb84a7deb112192a774d70a2`)
+- **Pull Request**: [#99](https://github.com/AbhishekGadmale/Social-Media-Handler/pull/99)
+- **Branch**: `fix/meta-compose-env`
+- **Reviewed Head SHA**: `a272f96b1cd55f44eb84a7deb112192a774d70a2` (`a272f96`)
+- **Scope & Objectives**:
+  - `docker-compose.yml` and `docker-compose.staging.yml` pass provider OAuth keys to the `api` and `worker` services through explicit environment lists.
+  - While `YOUTUBE_CLIENT_ID/SECRET` and `LINKEDIN_CLIENT_ID/SECRET` were present, `META_CLIENT_ID` and `META_CLIENT_SECRET` were omitted entirely. Consequently, Meta OAuth flows resulted in HTTP 500 errors in any environment relying on compose files (staging or containerized deployments), even when valid Meta credentials were set in `.env`.
+  - The same gap existed in `.env.example`, where Meta OAuth secrets were missing from the `# OAuth Secrets` template.
+  - Local development testing previously succeeded because it relied on the git-ignored `docker-compose.override.yml`, which masked the missing pass-through in the tracked compose definitions.
+
+### 2. Changes & File Modifications
+
+Config-only changes across 3 files with 0 application code modifications (strictly additions, zero deletions or style churn):
+
+- **`docker-compose.yml`**:
+  - Added `META_CLIENT_ID: ${META_CLIENT_ID}` and `META_CLIENT_SECRET: ${META_CLIENT_SECRET}` pass-through entries under `api.environment` (immediately following `LINKEDIN_CLIENT_SECRET`).
+  - Added `META_CLIENT_ID: ${META_CLIENT_ID}` and `META_CLIENT_SECRET: ${META_CLIENT_SECRET}` pass-through entries under `worker.environment` (immediately following `LINKEDIN_CLIENT_SECRET`).
+- **`docker-compose.staging.yml`**:
+  - Added `META_CLIENT_ID: ${META_CLIENT_ID}` and `META_CLIENT_SECRET: ${META_CLIENT_SECRET}` pass-through entries under `api.environment`.
+  - Added `META_CLIENT_ID: ${META_CLIENT_ID}` and `META_CLIENT_SECRET: ${META_CLIENT_SECRET}` pass-through entries under `worker.environment`.
+- **`.env.example`**:
+  - Added `META_CLIENT_ID="mock-meta-client-id"` and `META_CLIENT_SECRET="mock-meta-client-secret"` under `# OAuth Secrets` (mock/placeholder values only; never real secrets).
+
+### 3. Verification & Test Evidence
+
+- **Compose Template Validation**:
+  - Verified `docker-compose config` on `docker-compose.yml`: confirms `META_CLIENT_ID` and `META_CLIENT_SECRET` interpolate cleanly into both `api` and `worker` container environments.
+  - Verified `docker-compose -f docker-compose.staging.yml config`: confirms `META_CLIENT_ID` and `META_CLIENT_SECRET` interpolate cleanly into both staging `api` and `worker` configurations.
+- **Git Diff Verification**:
+  - Verified `git diff`: strictly 3 files touched (`docker-compose.yml`, `docker-compose.staging.yml`, `.env.example`), exactly 10 additions, 0 deletions, no formatting churn.
+  - No application code or local override files touched or committed.
+
+### 4. Release Gate & Next Steps
+
+1. **CI Quality Gates**:
+   - CI on reviewed head `a272f96` is 6/6 green (all 2026-11-23):
+     - `GitGuardian Security Checks`: completed / success (2026-11-23T13:18:07Z)
+     - `Application Builds`: completed / success (2026-11-23T13:19:01Z)
+     - `Tests`: completed / success (2026-11-23T13:19:36Z)
+     - `Code Quality (Lint & Typecheck)`: completed / success (2026-11-23T13:19:42Z)
+     - `API E2E Tests`: completed / success (2026-11-23T13:19:56Z)
+     - `Docker Build & Smoke Test`: completed / success (2026-11-23T13:26:14Z)
+   - Standing note: CI re-runs on any docs-fix head and must be re-verified 6/6 green there before merge.
+2. **Release Gate**:
+   - **Live Deployment**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending external infrastructure provisioning, live email delivery verification, live payment credentials, and disaster recovery rehearsals G18/G19).
+3. **Next Steps**:
+   - PR #99 is open at reviewed head `a272f96` with CI 6/6 green; next step is the docs-fix re-review, followed by owner merge.
+   - Do NOT merge on this prompt alone. Live deployment remains STRICT NO-GO.
+
+
 
 
 
