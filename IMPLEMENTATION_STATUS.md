@@ -6305,6 +6305,57 @@ A repository-wide search was performed for strings `'4,999'`, `'9,999'`, `'39,99
    - PR #97 is open at reviewed head `f7cdf5d` with CI 6/6 green; next step is the docs-fix re-review, then merge by the owner.
    - Do NOT merge on this prompt alone. Live deployment remains STRICT NO-GO.
 
+## 84. OAuth Discovery Page Dynamic Route Params Await (Bug #8)
+
+### 1. Summary & Motivation
+
+- **Status**: PR #98 open on branch `fix/discovery-page-params` (reviewed head `814f7d6bda368e13c72dbbc3d1be8b14e9cd9f99`)
+- **Pull Request**: [#98](https://github.com/AbhishekGadmale/Social-Media-Handler/pull/98)
+- **Branch**: `fix/discovery-page-params`
+- **Reviewed Head SHA**: `814f7d6bda368e13c72dbbc3d1be8b14e9cd9f99` (`814f7d6`)
+- **Scope & Objectives**:
+  - Fix Bug #8: The OAuth discovery page previously passed `workspaceId=undefined` to `<DiscoveryClientPage />`, leading to API 500 errors when attempting to fetch discovery sessions (`workspaces/undefined/oauth/discoveries/<id>`).
+  - Next.js 16.3.1 dynamic page parameters are delivered asynchronously as a `Promise`. The synchronous parameter access (`params.workspaceId`) on the server component evaluated to `undefined`.
+  - A comprehensive codebase sweep across all 21 `page.tsx` routes under `apps/web/src/app` (excluding root landing page) confirmed that this was the sole occurrence of the synchronous `params` prop pattern; every other dynamic workspace page is a client component utilizing `useParams()`.
+
+### 2. Changes & File Modifications
+
+- **Discovery Server Page (`apps/web/src/app/[workspaceId]/accounts/discovery/page.tsx`)**:
+  - Updated signature to async function: `export default async function DiscoveryPage({ params }: { params: Promise<{ workspaceId: string }> })`.
+  - Awaited dynamic route params in the modern Next.js idiom: `const { workspaceId } = await params;`.
+  - Passed the unwrapped `workspaceId={workspaceId}` prop into `<DiscoveryClientPage />`.
+  - Maintained the outer `<Suspense>` wrapper and preserved the `<DiscoveryClientPage />` prop contract without modifications.
+- **Regression Test (`apps/web/src/app/[workspaceId]/accounts/discovery/page.spec.tsx`)**:
+  - Added dedicated page-level unit test suite rendering `DiscoveryPage` with `params = Promise.resolve({ workspaceId: '<uuid>' })`.
+  - Verified red-to-green regression cycle:
+    - On base code: synchronous property access yielded `undefined`, causing `api.get` to request `workspaces/undefined/oauth/discoveries/disc-1` (FAILED/RED).
+    - With fix: unwrapped workspaceId resolves correctly, asserting `api.get` called with `workspaces/<uuid>/oauth/discoveries/disc-1` and never `workspaces/undefined/...` (PASSED/GREEN).
+
+### 3. Verification & Test Evidence
+
+- **Sweep Confirmation**:
+  - Swept all 21 `page.tsx` route files in `apps/web/src/app`: exactly 1 page used `params` prop (`[workspaceId]/accounts/discovery/page.tsx`), and 10 dynamic routes cleanly utilize `useParams()` in client components.
+- **Web Unit Tests (`@agency-os/web`)**:
+  - `apps/web/src/app/[workspaceId]/accounts/discovery/page.spec.tsx`: **1/1 test PASS** (new regression test suite).
+  - `apps/web/src/app/[workspaceId]/accounts/discovery/discovery-client.spec.tsx`: **7/7 tests PASS**.
+  - Full `@agency-os/web` test suite: **30/30 test files PASS, 329/329 tests PASS** (delta: +1 test file, +1 test).
+- **Code Quality & Typecheck**:
+  - `apps/web` TypeScript typecheck (`tsc --noEmit`): **0 errors**.
+  - `apps/api` TypeScript typecheck (`tsc --noEmit`): **0 errors**.
+  - `apps/web` ESLint on discovery route: **0 errors, 0 warnings on page and spec**.
+
+### 4. Release Gate & Next Steps
+
+1. **CI Quality Gates**:
+   - CI on reviewed head `814f7d6` is 6/6 green (all 2026-11-23): GitGuardian Security Checks 07:21:41Z, Application Builds 07:22:40Z, Code Quality (Lint & Typecheck) 07:23:14Z, API E2E Tests 07:23:20Z, Tests 07:23:45Z, Docker Build & Smoke Test 07:29:57Z. Standing note: CI re-runs on any docs-fix head and must be re-verified 6/6 green there before merge.
+2. **Release Gate**:
+   - **Live Deployment**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending external infrastructure provisioning, live email delivery verification, live payment credentials, and disaster recovery rehearsals G18/G19).
+3. **Next Steps**:
+   - PR #98 is open at reviewed head `814f7d6` with CI 6/6 green; next step is the docs-fix re-review, followed by owner merge.
+   - Post-merge verification: Live Meta retest (reconnect Facebook, complete Page selection, and confirm the accounts land on the Accounts page).
+   - Do NOT merge on this prompt alone. Live deployment remains STRICT NO-GO.
+
+
 
 
 
