@@ -6408,6 +6408,95 @@ Config-only changes across 3 files with 0 application code modifications (strict
    - PR #99 is open at reviewed head `a272f96` with CI 6/6 green; next step is the docs-fix re-review, followed by owner merge.
    - Do NOT merge on this prompt alone. Live deployment remains STRICT NO-GO.
 
+## 86. Media Previews: Signed Read URLs & Composer Video Thumbnails (Bug #9)
+
+### 1. Summary & Motivation
+
+- **Status**: PR #100 open on branch `fix/media-preview` (reviewed head `2eedabb02e0b57e7fb178b678f237f8ebc7d6bc6`)
+- **Pull Request**: [#100](https://github.com/AbhishekGadmale/Social-Media-Handler/pull/100)
+- **Branch**: `fix/media-preview`
+- **Reviewed Head SHA**: `2eedabb02e0b57e7fb178b678f237f8ebc7d6bc6` (`2eedabb`)
+- **Scope & Objectives**:
+  - Fix Bug #9 (Media Previews):
+    1. **Post Detail Page Preview Failure**: `apps/web/src/app/[workspaceId]/publishing/[postId]/page.tsx` previously constructed media URLs via `http://localhost:9000/agency-os-media/${storageKey}`. Because object storage buckets are private (anonymous access disabled), browsers received HTTP 403 Forbidden, causing both `<img>` and `<video>` previews to break. In addition, hardcoding `localhost:9000` failed in staging and production environments.
+    2. **Missing API Preview-Url Endpoint**: `apps/api/src/modules/media` exposed only upload initiation and completion endpoints. Although `IObjectStorage` supported signed reads (`getSignedReadUrl`), there was no endpoint returning signed read URLs for authorized workspace members.
+    3. **Composer Video Preview Gap**: `apps/web/src/components/media-uploader.tsx` created local object URL previews only for image files; selected video files displayed only a generic `FileVideo` icon without a preview thumbnail.
+
+### 2. Changes & File Modifications
+
+- **API (`apps/api`)**:
+  - `apps/api/src/modules/media/media.controller.ts`:
+    - Added `GET /v1/workspaces/:workspaceId/media/:mediaId/preview-url`.
+    - Protected by `@RequirePermission('posts.read')` (matching publishing read paths `getPostById` and `getPosts`, accessible by `OWNER`, `MANAGER`, `EDITOR`, `CLIENT_APPROVER`, `VIEWER`) and controller-level `@UseGuards(AuthGuard, WorkspaceGuard, PermissionGuard)`.
+    - Note: Omitted `WorkspaceWritableGuard` so media previews remain viewable when a workspace trial expires into read-only mode.
+  - `apps/api/src/modules/media/media.service.ts`:
+    - Implemented `getPreviewUrl(workspaceId, mediaId)`:
+      - Validates asset ownership: `prisma.mediaAsset.findFirst({ where: { id: mediaId, workspaceId } })`. Unknown or cross-workspace id returns 404 (`NotFoundException`).
+      - Validates asset status: If `status !== MediaAssetStatus.READY`, returns 409 (`ConflictException`), matching the publishing module's error style for state conflicts.
+      - Generates signed read URL via `IObjectStorage.getSignedReadUrl(asset.storageKey, 600)` with a short 10-minute TTL (600 seconds).
+      - Returns response payload: `{ url, expiresAt }`.
+  - `apps/api/src/modules/media/media.service.spec.ts`:
+    - Added new test suite (6 tests) covering happy path (signed URL, 10-minute TTL, ISO Date), cross-workspace 404 rejection, non-READY states (UPLOADING, PROCESSING, FAILED) throwing 409 ConflictException, and missing storage provider capability throwing 500.
+  - `apps/api/src/modules/media/media.controller.spec.ts`:
+    - Added 5 new tests covering controller delegation, `@RequirePermission('posts.read')` decoration, absence of `WorkspaceWritableGuard`, and `PermissionGuard` role gating.
+
+- **Web (`apps/web`)**:
+  - `apps/web/src/lib/query/media.ts`:
+    - Created `mediaQueries.previewUrl(workspaceId, mediaId)` query definition invoking `workspaces/:workspaceId/media/:mediaId/preview-url`.
+  - `apps/web/src/app/[workspaceId]/publishing/[postId]/page.tsx`:
+    - Extracted `MediaAttachmentPreview` sub-component to fetch signed preview URLs using `mediaQueries.previewUrl`.
+    - Completely removed hardcoded `http://localhost:9000` URL construction (no environment-specific host strings).
+    - While loading or on query error, renders text fallback (`mimeType` + `Status: status`), never a broken `<img>` or `<video controls>` element pointing to an unsigned URL.
+    - Renders `<img>` or `<video controls>` only once signed read URL is resolved.
+  - `apps/web/src/components/media-uploader.tsx`:
+    - Updated `handleFileSelect` to create `URL.createObjectURL(file)` for video files (`file.type.startsWith('video/')`) in addition to images.
+    - Rendered small `<video>` thumbnail (`muted`, `preload="metadata"`, `h-10 w-10 object-cover rounded`) in place of the `FileVideo` icon when a preview URL is present.
+    - Maintained existing `removeItem` and unmount cleanup via `URL.revokeObjectURL(item.previewUrl)`.
+  - `apps/web/src/components/media-uploader.spec.tsx`:
+    - Added test `I` asserting video file selection creates object URL preview, renders `<video src="..." muted preload="metadata">`, and revokes object URL on remove.
+  - `apps/web/src/app/[workspaceId]/publishing/[postId]/page.spec.tsx`:
+    - Added 3 new tests asserting signed preview URL fetching, text fallback for non-READY assets, and error fallback without broken media elements.
+
+### 3. Verification & Test Evidence
+
+- **API Unit Tests (`@agency-os/api`)**:
+  - `apps/api/src/modules/media/media.controller.spec.ts`: **9/9 tests PASS** (delta: +5 tests).
+  - `apps/api/src/modules/media/media.service.spec.ts`: **6/6 tests PASS** (new file, delta: +6 tests).
+  - Full API test suite: **57 test files, 743 tests** (delta: +1 test file, +11 tests).
+- **Web Unit Tests (`@agency-os/web`)**:
+  - `apps/web/src/components/media-uploader.spec.tsx`: **8/8 tests PASS** (delta: +1 test).
+  - `apps/web/src/app/[workspaceId]/publishing/[postId]/page.spec.tsx`: **48/48 tests PASS** (delta: +3 tests).
+  - Full Web test suite: **30/30 test files PASS, 333/333 tests PASS** (delta: +4 tests).
+- **Total Monorepo Tests**:
+  - **1,076 unit & integration tests PASSING across API and Web suites** (743 API + 333 Web).
+- **Code Quality & Typecheck**:
+  - `apps/api` TypeScript typecheck (`tsc --noEmit`): **0 errors**.
+  - `apps/web` TypeScript typecheck (`tsc --noEmit`): **0 errors**.
+  - `apps/api` ESLint: **0 errors**.
+  - `apps/web` ESLint: **0 errors**.
+  - Prettier formatting check across all touched files: **100% compliant**.
+
+### 4. Release Gate & Next Steps
+
+1. **CI Quality Gates**:
+   - CI on reviewed head `2eedabb` is 6/6 green (all 2026-11-24):
+     - `GitGuardian Security Checks`: completed / success (07:15:44Z)
+     - `Application Builds`: completed / success (07:16:05Z)
+     - `Code Quality (Lint & Typecheck)`: completed / success (07:16:35Z)
+     - `API E2E Tests`: completed / success (07:16:55Z)
+     - `Tests`: completed / success (07:17:09Z)
+     - `Docker Build & Smoke Test`: completed / success (07:23:02Z)
+   - Standing note: CI re-runs on any docs-fix head and must be re-verified 6/6 green there before merge.
+2. **Release Gate**:
+   - **Live Deployment**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending external infrastructure provisioning, live email delivery verification, live payment credentials, and disaster recovery rehearsals G18/G19).
+3. **Next Steps**:
+   - PR #100 is open at reviewed head `2eedabb` with CI 6/6 green; next step is the docs-fix re-review, followed by owner merge.
+   - **Live Retest Verification**:
+     1. Open an existing post with an image and a video — confirm both preview in the browser on localhost (signed URLs loaded without 403s).
+     2. Attach a video in the composer and confirm the small video thumbnail previews before upload.
+   - Do NOT merge on this prompt alone. Live deployment remains STRICT NO-GO.
+
+
 
 
 
