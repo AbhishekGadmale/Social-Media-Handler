@@ -1,5 +1,5 @@
-import { queryOptions } from '@tanstack/react-query';
-import { api } from '../api/client';
+import { queryOptions } from "@tanstack/react-query";
+import { api } from "../api/client";
 
 export interface MediaPreviewUrlResponse {
   url: string;
@@ -9,7 +9,7 @@ export interface MediaPreviewUrlResponse {
 export const mediaQueries = {
   previewUrl: (workspaceId: string, mediaId: string) =>
     queryOptions({
-      queryKey: ['workspaces', workspaceId, 'media', mediaId, 'preview-url'],
+      queryKey: ["workspaces", workspaceId, "media", mediaId, "preview-url"],
       queryFn: () =>
         api.get<MediaPreviewUrlResponse>(
           `workspaces/${workspaceId}/media/${mediaId}/preview-url`,

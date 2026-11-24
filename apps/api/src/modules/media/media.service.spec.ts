@@ -46,12 +46,7 @@ describe('MediaService.getPreviewUrl', () => {
       info: vi.fn(),
     };
 
-    service = new MediaService(
-      mockStorage,
-      mockPrisma as any,
-      mockAudit as any,
-      mockLogger as any,
-    );
+    service = new MediaService(mockStorage, mockPrisma, mockAudit, mockLogger);
   });
 
   it('happy path: returns signed URL and expiresAt for a READY asset with 10-minute TTL', async () => {
@@ -100,9 +95,9 @@ describe('MediaService.getPreviewUrl', () => {
     };
     mockPrisma.mediaAsset.findFirst.mockResolvedValue(asset);
 
-    await expect(
-      service.getPreviewUrl('ws-123', 'asset-123'),
-    ).rejects.toThrow(ConflictException);
+    await expect(service.getPreviewUrl('ws-123', 'asset-123')).rejects.toThrow(
+      ConflictException,
+    );
     expect(mockStorage.getSignedReadUrl).not.toHaveBeenCalled();
   });
 
@@ -115,9 +110,9 @@ describe('MediaService.getPreviewUrl', () => {
     };
     mockPrisma.mediaAsset.findFirst.mockResolvedValue(asset);
 
-    await expect(
-      service.getPreviewUrl('ws-123', 'asset-123'),
-    ).rejects.toThrow(ConflictException);
+    await expect(service.getPreviewUrl('ws-123', 'asset-123')).rejects.toThrow(
+      ConflictException,
+    );
   });
 
   it('non-READY asset (FAILED) throws ConflictException', async () => {
@@ -129,9 +124,9 @@ describe('MediaService.getPreviewUrl', () => {
     };
     mockPrisma.mediaAsset.findFirst.mockResolvedValue(asset);
 
-    await expect(
-      service.getPreviewUrl('ws-123', 'asset-123'),
-    ).rejects.toThrow(ConflictException);
+    await expect(service.getPreviewUrl('ws-123', 'asset-123')).rejects.toThrow(
+      ConflictException,
+    );
   });
 
   it('throws InternalServerErrorException if storage lacks getSignedReadUrl capability', async () => {
@@ -144,9 +139,7 @@ describe('MediaService.getPreviewUrl', () => {
     mockPrisma.mediaAsset.findFirst.mockResolvedValue(asset);
     delete mockStorage.getSignedReadUrl;
 
-    await expect(
-      service.getPreviewUrl('ws-123', 'asset-123'),
-    ).rejects.toThrow(
+    await expect(service.getPreviewUrl('ws-123', 'asset-123')).rejects.toThrow(
       new InternalServerErrorException(
         'Storage provider does not support signed read URLs',
       ),
