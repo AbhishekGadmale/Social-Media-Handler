@@ -2,6 +2,9 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { ExecutionContext, ForbiddenException } from '@nestjs/common';
 import { MediaController } from './media.controller';
 import { WorkspaceWritableGuard } from '../billing/guards/workspace-writable.guard';
+import { PERMISSION_KEY } from '../auth/decorators/permission.decorator';
+import { PermissionGuard } from '../auth/guards/permission.guard';
+import { Reflector } from '@nestjs/core';
 
 describe('MediaController', () => {
   let controller: MediaController;
@@ -19,6 +22,10 @@ describe('MediaController', () => {
       completeUpload: vi.fn().mockResolvedValue({
         id: 'asset-123',
         status: 'READY',
+      }),
+      getPreviewUrl: vi.fn().mockResolvedValue({
+        url: 'https://storage.example.com/preview-url',
+        expiresAt: new Date('2026-11-24T12:00:00Z'),
       }),
     };
 
@@ -159,6 +166,92 @@ describe('MediaController', () => {
         'ws-writable',
         'asset-123',
         'user-123',
+      );
+    });
+  });
+
+  describe('getPreviewUrl endpoint and permissions', () => {
+    it('delegates to MediaService.getPreviewUrl and returns signed preview url', async () => {
+      const result = await controller.getPreviewUrl('ws-123', 'asset-123');
+
+      expect(result).toEqual({
+        url: 'https://storage.example.com/preview-url',
+        expiresAt: new Date('2026-11-24T12:00:00Z'),
+      });
+      expect(mockMediaService.getPreviewUrl).toHaveBeenCalledWith(
+        'ws-123',
+        'asset-123',
+      );
+    });
+
+    it('decorates getPreviewUrl with RequirePermission("posts.read")', () => {
+      const permission = Reflect.getMetadata(
+        PERMISSION_KEY,
+        (MediaController.prototype as any).getPreviewUrl,
+      );
+      expect(permission).toBe('posts.read');
+    });
+
+    it('does not decorate getPreviewUrl with WorkspaceWritableGuard (reads allowed on expired/read-only workspaces)', () => {
+      const guards =
+        Reflect.getMetadata(
+          '__guards__',
+          (MediaController.prototype as any).getPreviewUrl,
+        ) || [];
+      expect(guards).not.toContain(WorkspaceWritableGuard);
+    });
+
+    it('PermissionGuard allows all roles with posts.read permission', () => {
+      const reflector = new Reflector();
+      const permGuard = new PermissionGuard(reflector);
+
+      const allowedRoles = [
+        'OWNER',
+        'MANAGER',
+        'EDITOR',
+        'CLIENT_APPROVER',
+        'VIEWER',
+      ];
+
+      for (const role of allowedRoles) {
+        const mockContext = {
+          getHandler: () => (MediaController.prototype as any).getPreviewUrl,
+          getClass: () => MediaController,
+          switchToHttp: () => ({
+            getRequest: () => ({ workspaceRole: role }),
+          }),
+        } as unknown as ExecutionContext;
+
+        expect(permGuard.canActivate(mockContext)).toBe(true);
+      }
+    });
+
+    it('PermissionGuard rejects requests lacking workspace role or unauthorized role', () => {
+      const reflector = new Reflector();
+      const permGuard = new PermissionGuard(reflector);
+
+      const unauthContext = {
+        getHandler: () => (MediaController.prototype as any).getPreviewUrl,
+        getClass: () => MediaController,
+        switchToHttp: () => ({
+          getRequest: () => ({}),
+        }),
+      } as unknown as ExecutionContext;
+
+      expect(() => permGuard.canActivate(unauthContext)).toThrow(
+        ForbiddenException,
+      );
+
+      const forbiddenContext = {
+        getHandler: () => (MediaController.prototype as any).getPreviewUrl,
+        getClass: () => MediaController,
+        switchToHttp: () => ({
+          getRequest: () => ({ workspaceRole: 'GUEST' }),
+        }),
+      } as unknown as ExecutionContext;
+
+      expect(() => permGuard.canActivate(forbiddenContext)).toThrow(
+        ForbiddenException,
       );
     });
   });

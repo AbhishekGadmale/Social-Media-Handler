@@ -3,6 +3,7 @@ import {
   Inject,
   NotFoundException,
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   InternalServerErrorException,
 } from '@nestjs/common';
@@ -243,5 +244,39 @@ export class MediaService {
       });
       throw error;
     }
+  }
+
+  async getPreviewUrl(workspaceId: string, mediaId: string) {
+    const asset = await this.prisma.mediaAsset.findFirst({
+      where: { id: mediaId, workspaceId },
+    });
+
+    if (!asset) {
+      throw new NotFoundException('Media asset not found in this workspace');
+    }
+
+    if (asset.status !== MediaAssetStatus.READY) {
+      throw new ConflictException(
+        `Media asset is not ready (status: ${asset.status})`,
+      );
+    }
+
+    const ttlSeconds = 600; // 10 minutes
+    if (!this.storage.getSignedReadUrl) {
+      throw new InternalServerErrorException(
+        'Storage provider does not support signed read URLs',
+      );
+    }
+
+    const url = await this.storage.getSignedReadUrl(
+      asset.storageKey,
+      ttlSeconds,
+    );
+    const expiresAt = new Date(Date.now() + ttlSeconds * 1000);
+
+    return {
+      url,
+      expiresAt,
+    };
   }
 }
