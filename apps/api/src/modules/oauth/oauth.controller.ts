@@ -9,6 +9,8 @@ import {
   Res,
   ForbiddenException,
   NotFoundException,
+  BadRequestException,
+  HttpCode,
   ParseUUIDPipe,
   Body,
 } from '@nestjs/common';
@@ -290,5 +292,50 @@ export class OAuthController {
     }
 
     return { success: true };
+  }
+
+  /**
+   * Meta Data Deletion Callback Endpoint
+   * Public endpoint called by Meta when a user removes the app or requests data deletion.
+   * Cryptographically verifies HMAC-SHA256 signature in signed_request using META_CLIENT_SECRET.
+   * Purges tokens, connected accounts, metrics, and scheduled variants, returning confirmation code & status URL.
+   */
+  @Throttle({ default: RateLimitPolicies.baseline })
+  @Post('v1/oauth/meta/data-deletion')
+  @HttpCode(200)
+  async metaDataDeletion(@Req() req: Request, @Body() body?: any) {
+    let signedRequest = body?.signed_request;
+    if (!signedRequest && typeof req.body === 'string') {
+      try {
+        const parsed = JSON.parse(req.body);
+        signedRequest = parsed.signed_request;
+      } catch {
+        signedRequest = new URLSearchParams(req.body).get('signed_request');
+      }
+    }
+
+    if (!signedRequest || typeof signedRequest !== 'string') {
+      this.logger.warn(
+        'Rejected Meta data deletion: missing signed_request parameter',
+      );
+      throw new BadRequestException('Missing signed_request parameter');
+    }
+
+    const requestId = getOrCreateCorrelationId(req);
+    return this.oauthService.handleMetaDataDeletion(signedRequest, {
+      ip: req.ip,
+      userAgent: req.headers?.['user-agent'],
+      requestId,
+    });
+  }
+
+  /**
+   * Meta Data Deletion Status Endpoint
+   * Public endpoint allowing users (or automated monitors) to verify the status of a data deletion request.
+   */
+  @Throttle({ default: RateLimitPolicies.baseline })
+  @Get('v1/oauth/meta/data-deletion/status/:code')
+  async metaDataDeletionStatus(@Param('code') code: string) {
+    return this.oauthService.getMetaDataDeletionStatus(code);
   }
 }

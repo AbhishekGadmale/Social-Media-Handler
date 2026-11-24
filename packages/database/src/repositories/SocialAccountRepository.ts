@@ -259,4 +259,46 @@ export class SocialAccountRepository {
       });
     });
   }
+
+  async deleteByProviderAndExternalId(
+    providers: SocialProvider[],
+    externalId: string,
+  ): Promise<string[]> {
+    return this.prisma.$transaction(async (tx) => {
+      const accounts = await tx.socialAccount.findMany({
+        where: {
+          provider: { in: providers },
+          externalId,
+        },
+        include: {
+          connection: true,
+        },
+      });
+
+      const deletedIds: string[] = [];
+      for (const account of accounts) {
+        if (account.connection) {
+          await tx.socialConnection.update({
+            where: { id: account.connection.id },
+            data: {
+              encryptedAccessToken: null,
+              accessTokenIv: null,
+              accessTokenAuthTag: null,
+              encryptedRefreshToken: null,
+              refreshTokenIv: null,
+              refreshTokenAuthTag: null,
+              expiresAt: null,
+              refreshExpiresAt: null,
+            },
+          });
+        }
+        await tx.socialAccount.delete({
+          where: { id: account.id },
+        });
+        deletedIds.push(account.id);
+      }
+
+      return deletedIds;
+    });
+  }
 }

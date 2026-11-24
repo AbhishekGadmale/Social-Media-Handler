@@ -3,6 +3,9 @@ import {
   Inject,
   ForbiddenException,
   BadRequestException,
+  NotFoundException,
+  InternalServerErrorException,
+  Optional,
 } from '@nestjs/common';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { SyncJobData } from '@agency-os/shared';
@@ -14,6 +17,8 @@ import {
   generateId,
   SocialProvider,
   SocialAccountStatus,
+  AuditLogRepository,
+  AuditAction,
 } from '@agency-os/database';
 import { providerRegistry } from '@agency-os/providers';
 import { OAuthStateSchema } from '@agency-os/shared';
@@ -22,6 +27,7 @@ import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { OAuthCallbackResult, DiscoverySession } from './oauth-discovery.types';
 import { EntitlementsService } from '../billing/entitlements.service';
+import { AuditService } from '../core/audit.service';
 
 @Injectable()
 export class OAuthService {
@@ -32,6 +38,8 @@ export class OAuthService {
     @InjectPinoLogger(OAuthService.name)
     private readonly logger: PinoLogger,
     private readonly entitlementsService: EntitlementsService,
+    @Optional() private readonly auditLogRepo?: AuditLogRepository,
+    @Optional() private readonly auditService?: AuditService,
   ) {}
 
   private validateProvider(providerName: string): SocialProvider {
@@ -464,5 +472,189 @@ export class OAuthService {
       socialAccountId: account.id,
       isNew,
     };
+  }
+
+  parseAndVerifySignedRequest(
+    signedRequest: string,
+    appSecret: string,
+  ): { user_id: string; algorithm: string; issued_at?: number } {
+    if (!signedRequest || typeof signedRequest !== 'string') {
+      throw new BadRequestException('Malformed signed_request');
+    }
+
+    const parts = signedRequest.split('.');
+    if (parts.length !== 2) {
+      throw new BadRequestException(
+        'Malformed signed_request: expected signature.payload',
+      );
+    }
+
+    const [encodedSig, payloadStr] = parts;
+    if (!encodedSig || !payloadStr) {
+      throw new BadRequestException(
+        'Malformed signed_request: missing signature or payload',
+      );
+    }
+
+    let payload: { user_id?: string; algorithm?: string; issued_at?: number };
+    try {
+      const payloadJson = Buffer.from(payloadStr, 'base64url').toString('utf8');
+      payload = JSON.parse(payloadJson);
+    } catch {
+      throw new BadRequestException('Invalid signed_request payload JSON');
+    }
+
+    if (payload.algorithm?.toUpperCase() !== 'HMAC-SHA256') {
+      throw new BadRequestException('Unsupported algorithm in signed_request');
+    }
+
+    const sigBuffer = Buffer.from(encodedSig, 'base64url');
+    const expectedSigBuffer = crypto
+      .createHmac('sha256', appSecret)
+      .update(payloadStr)
+      .digest();
+
+    if (
+      sigBuffer.length !== expectedSigBuffer.length ||
+      !crypto.timingSafeEqual(sigBuffer, expectedSigBuffer)
+    ) {
+      throw new BadRequestException('Invalid signed_request signature');
+    }
+
+    if (!payload.user_id || typeof payload.user_id !== 'string') {
+      throw new BadRequestException(
+        'Missing user_id in signed_request payload',
+      );
+    }
+
+    return {
+      user_id: payload.user_id,
+      algorithm: payload.algorithm,
+      issued_at: payload.issued_at,
+    };
+  }
+
+  async handleMetaDataDeletion(
+    signedRequest: string,
+    reqContext?: { ip?: string; userAgent?: string; requestId?: string },
+  ): Promise<{ url: string; confirmation_code: string }> {
+    const appSecret = process.env.META_CLIENT_SECRET;
+    if (!appSecret) {
+      this.logger.error(
+        'Meta app secret (META_CLIENT_SECRET) is not configured',
+      );
+      throw new InternalServerErrorException(
+        'Meta credentials are not configured',
+      );
+    }
+
+    const { user_id } = this.parseAndVerifySignedRequest(
+      signedRequest,
+      appSecret,
+    );
+
+    const confirmationCode = `del_${crypto.randomBytes(16).toString('hex')}`;
+    let accountsDeletedCount = 0;
+    let deletedAccountIds: string[] = [];
+
+    if (this.socialAccountRepo) {
+      deletedAccountIds =
+        await this.socialAccountRepo.deleteByProviderAndExternalId(
+          [SocialProvider.FACEBOOK, SocialProvider.INSTAGRAM],
+          user_id,
+        );
+      accountsDeletedCount = deletedAccountIds.length;
+    }
+
+    const deletionRecord = {
+      confirmationCode,
+      userId: user_id,
+      status: 'COMPLETED',
+      accountsDeleted: accountsDeletedCount,
+      requestedAt: new Date().toISOString(),
+    };
+
+    // Store in Redis with 90-day TTL (7,776,000 seconds)
+    await this.redis.set(
+      `meta_data_deletion:${confirmationCode}`,
+      JSON.stringify(deletionRecord),
+      'EX',
+      90 * 24 * 60 * 60,
+    );
+
+    if (this.auditService) {
+      this.auditService.logActionBestEffort({
+        action: AuditAction.META_DATA_DELETION,
+        actorId: undefined,
+        targetType: 'MetaUser',
+        targetId: user_id,
+        requestId: reqContext?.requestId,
+        ipAddress: reqContext?.ip,
+        userAgent: reqContext?.userAgent,
+        metadata: {
+          confirmationCode,
+          accountsDeletedCount,
+          deletedAccountIds,
+        },
+      });
+    }
+
+    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+    const statusUrl = `${frontendUrl}/data-deletion?code=${confirmationCode}`;
+
+    this.logger.info(
+      {
+        userId: user_id,
+        confirmationCode,
+        accountsDeletedCount,
+      },
+      'Meta data deletion request executed successfully',
+    );
+
+    return {
+      url: statusUrl,
+      confirmation_code: confirmationCode,
+    };
+  }
+
+  async getMetaDataDeletionStatus(confirmationCode: string) {
+    if (!confirmationCode || typeof confirmationCode !== 'string') {
+      throw new BadRequestException('Invalid confirmation code');
+    }
+
+    const cached = await this.redis.get(
+      `meta_data_deletion:${confirmationCode}`,
+    );
+    if (cached) {
+      try {
+        const data = JSON.parse(cached);
+        return {
+          confirmation_code: data.confirmationCode,
+          status: data.status,
+          requested_at: data.requestedAt,
+          accounts_deleted: data.accountsDeleted,
+        };
+      } catch {
+        // Fall back to database query
+      }
+    }
+
+    if (this.auditLogRepo) {
+      const log = await this.auditLogRepo.findByActionAndConfirmationCode(
+        AuditAction.META_DATA_DELETION,
+        confirmationCode,
+      );
+
+      if (log) {
+        return {
+          confirmation_code: confirmationCode,
+          status: 'COMPLETED',
+          requested_at: log.createdAt.toISOString(),
+          accounts_deleted: (log.metadata as any)?.accountsDeletedCount ?? 0,
+        };
+      }
+    }
+
+    throw new NotFoundException('Data deletion request not found');
   }
 }

@@ -60,6 +60,7 @@ describe('AuthGuard Route Logic & Protection', () => {
         '/terms',
         '/privacy',
         '/refund-cancellation',
+        '/data-deletion',
       ]);
     });
   });
@@ -155,6 +156,16 @@ describe('AuthGuard Route Logic & Protection', () => {
 
       await waitFor(() => {
         expect(screen.getByTestId('refund-cancellation-page')).toBeInTheDocument();
+      });
+      expect(mockReplace).not.toHaveBeenCalled();
+    });
+
+    it('renders data-deletion page on /data-deletion without redirecting to login', async () => {
+      currentPathname = '/data-deletion';
+      renderWithGuard(<div data-testid="data-deletion-page">Data Deletion Instructions</div>);
+
+      await waitFor(() => {
+        expect(screen.getByTestId('data-deletion-page')).toBeInTheDocument();
       });
       expect(mockReplace).not.toHaveBeenCalled();
     });

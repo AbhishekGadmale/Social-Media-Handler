@@ -1,3 +1,5 @@
+import Link from 'next/link';
+
 export default function PrivacyPage() {
   return (
     <div className="min-h-screen bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
@@ -248,7 +250,10 @@ export default function PrivacyPage() {
         <section className="space-y-3">
           <h2 className="text-xl font-bold text-gray-900">9. Third-party platforms — what you should know</h2>
           <p>
-            9.1 <strong>Meta (Facebook/Instagram).</strong> We use Platform Data only for the purposes you consented to. We do not sell it or use it to build profiles. If you remove our app or request deletion, Meta sends us a signed deletion request; we verify it, delete your Platform Data, and return a confirmation code and status URL. Our data-deletion instructions are at [TO CONFIRM: URL — this page must exist on a public, non-geoblocked URL and be entered in the Meta App Dashboard].
+            9.1 <strong>Meta (Facebook/Instagram).</strong> We use Platform Data only for the purposes you consented to. We do not sell it or use it to build profiles. If you remove our app or request deletion, Meta sends us a signed deletion request; we verify it, delete your Platform Data, and return a confirmation code and status URL. Our data-deletion instructions are at{' '}
+            <Link href="/data-deletion" className="underline hover:text-gray-900 font-medium">
+              /data-deletion
+            </Link>.
           </p>
           <p>
             9.2 <strong>LinkedIn.</strong> Member data from LinkedIn&apos;s APIs <strong>cannot be exported out of the application — including to you, our customer</strong> — and other members&apos; profile data may be cached for <strong>24 hours only</strong>. Our LinkedIn features are designed within those limits; we do not promise indefinite LinkedIn analytics retention. [LAWYER + PLATFORM REVIEW REQUIRED — product-scope question, see Terms §9.3.]
