@@ -22,6 +22,7 @@ export enum AuditAction {
   OAUTH_RECONNECTED = "OAUTH_RECONNECTED",
   ACCOUNT_SYNC_TRIGGERED = "ACCOUNT_SYNC_TRIGGERED",
   ACCOUNT_DISCONNECTED = "ACCOUNT_DISCONNECTED",
+  META_DATA_DELETION = "META_DATA_DELETION",
   MEDIA_UPLOAD_INITIATED = "MEDIA_UPLOAD_INITIATED",
   MEDIA_UPLOAD_COMPLETED = "MEDIA_UPLOAD_COMPLETED",
   PUBLICATION_RECONCILED_PUBLISHED = "PUBLICATION_RECONCILED_PUBLISHED",
@@ -113,6 +114,21 @@ export class AuditLogRepository {
       orderBy: { createdAt: "desc" },
       skip,
       take: pageSize,
+    });
+  }
+
+  async findByActionAndConfirmationCode(
+    action: string,
+    confirmationCode: string,
+  ) {
+    return this.prisma.auditLog.findFirst({
+      where: {
+        action,
+        metadata: {
+          path: ["confirmationCode"],
+          equals: confirmationCode,
+        },
+      },
     });
   }
 }

@@ -30,6 +30,8 @@ describe('OAuthController', () => {
     mockOAuthService = {
       generateAuthUrl: vi.fn(),
       handleOAuthCallback: vi.fn(),
+      handleMetaDataDeletion: vi.fn(),
+      getMetaDataDeletionStatus: vi.fn(),
     };
 
     mockAuditService = {
@@ -732,6 +734,102 @@ describe('OAuthController', () => {
       expect(res).toBeDefined();
       expect(res.id).toBe('disc-1');
       expect(mockOAuthService.readDiscovery).toHaveBeenCalledWith('disc-1');
+    });
+  });
+
+  describe('Meta Data Deletion Callback (Bug / Task §87)', () => {
+    it('is a public endpoint without AuthGuard or WorkspaceGuard', () => {
+      const deletionGuards =
+        Reflect.getMetadata(
+          '__guards__',
+          (OAuthController.prototype as any).metaDataDeletion,
+        ) || [];
+      expect(deletionGuards).not.toContain(AuthGuard);
+      expect(deletionGuards).not.toContain(WorkspaceGuard);
+
+      const statusGuards =
+        Reflect.getMetadata(
+          '__guards__',
+          (OAuthController.prototype as any).metaDataDeletionStatus,
+        ) || [];
+      expect(statusGuards).not.toContain(AuthGuard);
+      expect(statusGuards).not.toContain(WorkspaceGuard);
+    });
+
+    it('extracts signed_request from JSON body and delegates to oauthService', async () => {
+      const mockResult = {
+        url: 'http://localhost:3000/data-deletion?code=del_123',
+        confirmation_code: 'del_123',
+      };
+      mockOAuthService.handleMetaDataDeletion.mockResolvedValue(mockResult);
+
+      const req: any = {
+        ip: '127.0.0.1',
+        headers: { 'user-agent': 'Meta-Callback-Bot' },
+        body: { signed_request: 'valid_sig.valid_payload' },
+      };
+
+      const result = await controller.metaDataDeletion(req, req.body);
+
+      expect(result).toEqual(mockResult);
+      expect(mockOAuthService.handleMetaDataDeletion).toHaveBeenCalledWith(
+        'valid_sig.valid_payload',
+        expect.objectContaining({
+          ip: '127.0.0.1',
+          userAgent: 'Meta-Callback-Bot',
+        }),
+      );
+    });
+
+    it('extracts signed_request from form-urlencoded string body', async () => {
+      const mockResult = {
+        url: 'http://localhost:3000/data-deletion?code=del_form_456',
+        confirmation_code: 'del_form_456',
+      };
+      mockOAuthService.handleMetaDataDeletion.mockResolvedValue(mockResult);
+
+      const req: any = {
+        ip: '10.0.0.1',
+        headers: {},
+        body: 'signed_request=sig.payload&extra=param',
+      };
+
+      const result = await controller.metaDataDeletion(req);
+
+      expect(result).toEqual(mockResult);
+      expect(mockOAuthService.handleMetaDataDeletion).toHaveBeenCalledWith(
+        'sig.payload',
+        expect.any(Object),
+      );
+    });
+
+    it('rejects with BadRequestException when signed_request is missing', async () => {
+      const req: any = {
+        ip: '127.0.0.1',
+        headers: {},
+        body: {},
+      };
+
+      await expect(controller.metaDataDeletion(req, {})).rejects.toThrow(
+        'Missing signed_request parameter',
+      );
+    });
+
+    it('metaDataDeletionStatus delegates to oauthService.getMetaDataDeletionStatus', async () => {
+      const mockStatus = {
+        confirmation_code: 'del_test_code',
+        status: 'COMPLETED',
+        requested_at: '2026-11-24T12:00:00.000Z',
+        accounts_deleted: 1,
+      };
+      mockOAuthService.getMetaDataDeletionStatus.mockResolvedValue(mockStatus);
+
+      const result = await controller.metaDataDeletionStatus('del_test_code');
+
+      expect(result).toEqual(mockStatus);
+      expect(mockOAuthService.getMetaDataDeletionStatus).toHaveBeenCalledWith(
+        'del_test_code',
+      );
     });
   });
 });

@@ -6497,9 +6497,96 @@ Config-only changes across 3 files with 0 application code modifications (strict
    - Do NOT merge on this prompt alone. Live deployment remains STRICT NO-GO.
 
 
+## 87. Meta Data Deletion: Callback Endpoint, Instructions Page & Privacy Policy URL
 
+### 1. Summary & Motivation
 
+- **Status**: PR #101 open on branch `fix/meta-data-deletion` (code head `0e3380463dd72e9c4443e7b8edf03bee46224523`)
+- **Pull Request**: [#101](https://github.com/AbhishekGadmale/Social-Media-Handler/pull/101)
+- **Branch**: `fix/meta-data-deletion`
+- **Code Head SHA**: `0e3380463dd72e9c4443e7b8edf03bee46224523` (`0e33804`)
+- **Scope & Objectives**:
+  - Implement Meta Platform user data deletion requirements per Meta developer terms and data deletion callback specification:
+    1. **Meta Data Deletion Callback Endpoint**: Meta sends a `POST` request with a `signed_request` when a user removes the app or requests data deletion through Facebook settings. The endpoint cryptographically verifies the HMAC-SHA256 signature using `META_CLIENT_SECRET`, executes credential wiping and account deletion, caches the deletion status in Redis (with `AuditLog` fallback), and returns JSON with `{ "url": "<status_url>", "confirmation_code": "<code_string>" }`. Also provides a public status lookup endpoint `GET /v1/oauth/meta/data-deletion/status/:code`.
+    2. **Public Data Deletion Instructions Page**: Public web route `/data-deletion` (accessible logged out) detailing step-by-step instructions for disconnecting Agency OS in Facebook settings, presenting an interactive confirmation code lookup and status banner (`/data-deletion?code=...`), an explicit schema-grounded data deletion scope table, and support contact details.
+    3. **Privacy Policy Link Update**: Replaced placeholder `[TO CONFIRM: URL — this page must exist on a public, non-geoblocked URL and be entered in the Meta App Dashboard]` in `apps/web/src/app/privacy/page.tsx` and `apps/web/src/content/legal/privacy.md` §9.1 with `/data-deletion`. Added a "Data Deletion" navigation link to the website footer.
 
+### 2. Changes & File Modifications
 
+- **Database Layer (`packages/database`)**:
+  - `packages/database/src/repositories/AuditLogRepository.ts`:
+    - Added `META_DATA_DELETION = "META_DATA_DELETION"` to `AuditAction` enum.
+    - Added `findByActionAndConfirmationCode(action: string, confirmationCode: string)` for durable status verification fallback when Redis cache expires.
+  - `packages/database/src/repositories/SocialAccountRepository.ts`:
+    - Added `deleteByProviderAndExternalId(providers: SocialProvider[], externalId: string): Promise<string[]>` executing an atomic transaction that wipes credentials on `SocialConnection` (setting access/refresh tokens, IVs, auth tags, and expiration dates to `null`) and permanently deletes matching `SocialAccount` records.
 
+- **API Layer (`apps/api`)**:
+  - `apps/api/src/modules/oauth/oauth.service.ts`:
+    - Implemented `parseAndVerifySignedRequest(signedRequest: string, appSecret: string)`: splits `<encoded_sig>.<payload>`, validates Base64URL encoding, computes expected HMAC-SHA256 signature, and performs timing-safe comparison via `crypto.timingSafeEqual`.
+    - Implemented `handleMetaDataDeletion(signedRequest: string, reqContext)`: verifies signature against `process.env.META_CLIENT_SECRET`, invokes `socialAccountRepo.deleteByProviderAndExternalId([SocialProvider.FACEBOOK, SocialProvider.INSTAGRAM], userId)`, generates a cryptographically random confirmation code (`del_<hex>`), caches status in Redis (`meta_data_deletion:<confirmationCode>`, 90-day TTL), logs an audit event via `auditService.logActionBestEffort`, and returns `{ url, confirmation_code }`.
+    - Implemented `getMetaDataDeletionStatus(confirmationCode: string)`: checks Redis cache with fallback to `auditLogRepo.findByActionAndConfirmationCode`, throwing 404 `NotFoundException` if missing.
+  - `apps/api/src/modules/oauth/oauth.controller.ts`:
+    - Added `@Post('v1/oauth/meta/data-deletion')`: Public endpoint without `AuthGuard` or `WorkspaceGuard`, rate-limited with `@Throttle({ default: RateLimitPolicies.baseline })`, accepting `signed_request` from JSON body or URL-encoded form data.
+    - Added `@Get('v1/oauth/meta/data-deletion/status/:code')`: Public status check endpoint.
+  - `apps/api/src/modules/oauth/meta-data-deletion.service.spec.ts`:
+    - Added 10 tests covering signature verification, tampered signature rejection, malformed payload handling, unsupported algorithm rejection, token wiping + account deletion execution, Redis caching, AuditLog fallback lookup, 404 on unknown code, and 500 when `META_CLIENT_SECRET` is unset.
+  - `apps/api/src/modules/oauth/oauth.controller.spec.ts`:
+    - Added 5 tests verifying public guard omission, JSON body parsing, form-urlencoded body parsing, missing parameter 400 rejection, and status route delegation.
 
+- **Web Layer (`apps/web`)**:
+  - `apps/web/src/components/auth-guard.tsx`: Added `'/data-deletion'` to `PUBLIC_ROUTES` to allow unauthenticated access.
+  - `apps/web/src/components/auth-guard.spec.tsx`: Extended tests to verify `/data-deletion` is public and does not redirect to `/login`.
+  - `apps/web/src/app/data-deletion/page.tsx`: Created public instructions page with `<Suspense>` wrapper, reading `code` query parameter, rendering dynamic status banner, interactive lookup input, step-by-step Meta removal instructions, explicit scope table, and support contact.
+  - `apps/web/src/app/data-deletion/page.spec.tsx`: Added 4 tests verifying heading/instructions, status banner on `code` query parameter, manual lookup form interaction, and legal links.
+  - `apps/web/src/app/privacy/page.tsx`: Replaced placeholder in §9.1 with `<Link href="/data-deletion">/data-deletion</Link>`.
+  - `apps/web/src/content/legal/privacy.md`: Replaced placeholder in §9.1 with `[/data-deletion](/data-deletion)`.
+  - `apps/web/src/app/page.tsx`: Added `Data Deletion` link in public footer.
+  - `apps/web/src/app/page.spec.tsx`: Extended assertions to verify footer link.
+
+### 3. Architectural Patterns & Deletion Scope
+
+- **Public Route & Guard Patterns Followed**:
+  - Aligned with `BillingController.handleWebhook` (`apps/api/src/modules/billing/billing.controller.ts`) and `OAuthController.callbackProvider`:
+    - Public endpoints omit `AuthGuard` and `WorkspaceGuard`.
+    - Protected against brute force via `@Throttle({ default: RateLimitPolicies.baseline })`.
+    - Authenticated cryptographically via HMAC-SHA256 signature verification against `META_CLIENT_SECRET` using timing-safe comparison.
+    - Structured audit logging via `auditService.logActionBestEffort`.
+    - Strict repository encapsulation: No direct Prisma client calls inside API controllers/services (`packages/config/eslint-restricted-imports.mjs`).
+- **Explicit Deletion Scope (Existing Schema Entities)**:
+  - `SocialConnection`: All token credentials (`encryptedAccessToken`, `accessTokenIv`, `accessTokenAuthTag`, `encryptedRefreshToken`, `refreshTokenIv`, `refreshTokenAuthTag`, `expiresAt`, `refreshExpiresAt`) wiped to `null`, immediately revoking API capabilities.
+  - `SocialAccount`: Matching Facebook and Instagram account records for the user (`externalId`) deleted from database.
+  - `AccountMetricDaily`: Historical daily analytics records deleted via database foreign-key cascade (`ON DELETE CASCADE`).
+  - `PostPlatformVariant`: Post variants associated with the account deleted via database cascade (`ON DELETE CASCADE`).
+  - `AuditLog`: Retained audit trail under `AuditAction.META_DATA_DELETION` for regulatory proof and status query verification.
+
+### 4. Verification & Test Evidence
+
+- **API Unit Tests (`@agency-os/api`)**:
+  - `apps/api/src/modules/oauth/meta-data-deletion.service.spec.ts`: **10/10 tests PASS** (new file).
+  - `apps/api/src/modules/oauth/oauth.controller.spec.ts`: **25/25 tests PASS** (+5 tests).
+  - `apps/api/src/modules/oauth/oauth.service.spec.ts`: **18/18 tests PASS**.
+  - Total OAuth suite: **3 test files, 53 tests PASS**.
+- **Web Unit Tests (`@agency-os/web`)**:
+  - `apps/web/src/app/data-deletion/page.spec.tsx`: **4/4 tests PASS** (new file).
+  - `apps/web/src/components/auth-guard.spec.tsx`: **22/22 tests PASS** (delta: +2 tests).
+  - `apps/web/src/app/page.spec.tsx`: **8/8 tests PASS** (delta: +1 test).
+  - Total Web suite: **31 test files, 338 tests PASS**.
+- **Database Unit Tests (`@agency-os/database`)**:
+  - **13 test files, 115 tests PASS**.
+- **Code Quality & Typecheck**:
+  - `apps/api` TypeScript compilation (`tsc --noEmit`): **0 errors**.
+  - `apps/web` TypeScript compilation (`tsc --noEmit`): **0 errors**.
+  - `apps/api` ESLint: **0 errors**.
+  - `apps/web` ESLint: **0 errors**.
+  - `@agency-os/database` build & typecheck: **0 errors**.
+
+### 5. Release Gate & Next Steps
+
+1. **CI Quality Gates**:
+   - Monitored on PR #101 head. All 6 jobs required green before review.
+2. **Release Gate**:
+   - **Live Deployment**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending external infrastructure provisioning, live email delivery verification, live payment credentials, and disaster recovery rehearsals G18/G19).
+3. **Next Steps**:
+   - PR #101 is open on branch `fix/meta-data-deletion`.
+   - CI 6/6 checks running on final head.
+   - Do NOT merge on this prompt alone. Live deployment remains STRICT NO-GO.

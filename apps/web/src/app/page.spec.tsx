@@ -175,6 +175,9 @@ describe('LandingPage (Public Home)', () => {
     const privacyLink = screen.getByRole('link', { name: 'Privacy' });
     expect(privacyLink).toHaveAttribute('href', '/privacy');
 
+    const dataDeletionLink = screen.getByRole('link', { name: 'Data Deletion' });
+    expect(dataDeletionLink).toHaveAttribute('href', '/data-deletion');
+
     const refundLinks = screen.getAllByRole('link', { name: /refund & cancellation/i });
     expect(refundLinks.some((link) => link.getAttribute('href') === '/refund-cancellation')).toBe(
       true

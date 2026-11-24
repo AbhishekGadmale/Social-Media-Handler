@@ -526,6 +526,9 @@ export default function LandingPage() {
             <Link href="/privacy" className="hover:text-gray-900 underline">
               Privacy
             </Link>
+            <Link href="/data-deletion" className="hover:text-gray-900 underline">
+              Data Deletion
+            </Link>
             <Link href="/refund-cancellation" className="hover:text-gray-900 underline">
               Refund &amp; Cancellation
             </Link>
