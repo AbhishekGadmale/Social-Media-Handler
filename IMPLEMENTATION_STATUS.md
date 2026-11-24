@@ -6412,10 +6412,10 @@ Config-only changes across 3 files with 0 application code modifications (strict
 
 ### 1. Summary & Motivation
 
-- **Status**: PR #100 open on branch `fix/media-preview` (reviewed head `2eedabb02e0b57e7fb178b678f237f8ebc7d6bc6`)
+- **Status**: PR #100 open on branch `fix/media-preview` (reviewed head `2eedabb6c47c389fe133f882cf9f5adf512a0422`)
 - **Pull Request**: [#100](https://github.com/AbhishekGadmale/Social-Media-Handler/pull/100)
 - **Branch**: `fix/media-preview`
-- **Reviewed Head SHA**: `2eedabb02e0b57e7fb178b678f237f8ebc7d6bc6` (`2eedabb`)
+- **Reviewed Head SHA**: `2eedabb6c47c389fe133f882cf9f5adf512a0422` (`2eedabb6`)
 - **Scope & Objectives**:
   - Fix Bug #9 (Media Previews):
     1. **Post Detail Page Preview Failure**: `apps/web/src/app/[workspaceId]/publishing/[postId]/page.tsx` previously constructed media URLs via `http://localhost:9000/agency-os-media/${storageKey}`. Because object storage buckets are private (anonymous access disabled), browsers received HTTP 403 Forbidden, causing both `<img>` and `<video>` previews to break. In addition, hardcoding `localhost:9000` failed in staging and production environments.
@@ -6453,7 +6453,7 @@ Config-only changes across 3 files with 0 application code modifications (strict
     - Rendered small `<video>` thumbnail (`muted`, `preload="metadata"`, `h-10 w-10 object-cover rounded`) in place of the `FileVideo` icon when a preview URL is present.
     - Maintained existing `removeItem` and unmount cleanup via `URL.revokeObjectURL(item.previewUrl)`.
   - `apps/web/src/components/media-uploader.spec.tsx`:
-    - Added test `I` asserting video file selection creates object URL preview, renders `<video src="..." muted preload="metadata">`, and revokes object URL on remove.
+    - Added test "I. video file generates local object URL and renders video thumbnail with muted and preload" asserting video file selection creates object URL preview, renders `<video src="..." muted preload="metadata">`, and revokes object URL on remove.
   - `apps/web/src/app/[workspaceId]/publishing/[postId]/page.spec.tsx`:
     - Added 3 new tests asserting signed preview URL fetching, text fallback for non-READY assets, and error fallback without broken media elements.
 
@@ -6479,7 +6479,7 @@ Config-only changes across 3 files with 0 application code modifications (strict
 ### 4. Release Gate & Next Steps
 
 1. **CI Quality Gates**:
-   - CI on reviewed head `2eedabb` is 6/6 green (all 2026-11-24):
+   - CI on reviewed head `2eedabb6` (`2eedabb6c47c389fe133f882cf9f5adf512a0422`) is 6/6 green (all 2026-11-24):
      - `GitGuardian Security Checks`: completed / success (07:15:44Z)
      - `Application Builds`: completed / success (07:16:05Z)
      - `Code Quality (Lint & Typecheck)`: completed / success (07:16:35Z)
@@ -6490,7 +6490,7 @@ Config-only changes across 3 files with 0 application code modifications (strict
 2. **Release Gate**:
    - **Live Deployment**: **STRICT NO-GO** (Staging and production deployment release gate remains strictly NO-GO pending external infrastructure provisioning, live email delivery verification, live payment credentials, and disaster recovery rehearsals G18/G19).
 3. **Next Steps**:
-   - PR #100 is open at reviewed head `2eedabb` with CI 6/6 green; next step is the docs-fix re-review, followed by owner merge.
+   - PR #100 is open at reviewed head `2eedabb6` (`2eedabb6c47c389fe133f882cf9f5adf512a0422`) with CI 6/6 green; next step is the docs-fix re-review, followed by owner merge.
    - **Live Retest Verification**:
      1. Open an existing post with an image and a video — confirm both preview in the browser on localhost (signed URLs loaded without 403s).
      2. Attach a video in the composer and confirm the small video thumbnail previews before upload.
