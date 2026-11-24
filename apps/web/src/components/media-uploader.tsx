@@ -197,7 +197,7 @@ export function MediaUploader({ workspaceId, onUploadsChange, onUploadingStateCh
 
     const newItems: MediaItem[] = validFiles.map(file => {
       let previewUrl;
-      if (file.type.startsWith('image/')) {
+      if (file.type.startsWith('image/') || file.type.startsWith('video/')) {
         previewUrl = URL.createObjectURL(file);
       }
       return {
@@ -251,8 +251,10 @@ export function MediaUploader({ workspaceId, onUploadsChange, onUploadingStateCh
             {items.map(item => (
               <div key={item.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg border">
                 <div className="flex items-center space-x-3 truncate flex-1">
-                  {item.previewUrl ? (
+                  {item.previewUrl && item.file.type.startsWith('image/') ? (
                     <img src={item.previewUrl} alt={item.file.name} className="h-10 w-10 object-cover rounded flex-shrink-0 border bg-white" />
+                  ) : item.previewUrl && item.file.type.startsWith('video/') ? (
+                    <video src={item.previewUrl} muted preload="metadata" className="h-10 w-10 object-cover rounded flex-shrink-0 border bg-black" />
                   ) : item.file.type === 'application/pdf' ? (
                     <FileText className="h-10 w-10 text-red-500 flex-shrink-0" />
                   ) : (

@@ -5,6 +5,7 @@ import { useState } from 'react';
 import { useParams } from 'next/navigation';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { publishingQueries, PostPlatformVariant, Post } from '../../../../lib/query/publishing';
+import { mediaQueries } from '../../../../lib/query/media';
 import { getTargetMediaValidationError } from '../../../../lib/publishing/validation';
 import { accountQueries } from '../../../../lib/query/accounts';
 import { authQueries } from '../../../../lib/query/auth';
@@ -15,6 +16,50 @@ import {
   ArrowLeft, Loader2, Save, Play, X, AlertCircle, Calendar
 } from 'lucide-react';
 import Link from 'next/link';
+
+function MediaAttachmentPreview({
+  workspaceId,
+  mediaItem,
+}: {
+  workspaceId: string;
+  mediaItem: Post['media'][number];
+}) {
+  const media = mediaItem.media;
+  const isReady = media?.status === 'READY';
+  const mediaId = media?.id || '';
+
+  const { data: previewData } = useQuery({
+    ...mediaQueries.previewUrl(workspaceId, mediaId),
+    enabled: !!workspaceId && !!mediaId && isReady,
+  });
+
+  if (!media) {
+    return (
+      <div className="flex items-center space-x-3 p-3 bg-red-50 text-red-700 rounded border border-red-200">
+        <p className="text-sm">Media record missing</p>
+      </div>
+    );
+  }
+
+  const isVideo = media.mimeType.startsWith('video/');
+  const isImage = media.mimeType.startsWith('image/');
+  const mediaUrl = previewData?.url;
+
+  return (
+    <div className="flex flex-col space-y-2 p-3 bg-white rounded border">
+      <div className="text-sm">
+        <p className="font-medium">{media.mimeType}</p>
+        <p className="text-gray-500 text-xs">Status: {media.status}</p>
+      </div>
+      {isVideo && mediaUrl && (
+        <video src={mediaUrl} controls className="w-full max-w-sm rounded" />
+      )}
+      {isImage && mediaUrl && (
+        <img src={mediaUrl} alt="Preview" className="w-full max-w-sm rounded object-contain" />
+      )}
+    </div>
+  );
+}
 
 export default function PostDetailPage() {
   const params = useParams();
@@ -162,33 +207,9 @@ export default function PostDetailPage() {
         {post.media.length > 0 && (
           <div className="bg-gray-50 shadow sm:rounded-lg p-6 border border-gray-200">
             <h3 className="text-md font-medium text-gray-900 mb-4">Attached Media</h3>
-            {post.media.map(m => {
-              if (!m.media) {
-                return (
-                  <div key={m.id} className="flex items-center space-x-3 p-3 bg-red-50 text-red-700 rounded border border-red-200">
-                    <p className="text-sm">Media record missing</p>
-                  </div>
-                );
-              }
-              const isVideo = m.media.mimeType.startsWith('video/');
-              const isImage = m.media.mimeType.startsWith('image/');
-              const mediaUrl = m.media.storageKey ? `http://localhost:9000/agency-os-media/${m.media.storageKey}` : '';
-
-              return (
-                <div key={m.id} className="flex flex-col space-y-2 p-3 bg-white rounded border">
-                  <div className="text-sm">
-                    <p className="font-medium">{m.media.mimeType}</p>
-                    <p className="text-gray-500 text-xs">Status: {m.media.status}</p>
-                  </div>
-                  {isVideo && mediaUrl && (
-                    <video src={mediaUrl} controls className="w-full max-w-sm rounded" />
-                  )}
-                  {isImage && mediaUrl && (
-                    <img src={mediaUrl} alt="Preview" className="w-full max-w-sm rounded object-contain" />
-                  )}
-                </div>
-              );
-            })}
+            {post.media.map(m => (
+              <MediaAttachmentPreview key={m.id} workspaceId={workspaceId} mediaItem={m} />
+            ))}
           </div>
         )}
       </div>

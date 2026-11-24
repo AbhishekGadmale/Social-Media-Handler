@@ -136,3 +136,28 @@ test('H. correct media completion/mediaId path is used', async () => {
     expect(api.post).toHaveBeenCalledWith('workspaces/test-ws/media/media-123/complete');
   });
 });
+
+test('I. video file generates local object URL and renders video thumbnail with muted and preload', async () => {
+  const createObjectURLSpy = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:mock-video-preview');
+  const revokeObjectURLSpy = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+
+  renderUploader();
+  const fileInput = screen.getByLabelText(/Select files/i);
+  const videoFile = new File(['dummy video'], 'clip.mp4', { type: 'video/mp4' });
+
+  await userEvent.upload(fileInput, videoFile);
+
+  expect(screen.getByText('clip.mp4')).toBeInTheDocument();
+  expect(createObjectURLSpy).toHaveBeenCalledWith(videoFile);
+
+  const videoElement = document.querySelector('video');
+  expect(videoElement).toBeInTheDocument();
+  expect(videoElement).toHaveAttribute('src', 'blob:mock-video-preview');
+  expect(videoElement).toHaveAttribute('preload', 'metadata');
+  expect(videoElement?.muted).toBe(true);
+
+  const removeBtn = screen.getByRole('button', { name: /Remove clip.mp4/i });
+  fireEvent.click(removeBtn);
+  expect(screen.queryByText('clip.mp4')).not.toBeInTheDocument();
+  expect(revokeObjectURLSpy).toHaveBeenCalledWith('blob:mock-video-preview');
+});

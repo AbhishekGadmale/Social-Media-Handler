@@ -1094,3 +1094,179 @@ describe('Client Approvals UI', () => {
   });
 });
 
+describe('Attached Media Previews (Bug #9)', () => {
+  test('fetches signed preview URL for READY image and video assets and renders preview elements', async () => {
+    const postData = {
+      id: 'post-1',
+      workspaceId: 'ws-1',
+      content: 'Post with media',
+      status: 'DRAFT',
+      media: [
+        {
+          id: 'pm-1',
+          mediaId: 'img-1',
+          media: {
+            id: 'img-1',
+            mimeType: 'image/jpeg',
+            status: 'READY',
+            storageKey: 'workspaces/ws-1/media/img-1/source',
+          },
+        },
+        {
+          id: 'pm-2',
+          mediaId: 'vid-1',
+          media: {
+            id: 'vid-1',
+            mimeType: 'video/mp4',
+            status: 'READY',
+            storageKey: 'workspaces/ws-1/media/vid-1/source',
+          },
+        },
+      ],
+      variants: [],
+    };
+
+    (api.get as ReturnType<typeof vi.fn>).mockImplementation((url: string) => {
+      if (url === 'workspaces/ws-1/media/img-1/preview-url') {
+        return Promise.resolve({
+          url: 'https://storage.cdn.com/signed-image.jpg?token=abc',
+          expiresAt: '2026-11-24T12:30:00Z',
+        });
+      }
+      if (url === 'workspaces/ws-1/media/vid-1/preview-url') {
+        return Promise.resolve({
+          url: 'https://storage.cdn.com/signed-video.mp4?token=def',
+          expiresAt: '2026-11-24T12:30:00Z',
+        });
+      }
+      if (url.includes('posts/post-1')) {
+        return Promise.resolve(postData);
+      }
+      return Promise.resolve({ accounts: [] });
+    });
+
+    queryClient.setQueryData(['workspaces', 'ws-1', 'posts', 'post-1'], postData);
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <PostDetailPage />
+      </QueryClientProvider>,
+    );
+
+    expect(screen.getByText('image/jpeg')).toBeInTheDocument();
+    expect(screen.getByText('video/mp4')).toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(api.get).toHaveBeenCalledWith('workspaces/ws-1/media/img-1/preview-url');
+      expect(api.get).toHaveBeenCalledWith('workspaces/ws-1/media/vid-1/preview-url');
+    });
+
+    const img = await screen.findByRole('img');
+    expect(img).toHaveAttribute('src', 'https://storage.cdn.com/signed-image.jpg?token=abc');
+
+    await waitFor(() => {
+      const v = document.querySelector('video');
+      expect(v).toBeInTheDocument();
+      expect(v).toHaveAttribute('src', 'https://storage.cdn.com/signed-video.mp4?token=def');
+      expect(v).toHaveAttribute('controls');
+    });
+
+    const video = document.querySelector('video');
+
+    // Confirm no localhost:9000 URLs exist
+    expect(img.getAttribute('src')).not.toContain('localhost:9000');
+    expect(video?.getAttribute('src')).not.toContain('localhost:9000');
+  });
+
+  test('non-READY media does not fetch preview-url and displays only fallback status text', async () => {
+    const postData = {
+      id: 'post-1',
+      workspaceId: 'ws-1',
+      content: 'Post with uploading media',
+      status: 'DRAFT',
+      media: [
+        {
+          id: 'pm-1',
+          mediaId: 'img-1',
+          media: {
+            id: 'img-1',
+            mimeType: 'image/png',
+            status: 'UPLOADING',
+            storageKey: 'workspaces/ws-1/media/uploads/img-1',
+          },
+        },
+      ],
+      variants: [],
+    };
+
+    (api.get as ReturnType<typeof vi.fn>).mockImplementation((url: string) => {
+      if (url.includes('posts/post-1')) {
+        return Promise.resolve(postData);
+      }
+      return Promise.resolve({ accounts: [] });
+    });
+
+    queryClient.setQueryData(['workspaces', 'ws-1', 'posts', 'post-1'], postData);
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <PostDetailPage />
+      </QueryClientProvider>,
+    );
+
+    expect(screen.getByText('image/png')).toBeInTheDocument();
+    expect(screen.getByText('Status: UPLOADING')).toBeInTheDocument();
+
+    expect(screen.queryByRole('img')).not.toBeInTheDocument();
+    expect(document.querySelector('video')).not.toBeInTheDocument();
+    expect(api.get).not.toHaveBeenCalledWith('workspaces/ws-1/media/img-1/preview-url');
+  });
+
+  test('preview-url API failure renders fallback text and does not render broken media element', async () => {
+    const postData = {
+      id: 'post-1',
+      workspaceId: 'ws-1',
+      content: 'Post with failing media',
+      status: 'DRAFT',
+      media: [
+        {
+          id: 'pm-1',
+          mediaId: 'img-fail',
+          media: {
+            id: 'img-fail',
+            mimeType: 'image/jpeg',
+            status: 'READY',
+            storageKey: 'workspaces/ws-1/media/img-fail/source',
+          },
+        },
+      ],
+      variants: [],
+    };
+
+    (api.get as ReturnType<typeof vi.fn>).mockImplementation((url: string) => {
+      if (url === 'workspaces/ws-1/media/img-fail/preview-url') {
+        return Promise.reject(new Error('Network error'));
+      }
+      if (url.includes('posts/post-1')) {
+        return Promise.resolve(postData);
+      }
+      return Promise.resolve({ accounts: [] });
+    });
+
+    queryClient.setQueryData(['workspaces', 'ws-1', 'posts', 'post-1'], postData);
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <PostDetailPage />
+      </QueryClientProvider>,
+    );
+
+    expect(screen.getByText('image/jpeg')).toBeInTheDocument();
+    expect(screen.getByText('Status: READY')).toBeInTheDocument();
+
+    // Verify no broken img is rendered
+    expect(screen.queryByRole('img')).not.toBeInTheDocument();
+    expect(document.querySelector('video')).not.toBeInTheDocument();
+  });
+});
+

@@ -1,5 +1,6 @@
 import {
   Controller,
+  Get,
   Post,
   Body,
   Param,
@@ -20,6 +21,15 @@ import type { Request } from 'express';
 @Controller('v1/workspaces/:workspaceId/media')
 export class MediaController {
   constructor(private readonly mediaService: MediaService) {}
+
+  @RequirePermission('posts.read')
+  @Get(':mediaId/preview-url')
+  async getPreviewUrl(
+    @Param('workspaceId', ParseUUIDPipe) workspaceId: string,
+    @Param('mediaId', ParseUUIDPipe) mediaId: string,
+  ) {
+    return this.mediaService.getPreviewUrl(workspaceId, mediaId);
+  }
 
   @UseGuards(WorkspaceWritableGuard)
   @RequirePermission('posts.create')
