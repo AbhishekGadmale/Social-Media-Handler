@@ -33,6 +33,6 @@ describe('TermsPage', () => {
     expect(screen.getByText(/Solo ₹4,990\/year/i)).toBeInTheDocument();
     expect(screen.getByText(/Studio ₹9,990\/year/i)).toBeInTheDocument();
     expect(screen.getByText(/Agency ₹39,990\/year/i)).toBeInTheDocument();
-    expect(screen.getByText(/₹29,990\/year/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/₹29,990\/year/i)).toHaveLength(2);
   });
 });

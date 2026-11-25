@@ -10,16 +10,16 @@ export default function PrivacyPage() {
           </h1>
           <div className="mt-4 p-4 rounded-md bg-amber-50 border border-amber-200 text-sm text-amber-900 space-y-2">
             <p>
-              <strong>Status:</strong> DRAFT prepared 2026-11-10, updated 2026-11-11 (email, address, grievance officer filled per owner) from the legal research brief (<code>~/workspace/research_notes/agency-os-legal-terms-privacy-india-20261110-1423/report.md</code>). <strong>This is not legal advice and has not been reviewed by a lawyer.</strong> Do not publish until the placeholders are filled and a lawyer has reviewed the flagged items.
+              <strong>Status:</strong> DRAFT prepared 2026-11-10, updated 2026-11-11 (email, address, grievance officer filled per owner), updated 2026-11-25 (review findings applied 2026-11-25) from the legal research brief (<code>~/workspace/research_notes/agency-os-legal-terms-privacy-india-20261110-1423/report.md</code>). <strong>This is not legal advice; reviewed against Indian law by Muse on 2026-11-25 (not a lawyer).</strong> Do not publish until the effective date is filled at deploy.
             </p>
             <p>
-              <strong>Data fiduciary:</strong> Gadmale Technologies, a sole proprietorship, Maharashtra, India (Udyam-registered; GSTIN pending). Product: <strong>Agency OS</strong>. Contact: <code>agadmale335@gmail.com</code>. Address: <code>Shihu, Tal-Pen, Dist-Raigad, Maharashtra, 402106, India</code>.
+              <strong>Data fiduciary:</strong> Gadmale Technologies, a sole proprietorship, Maharashtra, India (Udyam-registered; GSTIN 27FAXPG3922D1ZI). Product: <strong>Agency OS</strong>. Contact: <code>hello@gadmaletechnologies.com</code>. Phone: +91 86248 14650. Address: <code>Shihu, Tal-Pen, Dist-Raigad, Maharashtra, 402107, India</code>.
             </p>
             <p>
-              <strong>Placeholders filled 2026-11-11:</strong> business email (agadmale335@gmail.com), address (Shihu, Tal-Pen, Dist-Raigad, Maharashtra, 402106, India), grievance officer (Abhishek Gadmale, agadmale335@gmail.com). <strong>Still open:</strong> <code>[HOSTING REGION/COUNTRY]</code>, <code>[COOKIE/ANALYTICS LIST — confirm what trackers the site actually uses]</code>, <code>[EFFECTIVE DATE]</code>.
+              <strong>Placeholders filled 2026-11-11:</strong> business email (hello@gadmaletechnologies.com), address (Shihu, Tal-Pen, Dist-Raigad, Maharashtra, 402107, India), grievance officer (Abhishek Gadmale, hello@gadmaletechnologies.com). <strong>Filled 2026-11-25:</strong> hosting region (Mumbai VPS + R2), business phone (+91 86248 14650). <strong>Still open:</strong> <code>[EFFECTIVE DATE]</code> (fill at deploy). Cookie list filled 2026-11-25 after a check against the web code.
             </p>
             <p>
-              <strong>Key dates from the research:</strong> the DPDP Act 2023 and DPDP Rules 2025 were notified 13 Nov 2025; the core fiduciary duties (notice, consent, rights, breach notification, retention) come into force <strong>13 May 2027</strong> (some sources say 14 May — confirm against the Gazette). Until then, the IT Act 2000 s.43A and the SPDI Rules 2011 remain the operative privacy regime. This policy is drafted to work under both.
+              <strong>Key dates from the research:</strong> the DPDP Act, 2023 was enacted on 11 August 2023; the DPDP Rules, 2025 and the Act&apos;s commencement notification were issued on 13 November 2025, with the core fiduciary duties (notice, consent, rights, breach notification, retention) coming into force <strong>13 May 2027</strong>. Until then, the IT Act 2000 s.43A and the SPDI Rules 2011 remain the operative privacy regime. This policy is drafted to work under both.
             </p>
           </div>
         </div>
@@ -30,7 +30,7 @@ export default function PrivacyPage() {
             1.1 Gadmale Technologies (&quot;we&quot;, &quot;us&quot;) operates Agency OS, a multi-tenant SaaS for social media management. This policy explains what personal data we collect, why, who we share it with, how long we keep it, and your rights.
           </p>
           <p>
-            1.2 <strong>Our two roles.</strong> For data we determine the purpose of — our account holders&apos; and their staff&apos;s data, website visitors, billing contacts — we are a <strong>Data Fiduciary</strong> under the DPDP Act. For data belonging to your clients (for example a client&apos;s Page followers or commenters) and content you manage for them, we are likely a <strong>Data Processor</strong> acting on your instructions, and you are the fiduciary for that data. [LAWYER TO CONFIRM: role mapping for agency-client/follower data, and the data-processing agreement (DPA) to offer agency customers.]
+            1.2 <strong>Our two roles.</strong> For data we determine the purpose of — our account holders&apos; and their staff&apos;s data, website visitors, billing contacts — we are a <strong>Data Fiduciary</strong> under the DPDP Act. For data belonging to your clients (for example a client&apos;s Page followers or commenters) and content you manage for them, we are likely a <strong>Data Processor</strong> acting on your instructions, and you are the fiduciary for that data. A short Data Processing Addendum (DPA) is available on request for agency customers — it covers purpose, security, sub-processors, breach notice, deletion/return on termination, and audit assistance. The role mapping above stands.
           </p>
           <p>
             1.3 This policy is not the DPDP consent notice. At sign-up we give you a separate, short, standalone notice (in plain language) listing the data we collect, the specific purpose, and how to withdraw consent and complain. This policy mirrors that notice and links to it. Consent is never bundled into the Terms, and we do not use pre-ticked boxes.
@@ -91,7 +91,7 @@ export default function PrivacyPage() {
             2.1 We collect data directly from you, from the social platforms you connect, and from our processors (Razorpay for payment status, Resend for email delivery).
           </p>
           <p>
-            2.2 We do <strong>not</strong> knowingly collect data from children. The service is for adults/business users (18+) only. If an agency connects an account featuring a child, tell us and we will advise on removal. [LAWYER TO CONFIRM: position where agencies manage child-focused or minor accounts — DPDP requires verifiable parental consent for under-18s, and prohibits tracking/behavioural monitoring/targeted advertising directed at children.]
+            2.2 We do <strong>not</strong> knowingly collect data from children. The service is for adults/business users (18+) only. You must not connect an account belonging to a child under 18 or use Agency OS to collect children&apos;s data. If we learn that an account connected to Agency OS belongs to a child, we will disconnect it and delete the associated data. If you manage an account whose audience includes children, you must have obtained verifiable parental consent where the law requires it.
           </p>
           <p>
             2.3 We do not collect your card number, CVV or expiry date. See §6.
@@ -107,7 +107,7 @@ export default function PrivacyPage() {
             3.2 We use your data only for the purposes listed in §2, and for the specific purposes stated in the sign-up notice. We do not sell your personal data, use it to build or augment profiles, or combine it with other data except as stated here.
           </p>
           <p>
-            3.3 <strong>Withdrawing consent</strong> is as easy as giving it: use the account settings or email <code>agadmale335@gmail.com</code>. On withdrawal we (and our processors) will stop processing within a reasonable time, subject to data we must keep by law (invoices, logs — see §7).
+            3.3 <strong>Withdrawing consent</strong> is as easy as giving it: use the account settings or email <code>hello@gadmaletechnologies.com</code>. On withdrawal we (and our processors) will stop processing within a reasonable time, subject to data we must keep by law (invoices, logs — see §7).
           </p>
         </section>
 
@@ -129,7 +129,7 @@ export default function PrivacyPage() {
                 <tr>
                   <td className="px-4 py-2 border font-medium">Hosting provider (VPS + object storage)</td>
                   <td className="px-4 py-2 border">Runs the app and stores your data</td>
-                  <td className="px-4 py-2 border"><code>[HOSTING REGION/COUNTRY — to confirm]</code></td>
+                  <td className="px-4 py-2 border">Hostinger VPS (Mumbai, India) for the application and database; Cloudflare R2 object storage (location automatic) for media</td>
                 </tr>
                 <tr>
                   <td className="px-4 py-2 border font-medium">Razorpay (Razorpay Payments Pvt Ltd)</td>
@@ -150,7 +150,7 @@ export default function PrivacyPage() {
             </table>
           </div>
           <p>
-            4.2 We engage processors only under contracts requiring them to protect your data. We remain responsible for your data even when a processor fails.
+            4.2 We engage processors only under contracts requiring them to protect your data. We remain responsible for your data even when a processor fails. Our contracts with processors require them to notify us of a breach without delay.
           </p>
           <p>
             4.3 <strong>Cross-border transfers.</strong> India has no blanket data-localisation rule and, as of late 2026, no country has been notified as restricted for transfers under the DPDP Act. We will update this list if the Government restricts a destination. We do not promise &quot;your data never leaves India&quot; — hosting, email and the social APIs are outside India, as listed above. We do not export payment data abroad.
@@ -166,10 +166,10 @@ export default function PrivacyPage() {
             5.1 We use reasonable security safeguards appropriate to the data: OAuth tokens are encrypted at rest with <strong>AES-256-GCM</strong>, decrypted only in server memory during authorised operations, never written to logs and never shared; access is controlled by role (RBAC); we keep logs, monitoring and backups so processing can continue after a compromise.
           </p>
           <p>
-            5.2 No system is perfectly secure. If you believe your account or a connected token has been compromised, tell us immediately at <code>agadmale335@gmail.com</code> and disconnect the affected account.
+            5.2 No system is perfectly secure. If you believe your account or a connected token has been compromised, tell us immediately at <code>hello@gadmaletechnologies.com</code> and disconnect the affected account.
           </p>
           <p>
-            5.3 <strong>Breach notification.</strong> If we become aware of a personal data breach, we will notify each affected person without delay (by email or in-app: what happened, likely consequences, mitigation, self-protection steps, and a contact) and notify the Data Protection Board of India without delay, with a detailed report within 72 hours. Separately, cyber incidents reportable to CERT-In follow a 6-hour track. [LAWYER TO CONFIRM: what counts as &quot;becoming aware&quot; for a token leak at a platform, and who notifies whom when the breach is at a sub-processor.]
+            5.3 <strong>Breach notification.</strong> If we become aware of a personal data breach, we will notify each affected person without delay (by email or in-app: what happened, likely consequences, mitigation, self-protection steps, and a contact) and notify the Data Protection Board of India without delay, with a detailed report within 72 hours. Separately, cyber incidents reportable to CERT-In follow a 6-hour track. We become aware of a breach when our monitoring detects it or when a platform, processor or other person tells us. If a breach happens at one of our processors, the processor must tell us without delay under its contract with us, and we then notify you and the Board as above. If a breach happens at a social platform itself, the platform notifies the affected users; we will tell you what we know and what we are doing about your connected accounts.
           </p>
         </section>
 
@@ -207,15 +207,15 @@ export default function PrivacyPage() {
                 </tr>
                 <tr>
                   <td className="px-4 py-2 border font-medium">Logs (processing, traffic, audit)</td>
-                  <td className="px-4 py-2 border">At least <strong>1 year</strong> from processing, then erased (DPDP Rules 6/8)</td>
+                  <td className="px-4 py-2 border">At least <strong>1 year</strong> from processing, then erased (DPDP Rules, 2025, Rule 8(3))</td>
                 </tr>
                 <tr>
                   <td className="px-4 py-2 border font-medium">Invoices and accounting records</td>
-                  <td className="px-4 py-2 border">As tax law requires (typically 6–8 years — [CA TO CONFIRM]; do not invent a number here)</td>
+                  <td className="px-4 py-2 border"><strong>6 years (72 months) from the due date of furnishing the annual return</strong> (CGST Act, 2017, s.36); longer — 1 year after final disposal — if an appeal, proceeding or investigation is pending</td>
                 </tr>
                 <tr>
                   <td className="px-4 py-2 border font-medium">YouTube Authorized Data</td>
-                  <td className="px-4 py-2 border">Kept only as necessary for the consented purpose and <strong>no longer than 30 calendar days — delete or refresh</strong>; authorisation rechecked at least every 30 days for analytics kept longer</td>
+                  <td className="px-4 py-2 border">Kept only as necessary for the consented purpose and <strong>no longer than 30 calendar days — delete or refresh</strong>; authorisation rechecked at least every 30 days for analytics kept longer <em>(per Google&apos;s API Services User Data Policy — a platform requirement, not an Indian legal duty)</em></td>
                 </tr>
                 <tr>
                   <td className="px-4 py-2 border font-medium">Meta Platform Data</td>
@@ -240,10 +240,10 @@ export default function PrivacyPage() {
             <li><strong>Nomination</strong> — nominate a person to exercise your rights if you die or become incapacitated.</li>
           </ul>
           <p>
-            8.2 <strong>How to exercise a right:</strong> email <code>agadmale335@gmail.com</code> (or use the in-app request form, when built) and tell us your username/customer ID so we can identify your account. We acknowledge grievances within <strong>48 hours</strong> and respond within <strong>one month</strong> (the SPDI/E-Commerce timeline); the DPDP ceiling is 90 days, and we promise the shorter period. There is no data-portability, objection or automated-decision right under DPDP (unlike GDPR) — we will not invent one in this policy.
+            8.2 <strong>How to exercise a right:</strong> email <code>hello@gadmaletechnologies.com</code> (or use the in-app request form, when built) and tell us your username/customer ID so we can identify your account. We acknowledge grievances within <strong>48 hours</strong> and respond within <strong>one month</strong> (the SPDI/E-Commerce timeline); the DPDP ceiling is 90 days, and we promise the shorter period. There is no data-portability, objection or automated-decision right under DPDP (unlike GDPR) — we will not invent one in this policy.
           </p>
           <p>
-            8.3 <strong>Data protection contact:</strong> Abhishek Gadmale, proprietor, <code>agadmale335@gmail.com</code>. A full-time Data Protection Officer based in India is required only for Significant Data Fiduciaries; we are not currently notified as one, and will update this policy if that changes.
+            8.3 <strong>Data protection contact:</strong> Abhishek Gadmale, proprietor, <code>hello@gadmaletechnologies.com</code>. A full-time Data Protection Officer based in India is required only for Significant Data Fiduciaries; we are not currently notified as one, and will update this policy if that changes.
           </p>
         </section>
 
@@ -251,15 +251,15 @@ export default function PrivacyPage() {
           <h2 className="text-xl font-bold text-gray-900">9. Third-party platforms — what you should know</h2>
           <p>
             9.1 <strong>Meta (Facebook/Instagram).</strong> We use Platform Data only for the purposes you consented to. We do not sell it or use it to build profiles. If you remove our app or request deletion, Meta sends us a signed deletion request; we verify it, delete your Platform Data, and return a confirmation code and status URL. Our data-deletion instructions are at{' '}
-            <Link href="/data-deletion" className="underline hover:text-gray-900 font-medium">
-              /data-deletion
+            <Link href="https://gadmaletechnologies.com/data-deletion" className="underline hover:text-gray-900 font-medium">
+              https://gadmaletechnologies.com/data-deletion
             </Link>.
           </p>
           <p>
-            9.2 <strong>LinkedIn.</strong> Member data from LinkedIn&apos;s APIs <strong>cannot be exported out of the application — including to you, our customer</strong> — and other members&apos; profile data may be cached for <strong>24 hours only</strong>. Our LinkedIn features are designed within those limits; we do not promise indefinite LinkedIn analytics retention. [LAWYER + PLATFORM REVIEW REQUIRED — product-scope question, see Terms §9.3.]
+            9.2 <strong>LinkedIn.</strong> Member data from LinkedIn&apos;s APIs <strong>cannot be exported out of the application — including to you, our customer</strong> — and other members&apos; profile data may be cached for <strong>24 hours only</strong>. Our LinkedIn features are designed within those limits; we do not promise indefinite LinkedIn analytics retention. LinkedIn&apos;s Data Storage Requirements cap other members&apos; profile data at 24 hours&apos; caching and social-activity data at 48 hours (verified against LinkedIn&apos;s documentation, 2026-11-25).
           </p>
           <p>
-            9.3 <strong>YouTube.</strong> By using Agency OS to publish to YouTube, you agree to be bound by the YouTube Terms of Service (https://www.youtube.com/t/terms). You can revoke our access at any time at https://security.google.com/settings/security/permissions; Google&apos;s Privacy Policy (https://policies.google.com/privacy) also applies. You can ask us to delete stored YouTube data at any time — we delete it as soon as possible and <strong>within 7 calendar days</strong>. If you revoke via Google&apos;s settings, we delete the related data within 30 calendar days. Deleting data in Agency OS does not delete anything held by YouTube/Google.
+            9.3 <strong>YouTube.</strong> By using Agency OS to publish to YouTube, you agree to be bound by the YouTube Terms of Service (https://www.youtube.com/t/terms). You can revoke our access at any time at https://security.google.com/settings/security/permissions; Google&apos;s Privacy Policy (https://policies.google.com/privacy) also applies. You can ask us to delete stored YouTube data at any time by email to hello@gadmaletechnologies.com — we delete it as soon as possible and <strong>within 7 calendar days</strong>, and confirm the deletion by email once done. If you revoke via Google&apos;s settings, we delete the related data within 30 calendar days. Deleting data in Agency OS does not delete anything held by YouTube/Google.
           </p>
           <p>
             9.4 Each platform&apos;s own terms and privacy policy apply to your account on that platform. A platform may suspend our app or revoke tokens; if it does, the affected features stop until access is restored.
@@ -269,10 +269,63 @@ export default function PrivacyPage() {
         <section className="space-y-3">
           <h2 className="text-xl font-bold text-gray-900">10. Cookies and trackers</h2>
           <p>
-            10.1 There is no standalone cookie law in India, and the DPDP Act does not mention cookies — but a cookie that identifies you is personal data under DPDP, so from 13 May 2027 non-essential cookies need the same standalone notice and clear affirmative consent as other personal data: no pre-ticked boxes, granular choice by category, as easy to withdraw as to give, and a persistent &quot;Cookie settings&quot; control. Accept and Reject must have equal weight — a bright &quot;Accept&quot; with a hidden &quot;Reject&quot; is a dark pattern.
+            10.1 There is no standalone cookie law in India, and the DPDP Act does not mention cookies — but a cookie that identifies you is personal data under DPDP, so from 13 May 2027 non-essential cookies need the same standalone notice and clear affirmative consent as other personal data: no pre-ticked boxes, granular choice by category, as easy to withdraw as to give, and a persistent &quot;Cookie settings&quot; control. Accept and Reject must have equal weight — a bright &quot;Accept&quot; with a hidden &quot;Reject&quot; is a dark pattern. We also comply with the CCPA Guidelines for Prevention and Regulation of Dark Patterns, 2023 and, from 1 January 2027, the dark-pattern provisions of the Consumer Protection (E-Commerce) (Amendment) Rules, 2026, including the annual self-audit.
           </p>
           <p>
-            10.2 <strong>Our cookies/trackers:</strong> <code>[TO CONFIRM — list each by name, provider, purpose, duration, first- vs third-party. If we use no third-party analytics at all, say so expressly — that is a strong, verifiable statement. Resend, Razorpay checkout, and the platforms&apos; own pixels/SDKs must be listed if present.]</code>
+            10.2 <strong>Our cookies/trackers (verified against the web code, 2026-11-25):</strong>
+          </p>
+          <div className="overflow-x-auto my-4">
+            <table className="min-w-full divide-y divide-gray-200 border text-sm text-left">
+              <thead className="bg-gray-50 font-semibold text-gray-900">
+                <tr>
+                  <th className="px-4 py-2 border">Cookie / tracker</th>
+                  <th className="px-4 py-2 border">Provider</th>
+                  <th className="px-4 py-2 border">Purpose</th>
+                  <th className="px-4 py-2 border">Duration</th>
+                  <th className="px-4 py-2 border">Party</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-200">
+                <tr>
+                  <td className="px-4 py-2 border font-medium"><code>session</code></td>
+                  <td className="px-4 py-2 border">First-party (Agency OS)</td>
+                  <td className="px-4 py-2 border">Login session (httpOnly, Secure on HTTPS, SameSite=Lax)</td>
+                  <td className="px-4 py-2 border">7 days</td>
+                  <td className="px-4 py-2 border">First-party — strictly necessary, no consent needed</td>
+                </tr>
+                <tr>
+                  <td className="px-4 py-2 border font-medium"><code>csrfToken</code></td>
+                  <td className="px-4 py-2 border">First-party (Agency OS)</td>
+                  <td className="px-4 py-2 border">CSRF protection on form submissions and mutations (SameSite=Lax)</td>
+                  <td className="px-4 py-2 border">7 days</td>
+                  <td className="px-4 py-2 border">First-party — strictly necessary, no consent needed</td>
+                </tr>
+                <tr>
+                  <td className="px-4 py-2 border font-medium">Turnstile</td>
+                  <td className="px-4 py-2 border">Cloudflare</td>
+                  <td className="px-4 py-2 border">Bot/spam protection on the signup page (only when the signup page loads it)</td>
+                  <td className="px-4 py-2 border">Session</td>
+                  <td className="px-4 py-2 border">Third-party — strictly necessary for security, no consent needed</td>
+                </tr>
+                <tr>
+                  <td className="px-4 py-2 border font-medium">Google Sign-In (GSI)</td>
+                  <td className="px-4 py-2 border">Google</td>
+                  <td className="px-4 py-2 border">&quot;Sign in with Google&quot; button and One Tap (only on the signup page, only when you choose it)</td>
+                  <td className="px-4 py-2 border">Per Google&apos;s policy</td>
+                  <td className="px-4 py-2 border">Third-party — consent-based</td>
+                </tr>
+                <tr>
+                  <td className="px-4 py-2 border font-medium"><strong>No analytics</strong></td>
+                  <td className="px-4 py-2 border">—</td>
+                  <td className="px-4 py-2 border"><strong>We use no third-party analytics and no advertising trackers.</strong></td>
+                  <td className="px-4 py-2 border">—</td>
+                  <td className="px-4 py-2 border">—</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <p>
+            Payment happens on Razorpay&apos;s hosted checkout page (we redirect you there); Razorpay&apos;s own cookies apply on its domain, not on ours, and no Razorpay script loads on our site.
           </p>
           <p>
             10.3 Strictly necessary cookies (login/session, security, load-balancing) do not need consent. Analytics and marketing tags are blocked until you consent. You can withdraw consent at any time via the cookie-settings control or your browser settings.
@@ -292,10 +345,10 @@ export default function PrivacyPage() {
         <section className="space-y-3">
           <h2 className="text-xl font-bold text-gray-900">12. Contact</h2>
           <p>
-            12.1 <strong>Data fiduciary:</strong> Gadmale Technologies, <code>Shihu, Tal-Pen, Dist-Raigad, Maharashtra, 402106, India</code>. Email: <code>agadmale335@gmail.com</code>.
+            12.1 <strong>Data fiduciary:</strong> Gadmale Technologies, <code>Shihu, Tal-Pen, Dist-Raigad, Maharashtra, 402107, India</code>. Email: <code>hello@gadmaletechnologies.com</code>. Phone: +91 86248 14650.
           </p>
           <p>
-            12.2 <strong>Grievance / data-protection contact:</strong> <code>Abhishek Gadmale, proprietor</code>, <code>agadmale335@gmail.com</code>. Acknowledgement within 48 hours; response within one month (DPDP ceiling: 90 days).
+            12.2 <strong>Grievance / data-protection contact:</strong> <code>Abhishek Gadmale, proprietor</code>, <code>hello@gadmaletechnologies.com</code>, +91 86248 14650. Acknowledgement within 48 hours; response within one month (DPDP ceiling: 90 days).
           </p>
           <p>
             12.3 Complaints to the regulator: Data Protection Board of India — route and details to be added when the Board publishes its complaint process. [TO CONFIRM at publication.]
@@ -303,7 +356,7 @@ export default function PrivacyPage() {
         </section>
 
         <div className="border-t border-gray-200 pt-6 text-sm text-gray-500 italic">
-          Draft only. Sources: research brief 2026-11-10 (§§1–8). Not legal advice; lawyer review required before publication. Placeholders in [BRACKETS] must be filled, not published as-is. Do not hard-code IT Rules 2021 takedown deadlines from secondary sources — verify the current Rule 3 text on meity.gov.in before publishing (the brief flags conflicting secondaries).
+          Draft only. Sources: research brief 2026-11-10 (§§1–8); review findings 2026-11-25 applied. Not legal advice; reviewed against Indian law by Muse (not a lawyer). Remaining before publication: effective date (fill at deploy). Rule 3 of the IT (Intermediary Guidelines) Rules, 2021 verified against meity.gov.in (updated 6.4.2023) on 2026-11-25; cookie list verified against the web code; SAC 998315 chosen on the statutory text (no CA).
         </div>
       </div>
     </div>
