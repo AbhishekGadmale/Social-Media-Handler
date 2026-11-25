@@ -9,6 +9,7 @@ import { clientQueries } from "../../../lib/query/clients";
 import { canGenerateReports, canViewClients } from "../../../lib/permissions";
 import { downloadClientReportPdf } from "../../../lib/query/reports";
 import { ApiError } from "../../../lib/api/client";
+import { PLATFORM_BRANDS } from "../../../components/platform-badge";
 import {
   AlertCircle,
   RefreshCw,
@@ -16,10 +17,7 @@ import {
   Users,
   Link as LinkIcon,
   Activity,
-  PlaySquare,
-  Share2,
   MessageSquare,
-  Camera,
   Video,
   Globe,
   CheckCircle2,
@@ -30,20 +28,31 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 
+function renderBrandIcon(brand: { path: string; color: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      className="w-5 h-5"
+      fill={brand.color}
+      aria-hidden="true"
+    >
+      <path d={brand.path} />
+    </svg>
+  );
+}
+
 function getProviderBadge(provider: string) {
   const p = (provider || "").toUpperCase();
   switch (p) {
     case "LINKEDIN":
       return {
-        icon: <Share2 className="w-5 h-5 text-blue-600" aria-hidden="true" />,
+        icon: renderBrandIcon(PLATFORM_BRANDS.LINKEDIN),
         containerClass: "bg-blue-50 text-blue-700",
         label: "LinkedIn",
       };
     case "YOUTUBE":
       return {
-        icon: (
-          <PlaySquare className="w-5 h-5 text-red-600" aria-hidden="true" />
-        ),
+        icon: renderBrandIcon(PLATFORM_BRANDS.YOUTUBE),
         containerClass: "bg-red-50 text-red-700",
         label: "YouTube",
       };
@@ -57,13 +66,13 @@ function getProviderBadge(provider: string) {
       };
     case "INSTAGRAM":
       return {
-        icon: <Camera className="w-5 h-5 text-pink-600" aria-hidden="true" />,
+        icon: renderBrandIcon(PLATFORM_BRANDS.INSTAGRAM),
         containerClass: "bg-pink-50 text-pink-700",
         label: "Instagram",
       };
     case "FACEBOOK":
       return {
-        icon: <Globe className="w-5 h-5 text-indigo-600" aria-hidden="true" />,
+        icon: renderBrandIcon(PLATFORM_BRANDS.FACEBOOK),
         containerClass: "bg-indigo-50 text-indigo-700",
         label: "Facebook",
       };
