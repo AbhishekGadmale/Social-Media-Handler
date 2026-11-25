@@ -6647,3 +6647,27 @@ Config-only changes across 3 files with 0 application code modifications (strict
   - `Docker Build & Smoke Test`: completed / `success` (`13:50:55Z`–`13:59:57Z`)
   - Standing note: CI re-runs on the docs head commit adding §90 and must be verified 6/6 green before owner merge.
 - **Release Gate**: Do NOT merge without independent review. Live deployment remains **STRICT NO-GO**.
+
+## 91. Analytics Overview Platform Brand Icons
+
+- **Pull Request**: [#105](https://github.com/AbhishekGadmale/Social-Media-Handler/pull/105)
+- **Branch**: `fix/analytics-platform-icons` (base `main` at `aee0565db64806c9818ed150d6d03b694bcbb335`)
+- **Code Head SHA**: `81a28768069a5e8aeed64a7582e84799eda2b1e7`
+- **Root Cause & Fix**:
+  - `apps/web/src/app/[workspaceId]/analytics/page.tsx` (`getProviderBadge()`) previously rendered generic Lucide icons (`Share2`, `PlaySquare`, `Camera`, `Globe`) inside the Account Performance row circles for LinkedIn, YouTube, Instagram, and Facebook.
+  - Updated `getProviderBadge()` (via `renderBrandIcon()`) to import `PLATFORM_BRANDS` from `../../../components/platform-badge` and render the brand SVG (`viewBox="0 0 24 24"`, `className="w-5 h-5"`, `fill={brand.color}`, `aria-hidden="true"`, `<path d={brand.path} />`) for `FACEBOOK`, `INSTAGRAM`, `YOUTUBE`, and `LINKEDIN`.
+  - Removed unused `PlaySquare`, `Share2`, and `Camera` Lucide imports while preserving existing colored circle tints, platform labels, status badges, metrics, chevron links, `[accountId]/page.tsx`, and Lucide fallbacks for `TWITTER` (`MessageSquare`), `TIKTOK` (`Video`), and `default` (`Globe`).
+- **Verification & Test Deltas**:
+  - `apps/web/src/app/[workspaceId]/analytics/page.spec.tsx`: counted `18 -> 24` `it()` blocks (**+6 tests**, **24/24 PASS** covering `FACEBOOK`, `INSTAGRAM`, `YOUTUBE`, `LINKEDIN` brand SVGs and `TWITTER`/`TIKTOK` generic fallback icons).
+  - `@agency-os/web` full test suite: **32/32 test files PASS, 350/350 tests PASS** (`344 -> 350`, delta +6).
+  - `@agency-os/web` lint: **0 errors** (0 warnings in `analytics/`; 10 pre-existing warnings elsewhere); TypeScript `tsc --noEmit --incremental false`: **0 errors**; Next.js 16.3.1 build: **PASS**; Prettier check on touched analytics files: **PASS**.
+  - *Verification note*: Brand-icon tests assert against `PLATFORM_BRANDS` from `apps/web/src/components/platform-badge.tsx`, proving integration with the shared table rather than independent SVG path literals.
+- **CI Quality Gates on Code Head `81a28768069a5e8aeed64a7582e84799eda2b1e7` (6/6 Green, 2026-11-25)**:
+  - `GitGuardian Security Checks`: completed / `success` (`14:57:22Z`–`14:57:23Z`)
+  - `Application Builds`: completed / `success` (`14:57:25Z`–`14:58:15Z`)
+  - `Code Quality (Lint & Typecheck)`: completed / `success` (`14:57:25Z`–`14:59:02Z`)
+  - `API E2E Tests`: completed / `success` (`14:57:26Z`–`14:59:02Z`)
+  - `Tests`: completed / `success` (`14:57:26Z`–`14:59:03Z`)
+  - `Docker Build & Smoke Test`: completed / `success` (`14:57:25Z`–`15:06:21Z`)
+  - Standing note: CI re-runs on the docs head commit adding §91 and must be verified 6/6 green before owner merge.
+- **Release Gate**: Do NOT merge without independent review. Live deployment remains **STRICT NO-GO**.
