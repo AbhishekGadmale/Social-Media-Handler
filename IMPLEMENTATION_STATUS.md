@@ -6597,7 +6597,7 @@ Config-only changes across 3 files with 0 application code modifications (strict
 ## 88. Legal Pages Sync (2026-11-25 Review)
 
 - **Branch**: `docs/legal-sync-2026-11-25` (base `main` at `9264efadcec80f6240144722b97e659ad3a125bb`)
-- **Legal Sync Commit SHA**: `5b3197c2389ee351057de1d4ef0a22cfeb3e33a4` (PR final head: `0451054d1cf6de555b2287d128a4dbbd9658fc4a`)
+- **Legal Sync Commit SHA**: `5b3197c2389ee351057de1d4ef0a22cfeb3e33a4` (PR head at approval: `0451054d1cf6de555b2287d128a4dbbd9658fc4a`)
 - **Files Synced Verbatim**:
   - `apps/web/src/content/legal/terms.md` & `apps/web/src/app/terms/page.tsx`
   - `apps/web/src/content/legal/privacy.md` & `apps/web/src/app/privacy/page.tsx`
