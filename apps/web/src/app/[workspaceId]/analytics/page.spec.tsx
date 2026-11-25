@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import AnalyticsDashboard from "./page";
 import { vi, describe, it, expect, beforeEach } from "vitest";
 import { api, ApiError } from "../../../lib/api/client";
+import { PLATFORM_BRANDS } from "../../../components/platform-badge";
 
 const mockPush = vi.fn();
 let currentWorkspaceId = "ws-test-123";
@@ -510,6 +511,101 @@ describe("AnalyticsDashboard Page", () => {
       expect(await screen.findByText("12,500")).toBeInTheDocument();
       expect(screen.getByTestId("client-report-card")).toBeInTheDocument();
       expect(screen.getByText("Client Performance Report")).toBeInTheDocument();
+    });
+  });
+
+  describe("Account Performance platform icons", () => {
+    const renderProviderIcon = async (provider: string, name: string) => {
+      vi.mocked(api.get).mockResolvedValueOnce({
+        workspaceId: "ws-test-123",
+        accountsConnected: 1,
+        accountsActive: 1,
+        accountsRequiringReauth: 0,
+        totalFollowers: 100,
+        totalEngagement: 10,
+        accounts: [
+          {
+            id: `acc-${provider.toLowerCase()}`,
+            provider,
+            name,
+            status: "ACTIVE",
+            latestMetrics: null,
+          },
+        ],
+      });
+      renderDashboard(undefined, "CLIENT_APPROVER");
+      const heading = await screen.findByText(name);
+      const iconCircle = heading.parentElement?.previousElementSibling ?? null;
+      return {
+        iconCircle,
+        svg: iconCircle?.querySelector("svg") ?? null,
+      };
+    };
+
+    it("renders Facebook brand SVG icon in the Account Performance row", async () => {
+      const { svg } = await renderProviderIcon("FACEBOOK", "Agency Facebook");
+      expect(svg).not.toBeNull();
+      expect(svg).toHaveAttribute("fill", PLATFORM_BRANDS.FACEBOOK.color);
+      expect(svg?.querySelector("path")).toHaveAttribute(
+        "d",
+        PLATFORM_BRANDS.FACEBOOK.path,
+      );
+      expect(screen.getByText("Facebook")).toBeInTheDocument();
+    });
+
+    it("renders Instagram brand SVG icon in the Account Performance row", async () => {
+      const { svg } = await renderProviderIcon("INSTAGRAM", "Agency Instagram");
+      expect(svg).not.toBeNull();
+      expect(svg).toHaveAttribute("fill", PLATFORM_BRANDS.INSTAGRAM.color);
+      expect(svg?.querySelector("path")).toHaveAttribute(
+        "d",
+        PLATFORM_BRANDS.INSTAGRAM.path,
+      );
+      expect(screen.getByText("Instagram")).toBeInTheDocument();
+    });
+
+    it("renders YouTube brand SVG icon in the Account Performance row", async () => {
+      const { svg } = await renderProviderIcon("YOUTUBE", "Agency YouTube");
+      expect(svg).not.toBeNull();
+      expect(svg).toHaveAttribute("fill", PLATFORM_BRANDS.YOUTUBE.color);
+      expect(svg?.querySelector("path")).toHaveAttribute(
+        "d",
+        PLATFORM_BRANDS.YOUTUBE.path,
+      );
+      expect(screen.getByText("YouTube")).toBeInTheDocument();
+    });
+
+    it("renders LinkedIn brand SVG icon in the Account Performance row", async () => {
+      const { svg } = await renderProviderIcon("LINKEDIN", "Agency LinkedIn");
+      expect(svg).not.toBeNull();
+      expect(svg).toHaveAttribute("fill", PLATFORM_BRANDS.LINKEDIN.color);
+      expect(svg?.querySelector("path")).toHaveAttribute(
+        "d",
+        PLATFORM_BRANDS.LINKEDIN.path,
+      );
+      expect(screen.getByText("LinkedIn")).toBeInTheDocument();
+    });
+
+    it("renders generic fallback Lucide icon for Twitter", async () => {
+      const { iconCircle, svg } = await renderProviderIcon(
+        "TWITTER",
+        "Agency Twitter",
+      );
+      expect(svg).not.toBeNull();
+      expect(iconCircle?.querySelector('svg[fill^="#"]')).toBeNull();
+      expect(svg?.getAttribute("fill") ?? "").not.toMatch(/^#/);
+      expect(screen.getByText("Twitter / X")).toBeInTheDocument();
+    });
+
+    it("renders generic fallback Lucide icon for TikTok", async () => {
+      const { iconCircle, svg } = await renderProviderIcon(
+        "TIKTOK",
+        "Agency TikTok",
+      );
+      expect(svg).not.toBeNull();
+      expect(iconCircle?.querySelector('svg[fill^="#"]')).toBeNull();
+      expect(svg?.getAttribute("fill") ?? "").not.toMatch(/^#/);
+      expect(screen.getByText("TikTok")).toBeInTheDocument();
     });
   });
 });
