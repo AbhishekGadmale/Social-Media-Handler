@@ -6622,3 +6622,28 @@ Config-only changes across 3 files with 0 application code modifications (strict
   - `@agency-os/web` tests: **32/32 files PASS, 339/339 tests PASS** (`page.spec.tsx` passed untouched; `hero-brand.spec.tsx` added and passing).
   - `@agency-os/web` lint: **0 errors**; TypeScript `tsc --noEmit`: **0 errors**; Next.js 16.3.1 production build: **PASS** (static `/icon.svg` route and `<link rel="icon" type="image/svg+xml"/>` emitted with zero icon warnings).
 - **Release Gate**: Do NOT merge without independent review. Live deployment remains **STRICT NO-GO**.
+
+## 90. Publish Page Destination Card Platform Badge
+
+- **Pull Request**: [#104](https://github.com/AbhishekGadmale/Social-Media-Handler/pull/104) (Note: `§89` was already claimed by PR #103, so this fix uses `§90`)
+- **Branch**: `fix/publish-page-platform-badge` (base `main` at `913a13871a59c8023265db1dfb62cb62f0112e8c`)
+- **Code Head SHA**: `fdceff09bd96888fd5ae9d24d3a1e65bc7f56e9b`
+- **Root Cause & Fix**:
+  - `apps/web/src/app/[workspaceId]/publishing/[postId]/page.tsx` (`TargetCard`) previously displayed only `variant.socialAccount?.name` and the status badge without showing `variant.socialAccount.provider`.
+  - Created shared component `apps/web/src/components/platform-badge.tsx` holding `PLATFORM_BRANDS` (`siFacebook` `#0866FF`, `siInstagram` `#FF0069`, `siYoutube` `#FF0000` via `simple-icons`, plus the preserved `LINKEDIN_ICON` `#0A66C2` moved from `hero-brand.tsx`), `getPlatformBrand()`, and `PlatformBadge` (16px icon + display name; renders `null` for null/unknown providers).
+  - Updated `apps/web/src/components/hero-brand.tsx` to import `PLATFORM_BRANDS` from `./platform-badge` (no LinkedIn path duplication; hero output unchanged).
+  - Updated `TargetCard` header in `apps/web/src/app/[workspaceId]/publishing/[postId]/page.tsx` to render `<PlatformBadge provider={variant.socialAccount?.provider} />` and separator `·` (only when a known platform badge renders) before the account name while keeping status colors, buttons, and YouTube options unchanged.
+- **Verification & Test Deltas**:
+  - `apps/web/src/app/[workspaceId]/publishing/[postId]/page.spec.tsx`: counted `48 -> 53` `test()` blocks (**+5 tests**, **53/53 PASS** covering `FACEBOOK`, `INSTAGRAM`, `YOUTUBE`, `LINKEDIN`, and `null`/unknown provider fallback).
+  - `@agency-os/web` full test suite: **32/32 test files PASS, 344/344 tests PASS** (`339 -> 344`, delta +5).
+  - `@agency-os/web` lint: **0 errors**; TypeScript `tsc --noEmit`: **0 errors**; Next.js build: **PASS**; Prettier check on touched publishing files: **PASS**.
+  - *Spec choice*: `platform-badge.tsx` contains strictly a static lookup table and null check, so provider tests live in `page.spec.tsx` (alongside `hero-brand.spec.tsx`).
+- **CI Quality Gates on Code Head `fdceff09bd96888fd5ae9d24d3a1e65bc7f56e9b` (6/6 Green, 2026-11-25)**:
+  - `GitGuardian Security Checks`: completed / `success` (`13:50:56Z`–`13:50:57Z`)
+  - `Application Builds`: completed / `success` (`13:50:55Z`–`13:51:46Z`)
+  - `API E2E Tests`: completed / `success` (`13:50:55Z`–`13:52:36Z`)
+  - `Tests`: completed / `success` (`13:50:55Z`–`13:52:38Z`)
+  - `Code Quality (Lint & Typecheck)`: completed / `success` (`13:50:55Z`–`13:52:38Z`)
+  - `Docker Build & Smoke Test`: completed / `success` (`13:50:55Z`–`13:59:57Z`)
+  - Standing note: CI re-runs on the docs head commit adding §90 and must be verified 6/6 green before owner merge.
+- **Release Gate**: Do NOT merge without independent review. Live deployment remains **STRICT NO-GO**.
