@@ -3408,6 +3408,8 @@ Codebase, Compose configurations, and security hygiene preflight fixes are verif
    - Open PR #66 targeting `main`.
    - Independent Muse review required before any merge. Do not call merge-ready.
    - Do NOT merge on this prompt alone.
+4. **2026-11-25 Legal Pages Sync (Branch `docs/legal-sync-2026-11-25`)**:
+   - Legal drafts (`terms.md`, `privacy.md`, `refund-cancellation.md`) and JSX pages (`/terms`, `/privacy`, `/refund-cancellation`) synced verbatim at commit `5b3197c2389ee351057de1d4ef0a22cfeb3e33a4` (see §88).
 
 ---
 
@@ -6590,3 +6592,17 @@ Config-only changes across 3 files with 0 application code modifications (strict
    - PR #101 is open on branch `fix/meta-data-deletion`.
    - CI 6/6 checks running on final head.
    - Do NOT merge on this prompt alone. Live deployment remains STRICT NO-GO.
+
+
+## 88. Legal Pages Sync (2026-11-25 Review)
+
+- **Branch**: `docs/legal-sync-2026-11-25` (base `main` at `9264efadcec80f6240144722b97e659ad3a125bb`)
+- **Legal Sync Head SHA**: `5b3197c2389ee351057de1d4ef0a22cfeb3e33a4`
+- **Files Synced Verbatim**:
+  - `apps/web/src/content/legal/terms.md` & `apps/web/src/app/terms/page.tsx`
+  - `apps/web/src/content/legal/privacy.md` & `apps/web/src/app/privacy/page.tsx`
+  - `apps/web/src/content/legal/refund-cancellation.md` & `apps/web/src/app/refund-cancellation/page.tsx`
+  - `apps/web/src/app/terms/page.spec.tsx` (updated `₹29,990/year` assertion from `getByText` to `getAllByText` to match §3.1 and §3.6)
+- **Summary**: Applied verbatim 2026-11-25 reviewed legal drafts across Terms, Privacy (including §10.2 cookie table and §9.1 `https://gadmaletechnologies.com/data-deletion` link), and Refund & Cancellation Policy (§7 Consumer Protection Act rights). `[EFFECTIVE DATE]` remains unfilled until deploy. No other code touched.
+- **Verification**: Rendered JSX vs `.md` diff passed (exact match: 74, 85, and 25 lines); all 8 grep checks passed; `@agency-os/web` 31/31 test files (338/338 tests) PASS, ESLint 0 errors, `tsc --noEmit` 0 errors, Next.js build PASS.
+- **Release Gate**: Do NOT merge without independent review; `[EFFECTIVE DATE]` filled at deploy. Live deployment remains **STRICT NO-GO**.
