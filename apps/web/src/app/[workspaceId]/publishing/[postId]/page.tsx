@@ -20,6 +20,10 @@ import {
 import { api, ApiError } from "../../../../lib/api/client";
 import { Button } from "../../../../components/ui/button";
 import {
+  PlatformBadge,
+  getPlatformBrand,
+} from "../../../../components/platform-badge";
+import {
   ArrowLeft,
   Loader2,
   Save,
@@ -814,12 +818,20 @@ function TargetCard({
 
   return (
     <div className="border rounded-md p-4 bg-gray-50 relative">
-      <div className="flex justify-between items-center mb-3">
-        <span className="font-semibold text-sm capitalize">
-          {variant.socialAccount?.name || "Unknown"}
-        </span>
+      <div className="flex justify-between items-center gap-2 mb-3">
+        <div className="flex items-center gap-1.5 min-w-0">
+          <PlatformBadge provider={variant.socialAccount?.provider} />
+          {getPlatformBrand(variant.socialAccount?.provider) && (
+            <span aria-hidden="true" className="text-gray-400 text-sm">
+              ·
+            </span>
+          )}
+          <span className="font-semibold text-sm capitalize truncate">
+            {variant.socialAccount?.name || "Unknown"}
+          </span>
+        </div>
         <span
-          className={`text-xs font-bold px-2 py-1 rounded ${
+          className={`text-xs font-bold px-2 py-1 rounded shrink-0 ${
             variant.status === "PUBLISHED"
               ? "bg-green-200 text-green-800"
               : variant.status === "FAILED"

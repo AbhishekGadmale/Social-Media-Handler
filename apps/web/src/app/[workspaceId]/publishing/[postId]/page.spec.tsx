@@ -9,6 +9,7 @@ import { expect, test, vi, beforeEach, describe } from "vitest";
 import PostDetailPage from "./page";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { api, ApiError } from "../../../../lib/api/client";
+import { PLATFORM_BRANDS } from "../../../../components/platform-badge";
 
 vi.mock("next/navigation", () => ({
   useParams: () => ({ workspaceId: "ws-1", postId: "post-1" }),
@@ -1494,5 +1495,121 @@ describe("Attached Media Previews (Bug #9)", () => {
     // Verify no broken img is rendered
     expect(screen.queryByRole("img")).not.toBeInTheDocument();
     expect(document.querySelector("video")).not.toBeInTheDocument();
+  });
+});
+
+describe("TargetCard Platform Identity Badge", () => {
+  const renderPublishedTarget = (
+    provider: string | null | undefined,
+    accountName: string,
+  ) => {
+    queryClient.setQueryData(["workspaces", "ws-1", "posts", "post-1"], {
+      id: "post-1",
+      workspaceId: "ws-1",
+      content: "Published video post",
+      status: "PUBLISHED",
+      media: [],
+      variants: [
+        {
+          id: "var-platform-1",
+          postId: "post-1",
+          socialAccountId: "acc-platform-1",
+          status: "PUBLISHED",
+          externalPostId: "ext-99",
+          canonicalUrl: "https://example.com/post/99",
+          socialAccount: { name: accountName, provider },
+        },
+      ],
+    });
+
+    return render(
+      <QueryClientProvider client={queryClient}>
+        <PostDetailPage />
+      </QueryClientProvider>,
+    );
+  };
+
+  test("renders Facebook icon and display name alongside account name and PUBLISHED badge", async () => {
+    const { container } = renderPublishedTarget("FACEBOOK", "Acme FB Page");
+
+    expect(await screen.findByText("Facebook")).toBeInTheDocument();
+    expect(screen.getByText("·")).toBeInTheDocument();
+    expect(screen.getByText("Acme FB Page")).toBeInTheDocument();
+    expect(screen.getByText("PUBLISHED")).toBeInTheDocument();
+
+    const iconSvg = container.querySelector(
+      `svg[fill="${PLATFORM_BRANDS.FACEBOOK.color}"]`,
+    );
+    expect(iconSvg).toBeInTheDocument();
+    expect(iconSvg?.querySelector("path")).toHaveAttribute(
+      "d",
+      PLATFORM_BRANDS.FACEBOOK.path,
+    );
+  });
+
+  test("renders Instagram icon and display name alongside account name and PUBLISHED badge", async () => {
+    const { container } = renderPublishedTarget("INSTAGRAM", "Acme IG Profile");
+
+    expect(await screen.findByText("Instagram")).toBeInTheDocument();
+    expect(screen.getByText("·")).toBeInTheDocument();
+    expect(screen.getByText("Acme IG Profile")).toBeInTheDocument();
+    expect(screen.getByText("PUBLISHED")).toBeInTheDocument();
+
+    const iconSvg = container.querySelector(
+      `svg[fill="${PLATFORM_BRANDS.INSTAGRAM.color}"]`,
+    );
+    expect(iconSvg).toBeInTheDocument();
+    expect(iconSvg?.querySelector("path")).toHaveAttribute(
+      "d",
+      PLATFORM_BRANDS.INSTAGRAM.path,
+    );
+  });
+
+  test("renders YouTube icon and display name alongside account name and PUBLISHED badge", async () => {
+    const { container } = renderPublishedTarget("YOUTUBE", "Acme YouTube");
+
+    expect(await screen.findByText("YouTube")).toBeInTheDocument();
+    expect(screen.getByText("·")).toBeInTheDocument();
+    expect(screen.getByText("Acme YouTube")).toBeInTheDocument();
+    expect(screen.getByText("PUBLISHED")).toBeInTheDocument();
+
+    const iconSvg = container.querySelector(
+      `svg[fill="${PLATFORM_BRANDS.YOUTUBE.color}"]`,
+    );
+    expect(iconSvg).toBeInTheDocument();
+    expect(iconSvg?.querySelector("path")).toHaveAttribute(
+      "d",
+      PLATFORM_BRANDS.YOUTUBE.path,
+    );
+  });
+
+  test("renders LinkedIn icon and display name alongside account name and PUBLISHED badge", async () => {
+    const { container } = renderPublishedTarget("LINKEDIN", "Acme LinkedIn");
+
+    expect(await screen.findByText("LinkedIn")).toBeInTheDocument();
+    expect(screen.getByText("·")).toBeInTheDocument();
+    expect(screen.getByText("Acme LinkedIn")).toBeInTheDocument();
+    expect(screen.getByText("PUBLISHED")).toBeInTheDocument();
+
+    const iconSvg = container.querySelector(
+      `svg[fill="${PLATFORM_BRANDS.LINKEDIN.color}"]`,
+    );
+    expect(iconSvg).toBeInTheDocument();
+    expect(iconSvg?.querySelector("path")).toHaveAttribute(
+      "d",
+      PLATFORM_BRANDS.LINKEDIN.path,
+    );
+  });
+
+  test("renders nothing for unknown or null provider without broken icon or separator", async () => {
+    const { container } = renderPublishedTarget(null, "Legacy Account");
+
+    expect(await screen.findByText("Legacy Account")).toBeInTheDocument();
+    expect(screen.getByText("PUBLISHED")).toBeInTheDocument();
+    expect(screen.queryByText("·")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/^(Facebook|Instagram|YouTube|LinkedIn)$/),
+    ).not.toBeInTheDocument();
+    expect(container.querySelector('svg[fill^="#"]')).toBeNull();
   });
 });

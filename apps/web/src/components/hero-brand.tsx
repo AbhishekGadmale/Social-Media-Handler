@@ -1,36 +1,21 @@
 import Image from 'next/image';
-import { siFacebook, siInstagram, siYoutube } from 'simple-icons';
-
-// simple-icons v12+ removed siLinkedin per trademark policy; path and brand hex preserved verbatim from simple-icons@11.15.0.
-const LINKEDIN_ICON = {
-  title: 'LinkedIn',
-  hex: '0A66C2',
-  path: 'M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433c-1.144 0-2.063-.926-2.063-2.065 0-1.138.92-2.063 2.063-2.063 1.14 0 2.064.925 2.064 2.063 0 1.139-.925 2.065-2.064 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z',
-} as const;
+import { PLATFORM_BRANDS } from './platform-badge';
 
 const PLATFORMS = [
   {
-    name: siInstagram.title,
-    path: siInstagram.path,
-    color: `#${siInstagram.hex}`,
+    ...PLATFORM_BRANDS.INSTAGRAM,
     positionClass: 'left-[13%] top-[59%]',
   },
   {
-    name: siFacebook.title,
-    path: siFacebook.path,
-    color: `#${siFacebook.hex}`,
+    ...PLATFORM_BRANDS.FACEBOOK,
     positionClass: 'left-[31%] top-[27%]',
   },
   {
-    name: siYoutube.title,
-    path: siYoutube.path,
-    color: `#${siYoutube.hex}`,
+    ...PLATFORM_BRANDS.YOUTUBE,
     positionClass: 'left-[69%] top-[27%]',
   },
   {
-    name: LINKEDIN_ICON.title,
-    path: LINKEDIN_ICON.path,
-    color: `#${LINKEDIN_ICON.hex}`,
+    ...PLATFORM_BRANDS.LINKEDIN,
     positionClass: 'left-[87%] top-[59%]',
   },
 ] as const;
