@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Agency OS logo">
+  <path d="M14 56 L32 14 L50 56" fill="none" stroke="#1f2937" stroke-width="7" stroke-linejoin="round" stroke-linecap="butt"/>
+  <path d="M22.5 41 L41.5 41" fill="none" stroke="#1f2937" stroke-width="7" stroke-linecap="butt"/>
+  <path d="M32 15 L40 33" fill="none" stroke="#2563eb" stroke-width="7" stroke-linecap="butt"/>
+  <polygon points="32,2 22,17 42,17" fill="#2563eb"/>
+</svg>

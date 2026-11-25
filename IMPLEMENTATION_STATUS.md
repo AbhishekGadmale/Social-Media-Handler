@@ -6606,3 +6606,19 @@ Config-only changes across 3 files with 0 application code modifications (strict
 - **Summary**: Applied verbatim 2026-11-25 reviewed legal drafts across Terms, Privacy (including §10.2 cookie table and §9.1 `https://gadmaletechnologies.com/data-deletion` link), and Refund & Cancellation Policy (§7 Consumer Protection Act rights). `[EFFECTIVE DATE]` remains unfilled until deploy. No other code touched.
 - **Verification**: Rendered JSX vs `.md` diff passed (exact match: 74, 85, and 25 lines); all 8 grep checks passed; `@agency-os/web` 31/31 test files (338/338 tests) PASS, ESLint 0 errors, `tsc --noEmit` 0 errors, Next.js build PASS.
 - **Release Gate**: Do NOT merge without independent review; `[EFFECTIVE DATE]` filled at deploy. Live deployment remains **STRICT NO-GO**.
+
+## 89. Agency OS Brand Mark, Favicon & Hero Platform Arc
+
+- **Branch**: `feature/agency-os-logo-hero` (base `main` at `d237392734a0b88551abb058cab8795ea0b7f128`)
+- **Code Commit SHA**: `70bcca493ea24d23568642a22f82198bb7c4c3e9`
+- **Files Changed**:
+  - `apps/web/public/logo.svg`: Verbatim arrow-A Agency OS SVG mark (`#1f2937` for A, `#2563eb` for upward arrow).
+  - `apps/web/src/app/icon.svg` & deleted `apps/web/src/app/favicon.ico`: Byte-identical SVG favicon served via Next.js App Router metadata route.
+  - `apps/web/src/app/page.tsx`: Updated landing header `<Link href="/">` to render `next/image` 32×32 `/logo.svg` + `Agency OS` text `<span>`; placed `<HeroBrand />` in the hero section directly after `"No credit card required."`.
+  - `apps/web/src/components/hero-brand.tsx` & `hero-brand.spec.tsx`: Renders `"Works with"` caption, elliptical light-gray decorative arc (`#e5e7eb`), four platform icons in unmodified brand colors (`#FF0069` Instagram, `#0866FF` Facebook, `#FF0000` YouTube via `simple-icons@16.38.1`; `#0A66C2` LinkedIn verbatim from `simple-icons@11.15.0` since v12+ removed `siLinkedin`), centered 96–112px `/logo.svg` mark, and HTML `"Agency OS"` wordmark.
+  - `apps/web/package.json` & `pnpm-lock.yaml`: Added `simple-icons@^16.38.1`.
+- **Verification**:
+  - `logo.svg` and `icon.svg` verified byte-identical (484 bytes); `favicon.ico` removed.
+  - `@agency-os/web` tests: **32/32 files PASS, 339/339 tests PASS** (`page.spec.tsx` passed untouched; `hero-brand.spec.tsx` added and passing).
+  - `@agency-os/web` lint: **0 errors**; TypeScript `tsc --noEmit`: **0 errors**; Next.js 16.3.1 production build: **PASS** (static `/icon.svg` route and `<link rel="icon" type="image/svg+xml"/>` emitted with zero icon warnings).
+- **Release Gate**: Do NOT merge without independent review. Live deployment remains **STRICT NO-GO**.
