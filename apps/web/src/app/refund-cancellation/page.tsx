@@ -10,10 +10,10 @@ export default function RefundCancellationPage() {
           </h1>
           <div className="mt-4 p-4 rounded-md bg-amber-50 border border-amber-200 text-sm text-amber-900 space-y-2">
             <p>
-              <strong>Status:</strong> DRAFT prepared 2026-11-10, updated 2026-11-11 (email, address, 7-day refund window filled per owner). Razorpay requires this as a <strong>standalone published page</strong> with timelines — it must exist on the live website before merchant activation, alongside the Terms of Service and Privacy Policy. <strong>Not legal advice; lawyer review required before publication.</strong>
+              <strong>Status:</strong> DRAFT prepared 2026-11-10, updated 2026-11-11 (email, address, 7-day refund window filled per owner), updated 2026-11-25 (review findings applied 2026-11-25). Razorpay requires this as a <strong>standalone published page</strong> with timelines — it must exist on the live website before merchant activation, alongside the Terms of Service and Privacy Policy. <strong>Not legal advice; reviewed against Indian law by Muse on 2026-11-25 (not a lawyer).</strong>
             </p>
             <p>
-              <strong>Operator:</strong> Gadmale Technologies, sole proprietorship, Maharashtra, India. Contact: <code>agadmale335@gmail.com</code>. Address: <code>Shihu, Tal-Pen, Dist-Raigad, Maharashtra, 402106, India</code>.
+              <strong>Operator:</strong> Gadmale Technologies, sole proprietorship, Maharashtra, India. Contact: <code>hello@gadmaletechnologies.com</code>. Phone: +91 86248 14650. Address: <code>Shihu, Tal-Pen, Dist-Raigad, Maharashtra, 402107, India</code>.
             </p>
             <p>
               <strong>Refund window decided 2026-11-11: 7 days</strong> (owner&apos;s choice; matches the pricing-table draft of 2026-10-09). Use 7 days identically here, in the Terms (§5), and on the pricing page. There is <strong>no statutory cooling-off period</strong> for digital subscriptions in India — this window is our own contractual promise.
@@ -34,17 +34,17 @@ export default function RefundCancellationPage() {
             2.1 If you are a new customer, you may request a full refund of your <strong>first</strong> paid subscription payment within 7 days of that payment.
           </p>
           <p>
-            2.2 How to request: email <code>agadmale335@gmail.com</code> from your billing email, stating your workspace name and the payment date. We will confirm receipt within 48 hours and decide within 5 business days.
+            2.2 How to request: email <code>hello@gadmaletechnologies.com</code> from your billing email, stating your workspace name and the payment date. We will confirm receipt within 48 hours and decide within 5 business days.
           </p>
           <p>
-            2.3 After the window, subscriptions are <strong>non-refundable</strong>, including renewals. Annual plans: a pro-rata refund is available only within the same 7-day window (unused months at the monthly-equivalent rate, less the annual discount); after that, no pro-rata refund and no conversion to monthly mid-term.
+            2.3 Annual plans: within the same 7-day window, an annual plan is refunded in full under §2.1. After the window, there is no pro-rata refund and no conversion to monthly mid-term.
           </p>
         </section>
 
         <section className="space-y-3">
           <h2 className="text-xl font-bold text-gray-900">3. Always refunded in full</h2>
           <p>
-            Regardless of the window above, we always refund in full: duplicate charges, billing errors, and any charge made after you cancelled. Tell us at <code>agadmale335@gmail.com</code> and we will refund to the <strong>original payment method only</strong>, typically within <strong>5–7 business days</strong> (bank/UPI-dependent — we never promise instant refunds). Where GST was charged on the refunded invoice, we issue a GST credit note.
+            Regardless of the window above, we always refund in full: duplicate charges, billing errors, and any charge made after you cancelled. Tell us at <code>hello@gadmaletechnologies.com</code> and we will refund to the <strong>original payment method only</strong>, typically within <strong>5–7 business days</strong> (bank/UPI-dependent — we never promise instant refunds). Where GST was charged on the refunded invoice, we issue a GST credit note.
           </p>
         </section>
 
@@ -60,7 +60,7 @@ export default function RefundCancellationPage() {
         <section className="space-y-3">
           <h2 className="text-xl font-bold text-gray-900">5. Cancellation</h2>
           <p>
-            5.1 Cancel any time in the app or by email to <code>agadmale335@gmail.com</code>. Cancellation stops future renewals; you keep access until the end of the period already paid for.
+            5.1 Cancel any time in the app or by email to <code>hello@gadmaletechnologies.com</code>. Cancellation stops future renewals; you keep access until the end of the period already paid for.
           </p>
           <p>
             5.2 Cancelling in Agency OS does not automatically cancel your Razorpay e-mandate in your bank/UPI app, and cancelling the mandate in your bank app does not by itself cancel your Agency OS account. Cancel in both places, or ask us to cancel the mandate on your behalf and we will confirm when done.
@@ -77,8 +77,15 @@ export default function RefundCancellationPage() {
           </p>
         </section>
 
+        <section className="space-y-3">
+          <h2 className="text-xl font-bold text-gray-900">7. Your rights under the law</h2>
+          <p>
+            Nothing in this policy limits any right you have under the Consumer Protection Act, 2019 or any other law, including the right to complain about a deficiency in our service. If you qualify as a consumer, you may approach the National Consumer Helpline (1915) or the appropriate Consumer Disputes Redressal Commission, including online through e-Daakhil.
+          </p>
+        </section>
+
         <div className="border-t border-gray-200 pt-6 text-sm text-gray-500 italic">
-          Draft only. Sources: research brief 2026-11-10 (§§3, 4, 5, 7). Not legal advice; lawyer review required before publication.
+          Draft only. Sources: research brief 2026-11-10 (§§3, 4, 5, 7); review findings 2026-11-25 applied. Not legal advice; reviewed against Indian law by Muse (not a lawyer). Remaining before publication: effective date (fill at deploy).
         </div>
       </div>
     </div>
