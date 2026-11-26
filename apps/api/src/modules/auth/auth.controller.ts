@@ -320,6 +320,7 @@ export class AuthController {
       body.termsAccepted,
       { ipAddress, userAgent },
       requestId,
+      body.ageConfirmed,
     );
 
     const csrfToken = crypto.randomBytes(32).toString('hex');

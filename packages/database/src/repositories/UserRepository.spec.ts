@@ -157,6 +157,51 @@ describe('UserRepository', () => {
       });
     });
 
+    it('persists termsAcceptedAt and ageConfirmedAt timestamps when provided', async () => {
+      const txMock = {
+        user: {
+          create: vi.fn().mockImplementation(({ data }) =>
+            Promise.resolve({ ...data, createdAt: new Date(), updatedAt: new Date() }),
+          ),
+        },
+        organization: {
+          create: vi.fn().mockImplementation(({ data }) =>
+            Promise.resolve({ ...data, createdAt: new Date(), updatedAt: new Date() }),
+          ),
+        },
+        workspace: {
+          create: vi.fn().mockImplementation(({ data }) =>
+            Promise.resolve({ ...data, createdAt: new Date(), updatedAt: new Date() }),
+          ),
+        },
+        workspaceMember: {
+          create: vi.fn().mockImplementation(({ data }) =>
+            Promise.resolve({ ...data, createdAt: new Date(), updatedAt: new Date() }),
+          ),
+        },
+      };
+
+      prismaMock.$transaction.mockImplementation(async (callback: any) => {
+        return callback(txMock);
+      });
+
+      const acceptedAt = new Date('2026-11-26T10:00:00.000Z');
+      await repo.createWithTenantTransaction({
+        name: 'Consent User',
+        email: 'consent@example.com',
+        hashedPassword: '$argon2id$hashedpassword',
+        termsAcceptedAt: acceptedAt,
+        ageConfirmedAt: acceptedAt,
+      });
+
+      expect(txMock.user.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          termsAcceptedAt: acceptedAt,
+          ageConfirmedAt: acceptedAt,
+        }),
+      });
+    });
+
     it('rolls back the transaction if member creation fails', async () => {
       const txMock = {
         user: {

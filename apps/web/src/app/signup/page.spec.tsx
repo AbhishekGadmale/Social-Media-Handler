@@ -100,6 +100,7 @@ describe('SignupPage', () => {
     expect(screen.getByLabelText(/organization name/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/workspace name/i)).toBeInTheDocument();
     expect(screen.getByRole('checkbox', { name: /terms of service and privacy policy/i })).toBeInTheDocument();
+    expect(screen.getByRole('checkbox', { name: /i confirm i am at least 18 years old\./i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /create account/i })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /sign in/i })).toHaveAttribute('href', '/login');
   });
@@ -163,8 +164,8 @@ describe('SignupPage', () => {
     });
   });
 
-  describe('Terms and Privacy Policy consent', () => {
-    it('blocks submit and shows inline error when checkbox is unchecked (api.post not called)', async () => {
+  describe('Terms, Privacy Policy, and 18+ age consent', () => {
+    it('blocks submit and shows inline error when both checkboxes are unchecked (api.post not called)', async () => {
       render(<SignupPage />);
 
       fireEvent.change(screen.getByLabelText(/email address/i), {
@@ -177,7 +178,7 @@ describe('SignupPage', () => {
         target: { value: 'SecurePass123!' },
       });
 
-      // Do NOT check the terms checkbox
+      // Do NOT check either consent checkbox
       fireEvent.click(screen.getByRole('button', { name: /create account/i }));
 
       expect(screen.getByRole('alert')).toHaveTextContent(
@@ -186,7 +187,55 @@ describe('SignupPage', () => {
       expect(mockApiPost).not.toHaveBeenCalled();
     });
 
-    it('submits signup payload with termsAccepted: true when checkbox is checked', async () => {
+    it('blocks submit and shows inline error when terms are accepted but 18+ confirmation is unchecked', async () => {
+      render(<SignupPage />);
+
+      fireEvent.change(screen.getByLabelText(/email address/i), {
+        target: { value: 'user@example.com' },
+      });
+      fireEvent.change(screen.getByLabelText(/^password/i), {
+        target: { value: 'SecurePass123!' },
+      });
+      fireEvent.change(screen.getByLabelText(/confirm password/i), {
+        target: { value: 'SecurePass123!' },
+      });
+      fireEvent.click(
+        screen.getByRole('checkbox', { name: /terms of service and privacy policy/i }),
+      );
+
+      fireEvent.click(screen.getByRole('button', { name: /create account/i }));
+
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        'You must confirm you are at least 18 years old to create an account.',
+      );
+      expect(mockApiPost).not.toHaveBeenCalled();
+    });
+
+    it('blocks submit and shows inline error when 18+ confirmation is checked but terms checkbox is unchecked', async () => {
+      render(<SignupPage />);
+
+      fireEvent.change(screen.getByLabelText(/email address/i), {
+        target: { value: 'user@example.com' },
+      });
+      fireEvent.change(screen.getByLabelText(/^password/i), {
+        target: { value: 'SecurePass123!' },
+      });
+      fireEvent.change(screen.getByLabelText(/confirm password/i), {
+        target: { value: 'SecurePass123!' },
+      });
+      fireEvent.click(
+        screen.getByRole('checkbox', { name: /i confirm i am at least 18 years old\./i }),
+      );
+
+      fireEvent.click(screen.getByRole('button', { name: /create account/i }));
+
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        'You must accept the Terms of Service and Privacy Policy to create an account.',
+      );
+      expect(mockApiPost).not.toHaveBeenCalled();
+    });
+
+    it('submits signup payload with termsAccepted: true and ageConfirmed: true when both checkboxes are checked', async () => {
       mockApiPost.mockResolvedValueOnce({
         message: 'Registration request received.',
       });
@@ -206,6 +255,7 @@ describe('SignupPage', () => {
         target: { value: 'SecurePass123!' },
       });
       fireEvent.click(screen.getByRole('checkbox', { name: /terms of service and privacy policy/i }));
+      fireEvent.click(screen.getByRole('checkbox', { name: /i confirm i am at least 18 years old\./i }));
 
       fireEvent.click(screen.getByRole('button', { name: /create account/i }));
 
@@ -215,6 +265,7 @@ describe('SignupPage', () => {
           email: 'user@example.com',
           password: 'SecurePass123!',
           termsAccepted: true,
+          ageConfirmed: true,
         });
       });
     });
@@ -244,6 +295,7 @@ describe('SignupPage', () => {
         target: { value: 'SecurePass123!' },
       });
       fireEvent.click(screen.getByRole('checkbox', { name: /terms of service and privacy policy/i }));
+      fireEvent.click(screen.getByRole('checkbox', { name: /i confirm i am at least 18 years old\./i }));
 
       fireEvent.click(screen.getByRole('button', { name: /create account/i }));
 
@@ -253,6 +305,7 @@ describe('SignupPage', () => {
           email: 'jane@example.com',
           password: 'SecurePass123!',
           termsAccepted: true,
+          ageConfirmed: true,
         });
       });
     });
@@ -297,6 +350,7 @@ describe('SignupPage', () => {
         target: { value: 'Acme Main' },
       });
       fireEvent.click(screen.getByRole('checkbox', { name: /terms of service and privacy policy/i }));
+      fireEvent.click(screen.getByRole('checkbox', { name: /i confirm i am at least 18 years old\./i }));
 
       fireEvent.click(screen.getByRole('button', { name: /create account/i }));
 
@@ -306,6 +360,7 @@ describe('SignupPage', () => {
           email: 'newuser@example.com',
           password: 'SecurePass123!',
           termsAccepted: true,
+          ageConfirmed: true,
           organizationName: 'Acme Agency',
           workspaceName: 'Acme Main',
         });
@@ -343,6 +398,7 @@ describe('SignupPage', () => {
         target: { value: 'SecurePass123!' },
       });
       fireEvent.click(screen.getByRole('checkbox', { name: /terms of service and privacy policy/i }));
+      fireEvent.click(screen.getByRole('checkbox', { name: /i confirm i am at least 18 years old\./i }));
 
       fireEvent.click(screen.getByRole('button', { name: /create account/i }));
 
@@ -374,6 +430,7 @@ describe('SignupPage', () => {
         target: { value: 'SecurePass123!' },
       });
       fireEvent.click(screen.getByRole('checkbox', { name: /terms of service and privacy policy/i }));
+      fireEvent.click(screen.getByRole('checkbox', { name: /i confirm i am at least 18 years old\./i }));
 
       fireEvent.click(screen.getByRole('button', { name: /create account/i }));
 
@@ -417,6 +474,7 @@ describe('SignupPage', () => {
         target: { value: 'password123' },
       });
       fireEvent.click(screen.getByRole('checkbox', { name: /terms of service and privacy policy/i }));
+      fireEvent.click(screen.getByRole('checkbox', { name: /i confirm i am at least 18 years old\./i }));
 
       fireEvent.click(screen.getByRole('button', { name: /create account/i }));
 
@@ -443,6 +501,7 @@ describe('SignupPage', () => {
         target: { value: 'password123' },
       });
       fireEvent.click(screen.getByRole('checkbox', { name: /terms of service and privacy policy/i }));
+      fireEvent.click(screen.getByRole('checkbox', { name: /i confirm i am at least 18 years old\./i }));
 
       fireEvent.click(screen.getByRole('button', { name: /create account/i }));
 
@@ -471,6 +530,7 @@ describe('SignupPage', () => {
         target: { value: 'password123' },
       });
       fireEvent.click(screen.getByRole('checkbox', { name: /terms of service and privacy policy/i }));
+      fireEvent.click(screen.getByRole('checkbox', { name: /i confirm i am at least 18 years old\./i }));
 
       fireEvent.click(screen.getByRole('button', { name: /create account/i }));
 
@@ -524,6 +584,11 @@ describe('SignupPage', () => {
           name: /terms of service and privacy policy/i,
         }),
       );
+      fireEvent.click(
+        screen.getByRole('checkbox', {
+          name: /i confirm i am at least 18 years old\./i,
+        }),
+      );
 
       fireEvent.click(screen.getByRole('button', { name: /create account/i }));
 
@@ -533,6 +598,7 @@ describe('SignupPage', () => {
           email: 'alice@example.com',
           password: 'Password123!',
           termsAccepted: true,
+          ageConfirmed: true,
         });
       });
     });
@@ -585,6 +651,11 @@ describe('SignupPage', () => {
           name: /terms of service and privacy policy/i,
         }),
       );
+      fireEvent.click(
+        screen.getByRole('checkbox', {
+          name: /i confirm i am at least 18 years old\./i,
+        }),
+      );
 
       fireEvent.click(screen.getByRole('button', { name: /create account/i }));
 
@@ -594,6 +665,7 @@ describe('SignupPage', () => {
           email: 'bob@example.com',
           password: 'Password123!',
           termsAccepted: true,
+          ageConfirmed: true,
           turnstileToken: 'test-token-123',
         });
       });
@@ -639,7 +711,7 @@ describe('SignupPage', () => {
       ).not.toBeInTheDocument();
     });
 
-    it('gates Google UI with hidden class until terms are accepted', () => {
+    it('gates Google UI with hidden class until both terms and 18+ age confirmation are accepted', () => {
       process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID = 'test-client-id.apps.google.com';
 
       const initializeMock = vi.fn();
@@ -660,24 +732,111 @@ describe('SignupPage', () => {
 
       const googleContainer = screen.getByTestId('google-button-container');
       expect(googleContainer).toBeInTheDocument();
-      // Initially hidden because terms are not accepted
       expect(googleContainer).toHaveClass('hidden');
 
-      // Accept terms
-      const checkbox = screen.getByRole('checkbox', {
+      const termsCheckbox = screen.getByRole('checkbox', {
         name: /terms of service and privacy policy/i,
       });
-      fireEvent.click(checkbox);
+      const ageCheckbox = screen.getByRole('checkbox', {
+        name: /i confirm i am at least 18 years old\./i,
+      });
 
-      // Now visible
+      // Only terms checked -> still hidden
+      fireEvent.click(termsCheckbox);
+      expect(googleContainer).toHaveClass('hidden');
+
+      // Both checked -> visible
+      fireEvent.click(ageCheckbox);
       expect(googleContainer).not.toHaveClass('hidden');
 
-      // Uncheck terms
-      fireEvent.click(checkbox);
+      // Uncheck age -> hidden again
+      fireEvent.click(ageCheckbox);
       expect(googleContainer).toHaveClass('hidden');
     });
 
-    it('posts credential and termsAccepted on GIS callback and navigates on success', async () => {
+    it('gates Google One Tap prompt() until both terms and 18+ age confirmation are ticked', () => {
+      process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID = 'test-client-id.apps.google.com';
+
+      const initializeMock = vi.fn();
+      const renderButtonMock = vi.fn();
+      const promptMock = vi.fn();
+
+      (window as unknown as TestWindowWithGoogle).google = {
+        accounts: {
+          id: {
+            initialize: initializeMock,
+            renderButton: renderButtonMock,
+            prompt: promptMock,
+          },
+        },
+      };
+
+      render(<SignupPage />);
+
+      expect(initializeMock).toHaveBeenCalledTimes(1);
+      expect(renderButtonMock).toHaveBeenCalledTimes(1);
+      expect(promptMock).not.toHaveBeenCalled();
+
+      const termsCheckbox = screen.getByRole('checkbox', {
+        name: /terms of service and privacy policy/i,
+      });
+      const ageCheckbox = screen.getByRole('checkbox', {
+        name: /i confirm i am at least 18 years old\./i,
+      });
+
+      // Only terms checked -> One Tap still gated
+      fireEvent.click(termsCheckbox);
+      expect(promptMock).not.toHaveBeenCalled();
+
+      // Both checked -> One Tap prompt triggers once
+      fireEvent.click(ageCheckbox);
+      expect(promptMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('blocks Google signup submission when GIS callback fires before both checkboxes are checked', async () => {
+      process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID = 'test-client-id.apps.google.com';
+
+      let capturedCallback: ((res: { credential: string }) => void) | null = null;
+      (window as unknown as TestWindowWithGoogle).google = {
+        accounts: {
+          id: {
+            initialize: vi.fn(({ callback }) => {
+              capturedCallback = callback;
+            }),
+            renderButton: vi.fn(),
+            prompt: vi.fn(),
+          },
+        },
+      };
+
+      render(<SignupPage />);
+      expect(capturedCallback).not.toBeNull();
+
+      // Neither checked
+      await capturedCallback!({ credential: 'early-google-cred' });
+      expect(mockApiPost).not.toHaveBeenCalled();
+      await waitFor(() => {
+        expect(screen.getByRole('alert')).toHaveTextContent(
+          'You must accept the Terms of Service and Privacy Policy to create an account.',
+        );
+      });
+
+      // Only terms checked
+      fireEvent.click(
+        screen.getByRole('checkbox', {
+          name: /terms of service and privacy policy/i,
+        }),
+      );
+      await capturedCallback!({ credential: 'early-google-cred' });
+      expect(mockApiPost).not.toHaveBeenCalled();
+      await waitFor(() => {
+        expect(screen.getByRole('alert')).toHaveTextContent(
+          'You must confirm you are at least 18 years old to create an account.',
+        );
+      });
+    });
+
+    it('posts credential, termsAccepted, and ageConfirmed on GIS callback and navigates on success', async () => {
       process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID = 'test-client-id.apps.google.com';
 
       let capturedCallback: ((res: { credential: string }) => void) | null = null;
@@ -701,11 +860,16 @@ describe('SignupPage', () => {
 
       render(<SignupPage />);
 
-      // Accept terms first
-      const checkbox = screen.getByRole('checkbox', {
-        name: /terms of service and privacy policy/i,
-      });
-      fireEvent.click(checkbox);
+      fireEvent.click(
+        screen.getByRole('checkbox', {
+          name: /terms of service and privacy policy/i,
+        }),
+      );
+      fireEvent.click(
+        screen.getByRole('checkbox', {
+          name: /i confirm i am at least 18 years old\./i,
+        }),
+      );
 
       expect(capturedCallback).not.toBeNull();
       await capturedCallback!({ credential: 'valid-signup-google-token' });
@@ -713,6 +877,7 @@ describe('SignupPage', () => {
       expect(mockApiPost).toHaveBeenCalledWith('auth/google', {
         credential: 'valid-signup-google-token',
         termsAccepted: true,
+        ageConfirmed: true,
       });
 
       await waitFor(() => {
@@ -742,6 +907,17 @@ describe('SignupPage', () => {
       );
 
       render(<SignupPage />);
+
+      fireEvent.click(
+        screen.getByRole('checkbox', {
+          name: /terms of service and privacy policy/i,
+        }),
+      );
+      fireEvent.click(
+        screen.getByRole('checkbox', {
+          name: /i confirm i am at least 18 years old\./i,
+        }),
+      );
 
       await capturedCallback!({ credential: 'token-without-account' });
 

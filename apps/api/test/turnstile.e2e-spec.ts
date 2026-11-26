@@ -173,6 +173,7 @@ describe('Turnstile Verification on Signup (e2e)', () => {
         email,
         password: testPassword,
         termsAccepted: true,
+        ageConfirmed: true,
       });
 
     expect(res.status).toBe(400);
@@ -193,6 +194,7 @@ describe('Turnstile Verification on Signup (e2e)', () => {
         email,
         password: testPassword,
         termsAccepted: true,
+        ageConfirmed: true,
         turnstileToken: 'wrong-token',
       });
 
@@ -215,6 +217,7 @@ describe('Turnstile Verification on Signup (e2e)', () => {
         email,
         password: testPassword,
         termsAccepted: true,
+        ageConfirmed: true,
         organizationName: 'Turnstile Org',
         workspaceName: 'Turnstile Workspace',
         turnstileToken: 'valid-test-token',

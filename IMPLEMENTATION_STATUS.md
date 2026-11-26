@@ -6671,3 +6671,31 @@ Config-only changes across 3 files with 0 application code modifications (strict
   - `Docker Build & Smoke Test`: completed / `success` (`14:57:25Z`–`15:06:21Z`)
   - Standing note: CI re-runs on the docs head commit adding §91 and must be verified 6/6 green before owner merge.
 - **Release Gate**: Do NOT merge without independent review. Live deployment remains **STRICT NO-GO**.
+
+## 92. Explicit 18+ Age Confirmation on Signup
+
+- **Pull Request**: [#106](https://github.com/AbhishekGadmale/Social-Media-Handler/pull/106)
+- **Branch**: `fix/signup-age-confirmation` (base `main` at `0f332cb2d64681c541f87b47a3658ac65477eed6`)
+- **Code Head SHA**: `940e2ee6c16a7fa59cdd73813032c35d3c90183d`
+- **Root Cause & Fix**:
+  - `packages/database/prisma/schema.prisma`, `packages/database/prisma/migrations/20261126000000_add_age_confirmed_at/migration.sql`, & `packages/database/src/repositories/UserRepository.ts`: Added nullable `ageConfirmedAt DateTime?` directly alongside `termsAcceptedAt DateTime?` on `model User` (no DOB field) and wired optional `ageConfirmedAt` into `CreateUserWithTenantInput` / `createWithTenantTransaction()`.
+  - `apps/api/src/modules/auth/dto/signup.dto.ts` & `apps/api/src/modules/auth/auth.service.ts`: Added `ageConfirmed!: boolean` (`@IsDefined()`, `@IsBoolean()`, `@Equals(true, { message: 'You must confirm that you are at least 18 years old' })`) on `SignupDto` and persisted matching `acceptedAt` timestamps in `termsAcceptedAt` and `ageConfirmedAt` inside `AuthService.signup()`.
+  - `apps/api/src/modules/auth/dto/google-sign-in.dto.ts`, `auth.controller.ts`, & `auth.service.ts`: Added `@IsOptional() @IsBoolean() ageConfirmed?: boolean` on `GoogleSignInDto` (keeping `termsAccepted?: boolean` optional at DTO level so existing-user logins from `/login` with `termsAccepted: false` still succeed with `200`), forwarded `body.ageConfirmed` from `AuthController.googleSignIn()`, and enforced both `termsAccepted === true` and `ageConfirmed === true` inside `AuthService.googleSignIn()` before provisioning new accounts (persisting `termsAcceptedAt` and `ageConfirmedAt`).
+  - `apps/web/src/app/signup/page.tsx`: Added `"I confirm I am at least 18 years old."` (`#ageConfirmed`) checkbox alongside the unchanged `#termsAccepted` checkbox and label; shared `validateConsent(terms, age)` to block email/password submit and Google GIS callback until both checkboxes are ticked; passed `termsAccepted` and `ageConfirmed` via refs to `auth/google`; gated Google One Tap `google.accounts.id.prompt()` on `/signup` until both checkboxes are ticked (`hasConsented`). Terms/Privacy wording and `/login` (including `/login` One Tap) left untouched.
+- **Verification & Test Deltas**:
+  - `packages/database/src/repositories/UserRepository.spec.ts`: counted `9 -> 10` `it()` blocks (**+1 test**, **10/10 PASS**).
+  - `apps/api/src/modules/auth/auth.service.spec.ts`: counted `65 -> 70` `it()` blocks (**+5 tests**, **70/70 PASS**).
+  - `apps/api/src/modules/auth/auth.controller.spec.ts`: counted `44 -> 44` `it()` blocks (updated fixtures, **44/44 PASS**).
+  - `apps/api/test/auth.e2e-spec.ts`: counted `43 -> 45` `it()` blocks (**+2 tests**, **PASS** in CI API E2E Tests).
+  - `apps/api/test/google-sign-in.e2e-spec.ts`: counted `4 -> 5` `it()` blocks (**+1 test**, **PASS** in CI API E2E Tests).
+  - `apps/api/test/turnstile.e2e-spec.ts`: counted `3 -> 3` `it()` blocks (updated fixtures, **PASS** in CI API E2E Tests).
+  - `apps/web/src/app/signup/page.spec.tsx`: counted `20 -> 24` `it()` blocks (**+4 tests**, including One Tap `prompt()` gating via mocked `window.google.accounts.id`; **24/24 PASS**; `@agency-os/web` **32/32 test files, 354/354 tests PASS**, lint 0 errors, `tsc --noEmit` 0 errors, Next.js `16.3.1` build **PASS**).
+- **CI Quality Gates on Code Head `940e2ee6c16a7fa59cdd73813032c35d3c90183d` (6/6 Green, 2026-11-26)**:
+  - `GitGuardian Security Checks`: completed / `success` (`10:34:48Z`–`10:34:48Z`)
+  - `Application Builds`: completed / `success` (`10:34:45Z`–`10:35:47Z`)
+  - `Code Quality (Lint & Typecheck)`: completed / `success` (`10:34:45Z`–`10:36:10Z`)
+  - `Tests`: completed / `success` (`10:34:45Z`–`10:36:17Z`)
+  - `API E2E Tests`: completed / `success` (`10:34:45Z`–`10:36:33Z`)
+  - `Docker Build & Smoke Test`: completed / `success` (`10:34:45Z`–`10:43:41Z`)
+  - Standing note: CI re-runs on the docs head commit adding §92 and must be verified 6/6 green before owner merge.
+- **Release Gate**: Do NOT merge without independent review. Live deployment remains **STRICT NO-GO**.

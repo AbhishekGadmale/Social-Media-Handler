@@ -736,6 +736,7 @@ describe('AuthController (e2e)', () => {
           email: signedUpEmail,
           password: 'CorrectPassword123!',
           termsAccepted: true,
+          ageConfirmed: true,
           organizationName: 'Signup Org E2E',
           workspaceName: 'Signup Workspace E2E',
         });
@@ -759,6 +760,8 @@ describe('AuthController (e2e)', () => {
       expect(signedUpUser.securityEpoch).toBe(1);
       expect(signedUpUser.termsAcceptedAt).toBeDefined();
       expect(signedUpUser.termsAcceptedAt).not.toBeNull();
+      expect(signedUpUser.ageConfirmedAt).toBeDefined();
+      expect(signedUpUser.ageConfirmedAt).not.toBeNull();
 
       // Verify GET /auth/me for this user returns user.name equal to submitted name
       const loginRes = await request(app.getHttpServer())
@@ -816,6 +819,7 @@ describe('AuthController (e2e)', () => {
           email: signedUpEmail,
           password: 'DifferentPassword456!',
           termsAccepted: true,
+          ageConfirmed: true,
         });
 
       // Identical status and response payload
@@ -841,6 +845,7 @@ describe('AuthController (e2e)', () => {
           email: freshEmail,
           password: 'Password123!',
           termsAccepted: true,
+          ageConfirmed: true,
           organizationName: 'First Org',
           workspaceName: 'First Workspace',
         });
@@ -859,6 +864,7 @@ describe('AuthController (e2e)', () => {
           email: freshEmail,
           password: 'DifferentPassword456!',
           termsAccepted: true,
+          ageConfirmed: true,
         });
 
       expect(dupRes.status).toBe(201);
@@ -902,6 +908,7 @@ describe('AuthController (e2e)', () => {
           email: `missing-name-${generateId()}@example.com`,
           password: 'ValidPassword123!',
           termsAccepted: true,
+          ageConfirmed: true,
         });
 
       expect(res.status).toBe(400);
@@ -916,6 +923,7 @@ describe('AuthController (e2e)', () => {
           email: `empty-name-${generateId()}@example.com`,
           password: 'ValidPassword123!',
           termsAccepted: true,
+          ageConfirmed: true,
         });
 
       expect(res.status).toBe(400);
@@ -929,6 +937,7 @@ describe('AuthController (e2e)', () => {
           name: 'Missing Terms User',
           email: `missing-terms-${generateId()}@example.com`,
           password: 'ValidPassword123!',
+          ageConfirmed: true,
         });
 
       expect(res.status).toBe(400);
@@ -943,12 +952,45 @@ describe('AuthController (e2e)', () => {
           email: `false-terms-${generateId()}@example.com`,
           password: 'ValidPassword123!',
           termsAccepted: false,
+          ageConfirmed: true,
         });
 
       expect(res.status).toBe(400);
       expect(res.body.error).toBeDefined();
       expect(JSON.stringify(res.body)).toContain(
         'You must accept the Terms of Service and Privacy Policy',
+      );
+    });
+
+    it('rejects signup with 400 when ageConfirmed is missing from body', async () => {
+      const res = await request(app.getHttpServer())
+        .post('/api/v1/auth/signup')
+        .send({
+          name: 'Missing Age User',
+          email: `missing-age-${generateId()}@example.com`,
+          password: 'ValidPassword123!',
+          termsAccepted: true,
+        });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBeDefined();
+    });
+
+    it('rejects signup with 400 and exact validation message when ageConfirmed is false', async () => {
+      const res = await request(app.getHttpServer())
+        .post('/api/v1/auth/signup')
+        .send({
+          name: 'False Age User',
+          email: `false-age-${generateId()}@example.com`,
+          password: 'ValidPassword123!',
+          termsAccepted: true,
+          ageConfirmed: false,
+        });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBeDefined();
+      expect(JSON.stringify(res.body)).toContain(
+        'You must confirm that you are at least 18 years old',
       );
     });
 
@@ -1341,6 +1383,7 @@ describe('AuthController (e2e)', () => {
           email: lockoutUserEmail,
           password: correctPassword,
           termsAccepted: true,
+          ageConfirmed: true,
           organizationName: 'Lockout Org',
           workspaceName: 'Lockout Workspace',
         });
@@ -1496,6 +1539,7 @@ describe('AuthController (e2e)', () => {
           email: `policy-noncomplex-${generateId()}@example.com`,
           password: 'Password123',
           termsAccepted: true,
+          ageConfirmed: true,
         });
 
       expect(res.status).toBe(400);
@@ -1514,6 +1558,7 @@ describe('AuthController (e2e)', () => {
           email: `policy-breached-${generateId()}@example.com`,
           password: BREACHED_TEST_PASSWORD,
           termsAccepted: true,
+          ageConfirmed: true,
         });
 
       expect(res.status).toBe(400);
@@ -1533,6 +1578,7 @@ describe('AuthController (e2e)', () => {
           email,
           password: 'CompliantPassword123!',
           termsAccepted: true,
+          ageConfirmed: true,
         });
 
       expect(res.status).toBe(201);
@@ -1642,6 +1688,7 @@ describe('AuthController (e2e)', () => {
           email,
           password: 'CompliantPassword123!',
           termsAccepted: true,
+          ageConfirmed: true,
         });
 
       expect(res.status).toBe(201);
@@ -1724,6 +1771,7 @@ describe('AuthController (e2e)', () => {
           email: sessionUserEmail,
           password: sessionUserPassword,
           termsAccepted: true,
+          ageConfirmed: true,
           organizationName: 'Sessions Org',
           workspaceName: 'Sessions Workspace',
         });
