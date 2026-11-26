@@ -8,4 +8,8 @@ export class GoogleSignInDto {
   @IsOptional()
   @IsBoolean()
   termsAccepted?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  ageConfirmed?: boolean;
 }

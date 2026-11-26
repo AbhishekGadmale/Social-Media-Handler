@@ -99,6 +99,7 @@ describe('AuthController', () => {
         email: 'newuser@example.com',
         password: 'Password123!',
         termsAccepted: true,
+        ageConfirmed: true,
         organizationName: 'New Org',
         workspaceName: 'New WS',
       };
@@ -128,6 +129,7 @@ describe('AuthController', () => {
         email: 'duplicate@example.com',
         password: 'Password123!',
         termsAccepted: true,
+        ageConfirmed: true,
       };
 
       const result = await controller.signup(body, reqMock as Request);
@@ -162,6 +164,7 @@ describe('AuthController', () => {
             email: 'user@example.com',
             password: 'Password123!',
             termsAccepted: true,
+            ageConfirmed: true,
           },
           insecureReq as Request,
         ),
@@ -179,6 +182,7 @@ describe('AuthController', () => {
         email: 'bot@example.com',
         password: 'Password123!',
         termsAccepted: true,
+        ageConfirmed: true,
         turnstileToken: 'invalid-bot-token',
       };
 
@@ -204,6 +208,7 @@ describe('AuthController', () => {
         email: 'valid@example.com',
         password: 'Password123!',
         termsAccepted: true,
+        ageConfirmed: true,
         turnstileToken: 'valid-token',
       };
 
@@ -1293,7 +1298,11 @@ describe('AuthController', () => {
       });
 
       const res = await controller.googleSignIn(
-        { credential: 'valid-google-credential', termsAccepted: true },
+        {
+          credential: 'valid-google-credential',
+          termsAccepted: true,
+          ageConfirmed: true,
+        },
         reqMock as Request,
         resMock as Response,
       );
@@ -1306,6 +1315,7 @@ describe('AuthController', () => {
         true,
         expect.any(Object),
         'req-auth-123',
+        true,
       );
 
       expect(resMock.cookie).toHaveBeenCalledWith(

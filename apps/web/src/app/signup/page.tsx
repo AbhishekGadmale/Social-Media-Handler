@@ -50,6 +50,16 @@ const getTurnstile = (): TurnstileInstance | undefined => {
   return (window as unknown as { turnstile?: TurnstileInstance }).turnstile;
 };
 
+const validateConsent = (terms: boolean, age: boolean): string | null => {
+  if (!terms) {
+    return 'You must accept the Terms of Service and Privacy Policy to create an account.';
+  }
+  if (!age) {
+    return 'You must confirm you are at least 18 years old to create an account.';
+  }
+  return null;
+};
+
 export default function SignupPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -61,6 +71,7 @@ export default function SignupPage() {
   const [organizationName, setOrganizationName] = useState('');
   const [workspaceName, setWorkspaceName] = useState('');
   const [termsAccepted, setTermsAccepted] = useState(false);
+  const [ageConfirmed, setAgeConfirmed] = useState(false);
   const [turnstileToken, setTurnstileToken] = useState('');
 
   const turnstileContainerRef = useRef<HTMLDivElement>(null);
@@ -69,10 +80,18 @@ export default function SignupPage() {
   const googleButtonRef = useRef<HTMLDivElement>(null);
   const googleClientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
   const termsAcceptedRef = useRef(termsAccepted);
+  const ageConfirmedRef = useRef(ageConfirmed);
+  const googleInitializedRef = useRef(false);
+  const oneTapPromptedRef = useRef(false);
+  const hasConsented = termsAccepted && ageConfirmed;
 
   useEffect(() => {
     termsAcceptedRef.current = termsAccepted;
   }, [termsAccepted]);
+
+  useEffect(() => {
+    ageConfirmedRef.current = ageConfirmed;
+  }, [ageConfirmed]);
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -86,6 +105,15 @@ export default function SignupPage() {
 
   const handleGoogleSignIn = useCallback(
     async (credential: string) => {
+      const consentError = validateConsent(
+        termsAcceptedRef.current,
+        ageConfirmedRef.current,
+      );
+      if (consentError) {
+        setError(consentError);
+        return;
+      }
+
       setLoading(true);
       setError(null);
 
@@ -93,6 +121,7 @@ export default function SignupPage() {
         await api.post('auth/google', {
           credential,
           termsAccepted: termsAcceptedRef.current,
+          ageConfirmed: ageConfirmedRef.current,
         });
 
         const authData = await api.get<AuthMeResponse>('auth/me');
@@ -153,7 +182,15 @@ export default function SignupPage() {
           });
         }
 
-        google.accounts.id.prompt();
+        googleInitializedRef.current = true;
+        if (
+          termsAcceptedRef.current &&
+          ageConfirmedRef.current &&
+          !oneTapPromptedRef.current
+        ) {
+          oneTapPromptedRef.current = true;
+          google.accounts.id.prompt();
+        }
       } catch {
         // Safe catch for GIS errors
       }
@@ -181,8 +218,30 @@ export default function SignupPage() {
 
     return () => {
       isCancelled = true;
+      googleInitializedRef.current = false;
     };
   }, [googleClientId, handleGoogleSignIn]);
+
+  useEffect(() => {
+    if (
+      !googleClientId ||
+      !hasConsented ||
+      !googleInitializedRef.current ||
+      oneTapPromptedRef.current
+    ) {
+      return;
+    }
+
+    const google = (window as unknown as WindowWithGoogle)?.google;
+    if (!google?.accounts?.id) return;
+
+    try {
+      oneTapPromptedRef.current = true;
+      google.accounts.id.prompt();
+    } catch {
+      // Safe catch for GIS errors
+    }
+  }, [googleClientId, hasConsented]);
 
   useEffect(() => {
     if (!turnstileSiteKey || !turnstileContainerRef.current) {
@@ -265,10 +324,7 @@ export default function SignupPage() {
     if (password !== confirmPassword) {
       return 'Passwords do not match.';
     }
-    if (!termsAccepted) {
-      return 'You must accept the Terms of Service and Privacy Policy to create an account.';
-    }
-    return null;
+    return validateConsent(termsAccepted, ageConfirmed);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -289,6 +345,7 @@ export default function SignupPage() {
         email: string;
         password: string;
         termsAccepted: boolean;
+        ageConfirmed: boolean;
         organizationName?: string;
         workspaceName?: string;
         turnstileToken?: string;
@@ -297,6 +354,7 @@ export default function SignupPage() {
         email: email.trim(),
         password,
         termsAccepted,
+        ageConfirmed,
       };
 
       if (organizationName.trim()) {
@@ -471,8 +529,8 @@ export default function SignupPage() {
           {Boolean(googleClientId) && (
             <div
               data-testid="google-button-container"
-              aria-disabled={!termsAccepted}
-              className={termsAccepted ? 'space-y-4' : 'hidden'}
+              aria-disabled={!hasConsented}
+              className={hasConsented ? 'space-y-4' : 'hidden'}
             >
               <div ref={googleButtonRef} className="flex justify-center" />
               <div className="relative flex items-center justify-center">
@@ -606,39 +664,60 @@ export default function SignupPage() {
             </div>
           </div>
 
-          <div className="flex items-start">
-            <div className="flex h-5 items-center">
-              <input
-                id="termsAccepted"
-                name="termsAccepted"
-                type="checkbox"
-                checked={termsAccepted}
-                onChange={(e) => setTermsAccepted(e.target.checked)}
-                disabled={loading}
-                className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-              />
+          <div className="space-y-3">
+            <div className="flex items-start">
+              <div className="flex h-5 items-center">
+                <input
+                  id="termsAccepted"
+                  name="termsAccepted"
+                  type="checkbox"
+                  checked={termsAccepted}
+                  onChange={(e) => setTermsAccepted(e.target.checked)}
+                  disabled={loading}
+                  className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                />
+              </div>
+              <div className="ml-3 text-sm">
+                <label htmlFor="termsAccepted" className="text-gray-600">
+                  I agree to the{' '}
+                  <Link
+                    href="/terms"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="font-medium text-blue-600 hover:text-blue-500 underline"
+                  >
+                    Terms of Service
+                  </Link>{' '}
+                  and{' '}
+                  <Link
+                    href="/privacy"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="font-medium text-blue-600 hover:text-blue-500 underline"
+                  >
+                    Privacy Policy
+                  </Link>
+                </label>
+              </div>
             </div>
-            <div className="ml-3 text-sm">
-              <label htmlFor="termsAccepted" className="text-gray-600">
-                I agree to the{' '}
-                <Link
-                  href="/terms"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="font-medium text-blue-600 hover:text-blue-500 underline"
-                >
-                  Terms of Service
-                </Link>{' '}
-                and{' '}
-                <Link
-                  href="/privacy"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="font-medium text-blue-600 hover:text-blue-500 underline"
-                >
-                  Privacy Policy
-                </Link>
-              </label>
+
+            <div className="flex items-start">
+              <div className="flex h-5 items-center">
+                <input
+                  id="ageConfirmed"
+                  name="ageConfirmed"
+                  type="checkbox"
+                  checked={ageConfirmed}
+                  onChange={(e) => setAgeConfirmed(e.target.checked)}
+                  disabled={loading}
+                  className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                />
+              </div>
+              <div className="ml-3 text-sm">
+                <label htmlFor="ageConfirmed" className="text-gray-600">
+                  I confirm I am at least 18 years old.
+                </label>
+              </div>
             </div>
           </div>
 

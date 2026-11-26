@@ -8,6 +8,7 @@ import {
   MAX_FAILED_LOGIN_ATTEMPTS,
 } from './auth.service';
 import { SignupDto } from './dto/signup.dto';
+import { GoogleSignInDto } from './dto/google-sign-in.dto';
 import { validate } from 'class-validator';
 import { plainToInstance } from 'class-transformer';
 import {
@@ -170,6 +171,7 @@ describe('AuthService', () => {
           email: 'user@example.com',
           password: 'Password123!',
           termsAccepted: true,
+          ageConfirmed: true,
         });
         const errors = await validate(dto);
         expect(errors.length).toBeGreaterThan(0);
@@ -184,6 +186,7 @@ describe('AuthService', () => {
           email: 'user@example.com',
           password: 'Password123!',
           termsAccepted: true,
+          ageConfirmed: true,
         });
         const errors = await validate(dto);
         expect(errors.length).toBeGreaterThan(0);
@@ -197,6 +200,7 @@ describe('AuthService', () => {
           name: 'Jane Doe',
           email: 'user@example.com',
           password: 'Password123!',
+          ageConfirmed: true,
         });
         const errors = await validate(dto);
         expect(errors.length).toBeGreaterThan(0);
@@ -210,6 +214,7 @@ describe('AuthService', () => {
           email: 'user@example.com',
           password: 'Password123!',
           termsAccepted: false,
+          ageConfirmed: true,
         });
         const errors = await validate(dto);
         expect(errors.length).toBeGreaterThan(0);
@@ -220,12 +225,43 @@ describe('AuthService', () => {
         );
       });
 
-      it('accepts signup payload when termsAccepted is true', async () => {
+      it('rejects signup payload when ageConfirmed is missing (400 validation error)', async () => {
         const dto = plainToInstance(SignupDto, {
           name: 'Jane Doe',
           email: 'user@example.com',
           password: 'Password123!',
           termsAccepted: true,
+        });
+        const errors = await validate(dto);
+        expect(errors.length).toBeGreaterThan(0);
+        const ageError = errors.find((e) => e.property === 'ageConfirmed');
+        expect(ageError).toBeDefined();
+      });
+
+      it('rejects signup payload when ageConfirmed is false with exact message', async () => {
+        const dto = plainToInstance(SignupDto, {
+          name: 'Jane Doe',
+          email: 'user@example.com',
+          password: 'Password123!',
+          termsAccepted: true,
+          ageConfirmed: false,
+        });
+        const errors = await validate(dto);
+        expect(errors.length).toBeGreaterThan(0);
+        const ageError = errors.find((e) => e.property === 'ageConfirmed');
+        expect(ageError).toBeDefined();
+        expect(ageError?.constraints?.equals).toBe(
+          'You must confirm that you are at least 18 years old',
+        );
+      });
+
+      it('accepts signup payload when termsAccepted and ageConfirmed are true', async () => {
+        const dto = plainToInstance(SignupDto, {
+          name: 'Jane Doe',
+          email: 'user@example.com',
+          password: 'Password123!',
+          termsAccepted: true,
+          ageConfirmed: true,
         });
         const errors = await validate(dto);
         expect(errors.length).toBe(0);
@@ -245,6 +281,7 @@ describe('AuthService', () => {
           email: '  Alice@Example.com  ',
           password: 'Password123!',
           termsAccepted: true,
+          ageConfirmed: true,
           organizationName: 'Alice Org',
           workspaceName: 'Alice WS',
         },
@@ -262,6 +299,7 @@ describe('AuthService', () => {
         organizationName: 'Alice Org',
         workspaceName: 'Alice WS',
         termsAcceptedAt: expect.any(Date),
+        ageConfirmedAt: expect.any(Date),
         verificationToken: {
           tokenHash: expect.any(String),
           expiresAt: expect.any(Date),
@@ -294,6 +332,7 @@ describe('AuthService', () => {
           email: 'alice@example.com',
           password: 'Password123!',
           termsAccepted: true,
+          ageConfirmed: true,
         },
         'req-duplicate',
       );
@@ -336,6 +375,7 @@ describe('AuthService', () => {
           email: 'race@example.com',
           password: 'Password123!',
           termsAccepted: true,
+          ageConfirmed: true,
         },
         'req-race',
       );
@@ -374,6 +414,7 @@ describe('AuthService', () => {
           email: 'other@example.com',
           password: 'Password123!',
           termsAccepted: true,
+          ageConfirmed: true,
         }),
       ).rejects.toThrow(p2002OtherError);
     });
@@ -392,6 +433,7 @@ describe('AuthService', () => {
           email: 'policy@example.com',
           password: 'simplepassword',
           termsAccepted: true,
+          ageConfirmed: true,
         }),
       ).rejects.toThrow(BadRequestException);
 
@@ -413,6 +455,7 @@ describe('AuthService', () => {
         email: 'duplicate@example.com',
         password: 'any-password',
         termsAccepted: true,
+        ageConfirmed: true,
       });
 
       expect(result).toEqual({ message: 'Registration request received.' });
@@ -435,6 +478,7 @@ describe('AuthService', () => {
           email: '  Alice@Example.com  ',
           password: 'Password123!',
           termsAccepted: true,
+          ageConfirmed: true,
         });
 
         expect(result).toEqual({ message: 'Registration request received.' });
@@ -460,6 +504,7 @@ describe('AuthService', () => {
           email: 'alice@example.com',
           password: 'Password123!',
           termsAccepted: true,
+          ageConfirmed: true,
           organizationName: 'Org',
           workspaceName: 'WS',
         });
@@ -484,6 +529,7 @@ describe('AuthService', () => {
           email: 'alice@example.com',
           password: 'Password123!',
           termsAccepted: true,
+          ageConfirmed: true,
         });
 
         expect(result).toEqual({ message: 'Registration request received.' });
@@ -513,6 +559,7 @@ describe('AuthService', () => {
           email: 'ctx@example.com',
           password: 'Password123!',
           termsAccepted: true,
+          ageConfirmed: true,
         },
         'req-ctx-signup',
         requestContext,
@@ -547,6 +594,7 @@ describe('AuthService', () => {
           email: 'existing@example.com',
           password: 'Password123!',
           termsAccepted: true,
+          ageConfirmed: true,
         },
         'req-ctx-dup',
         requestContext,
@@ -1805,6 +1853,29 @@ describe('AuthService', () => {
   });
 
   describe('googleSignIn', () => {
+    describe('GoogleSignInDto validation', () => {
+      it('allows omitted termsAccepted and ageConfirmed for existing-user login requests', async () => {
+        const dto = plainToInstance(GoogleSignInDto, {
+          credential: 'valid-google-cred',
+        });
+        const errors = await validate(dto);
+        expect(errors).toHaveLength(0);
+      });
+
+      it('rejects non-boolean ageConfirmed or termsAccepted values with validation errors', async () => {
+        const dto = plainToInstance(GoogleSignInDto, {
+          credential: 'valid-google-cred',
+          termsAccepted: 'yes',
+          ageConfirmed: 'yes',
+        });
+        const errors = await validate(dto);
+        expect(
+          errors.find((e) => e.property === 'termsAccepted'),
+        ).toBeDefined();
+        expect(errors.find((e) => e.property === 'ageConfirmed')).toBeDefined();
+      });
+    });
+
     it('existing user gets a session and flips verified flag when unverified', async () => {
       const existingUser = {
         id: 'user-google-1',
@@ -1894,6 +1965,9 @@ describe('AuthService', () => {
         service.googleSignIn(
           { email: 'newuser@example.com', name: 'New User' },
           false,
+          undefined,
+          undefined,
+          true,
         ),
       ).rejects.toThrow(
         new BadRequestException(
@@ -1904,6 +1978,9 @@ describe('AuthService', () => {
         service.googleSignIn(
           { email: 'newuser@example.com', name: 'New User' },
           undefined,
+          undefined,
+          undefined,
+          true,
         ),
       ).rejects.toThrow(
         new BadRequestException(
@@ -1914,7 +1991,41 @@ describe('AuthService', () => {
       expect(userRepoMock.createWithTenantTransaction).not.toHaveBeenCalled();
     });
 
-    it('unknown email with termsAccepted provisions via createWithTenantTransaction and returns a session', async () => {
+    it('unknown email with termsAccepted true but missing or false ageConfirmed throws BadRequestException', async () => {
+      userRepoMock.findByEmail.mockResolvedValueOnce(null);
+      userRepoMock.findByEmail.mockResolvedValueOnce(null);
+
+      await expect(
+        service.googleSignIn(
+          { email: 'newuser@example.com', name: 'New User' },
+          true,
+          undefined,
+          undefined,
+          false,
+        ),
+      ).rejects.toThrow(
+        new BadRequestException(
+          'You must confirm that you are at least 18 years old',
+        ),
+      );
+      await expect(
+        service.googleSignIn(
+          { email: 'newuser@example.com', name: 'New User' },
+          true,
+          undefined,
+          undefined,
+          undefined,
+        ),
+      ).rejects.toThrow(
+        new BadRequestException(
+          'You must confirm that you are at least 18 years old',
+        ),
+      );
+
+      expect(userRepoMock.createWithTenantTransaction).not.toHaveBeenCalled();
+    });
+
+    it('unknown email with termsAccepted and ageConfirmed provisions via createWithTenantTransaction and returns a session', async () => {
       vi.mocked(argon2.hash).mockResolvedValueOnce(
         '$argon2id$randomGoogleHash',
       );
@@ -1939,6 +2050,7 @@ describe('AuthService', () => {
         true,
         { ipAddress: '5.6.7.8', userAgent: 'Chrome' },
         'req-signup-1',
+        true,
       );
 
       expect(userRepoMock.createWithTenantTransaction).toHaveBeenCalledTimes(1);
@@ -1949,6 +2061,7 @@ describe('AuthService', () => {
       expect(tenantCallArg.emailVerified).toBe(true);
       expect(tenantCallArg.emailVerifiedAt).toBeInstanceOf(Date);
       expect(tenantCallArg.termsAcceptedAt).toBeInstanceOf(Date);
+      expect(tenantCallArg.ageConfirmedAt).toBeInstanceOf(Date);
       expect(typeof tenantCallArg.hashedPassword).toBe('string');
       // Assert it was called with a hash that is not the raw token
       expect(tenantCallArg.hashedPassword).not.toBe('valid-google-token');

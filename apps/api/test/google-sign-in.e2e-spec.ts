@@ -174,7 +174,7 @@ describe('Google Sign-In End-to-End Workflow (e2e)', () => {
     }
   });
 
-  it('valid token for a new email WITH termsAccepted provisions user, workspace with trial, and sets session cookie', async () => {
+  it('valid token for a new email WITH termsAccepted and ageConfirmed provisions user, workspace with trial, and sets session cookie', async () => {
     const email = 'google-new-user-e2e@example.com';
     createdEmails.push(email);
 
@@ -183,6 +183,7 @@ describe('Google Sign-In End-to-End Workflow (e2e)', () => {
       .send({
         credential: 'valid-google-token',
         termsAccepted: true,
+        ageConfirmed: true,
       })
       .expect(200);
 
@@ -206,6 +207,7 @@ describe('Google Sign-In End-to-End Workflow (e2e)', () => {
     expect(user!.emailVerified).toBe(true);
     expect(user!.emailVerifiedAt).not.toBeNull();
     expect(user!.termsAcceptedAt).not.toBeNull();
+    expect(user!.ageConfirmedAt).not.toBeNull();
     expect(user!.name).toBe('Google New User');
 
     // Verify workspace trial
@@ -253,6 +255,7 @@ describe('Google Sign-In End-to-End Workflow (e2e)', () => {
       .send({
         credential: 'valid-google-token-no-terms',
         termsAccepted: false,
+        ageConfirmed: true,
       })
       .expect(400);
 
@@ -262,6 +265,39 @@ describe('Google Sign-In End-to-End Workflow (e2e)', () => {
     );
 
     // Verify user was NOT created
+    const user = await prisma.user.findUnique({ where: { email } });
+    expect(user).toBeNull();
+  });
+
+  it('valid token WITH termsAccepted but WITHOUT ageConfirmed for a new email returns 400 and creates no user', async () => {
+    const email = 'google-no-terms-e2e@example.com';
+    createdEmails.push(email);
+
+    const missingRes = await request(app.getHttpServer())
+      .post('/api/v1/auth/google')
+      .send({
+        credential: 'valid-google-token-no-terms',
+        termsAccepted: true,
+      })
+      .expect(400);
+
+    expect(missingRes.body?.error?.message || missingRes.body?.message).toBe(
+      'You must confirm that you are at least 18 years old',
+    );
+
+    const falseRes = await request(app.getHttpServer())
+      .post('/api/v1/auth/google')
+      .send({
+        credential: 'valid-google-token-no-terms',
+        termsAccepted: true,
+        ageConfirmed: false,
+      })
+      .expect(400);
+
+    expect(falseRes.body?.error?.message || falseRes.body?.message).toBe(
+      'You must confirm that you are at least 18 years old',
+    );
+
     const user = await prisma.user.findUnique({ where: { email } });
     expect(user).toBeNull();
   });

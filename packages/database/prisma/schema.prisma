@@ -98,6 +98,7 @@ model User {
   emailVerifiedAt     DateTime?
   securityEpoch       Int                      @default(1)
   termsAcceptedAt     DateTime?
+  ageConfirmedAt      DateTime?
   createdAt           DateTime                 @default(now())
   updatedAt           DateTime                 @updatedAt
   memberships         WorkspaceMember[]

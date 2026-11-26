@@ -15,6 +15,7 @@ export interface CreateUserWithTenantInput {
   organizationName?: string;
   workspaceName?: string;
   termsAcceptedAt?: Date | null;
+  ageConfirmedAt?: Date | null;
   emailVerified?: boolean;
   emailVerifiedAt?: Date | null;
   verificationToken?: {
@@ -139,6 +140,9 @@ export class UserRepository {
           securityEpoch: 1,
           ...(input.termsAcceptedAt !== undefined && {
             termsAcceptedAt: input.termsAcceptedAt,
+          }),
+          ...(input.ageConfirmedAt !== undefined && {
+            ageConfirmedAt: input.ageConfirmedAt,
           }),
         },
       });

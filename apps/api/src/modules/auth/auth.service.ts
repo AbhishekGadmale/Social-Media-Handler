@@ -128,6 +128,7 @@ export class AuthService {
 
     // 3. Atomically provision tenant resources AND verification token in single DB transaction
     try {
+      const acceptedAt = new Date();
       const tenantResult =
         await this.userRepository.createWithTenantTransaction({
           name: dto.name,
@@ -135,7 +136,8 @@ export class AuthService {
           hashedPassword,
           organizationName: dto.organizationName,
           workspaceName: dto.workspaceName,
-          termsAcceptedAt: new Date(),
+          termsAcceptedAt: acceptedAt,
+          ageConfirmedAt: acceptedAt,
           verificationToken: {
             tokenHash,
             expiresAt,
@@ -542,6 +544,7 @@ export class AuthService {
     termsAccepted?: boolean,
     requestContext?: { ipAddress?: string; userAgent?: string },
     requestId?: string,
+    ageConfirmed?: boolean,
   ): Promise<{ sessionId: string; user: any }> {
     const normalizedEmail = profile.email.trim().toLowerCase();
     let user = await this.userRepository.findByEmail(normalizedEmail);
@@ -580,6 +583,12 @@ export class AuthService {
       );
     }
 
+    if (ageConfirmed !== true) {
+      throw new BadRequestException(
+        'You must confirm that you are at least 18 years old',
+      );
+    }
+
     const randomSecret = crypto.randomBytes(32).toString('hex');
     const hashedPassword = await argon2.hash(randomSecret);
 
@@ -588,13 +597,15 @@ export class AuthService {
         ? profile.name.trim()
         : normalizedEmail.split('@')[0] || 'User';
 
+    const acceptedAt = new Date();
     const tenantResult = await this.userRepository.createWithTenantTransaction({
       name: displayName,
       email: normalizedEmail,
       hashedPassword,
-      termsAcceptedAt: new Date(),
+      termsAcceptedAt: acceptedAt,
+      ageConfirmedAt: acceptedAt,
       emailVerified: true,
-      emailVerifiedAt: new Date(),
+      emailVerifiedAt: acceptedAt,
     });
 
     user = tenantResult.user;
